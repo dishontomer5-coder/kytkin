@@ -16,6 +16,10 @@
 //   pollFlush(postingStarted: posting)
 // An abort (overflow, shortcut, click, reset, mode change) makes the flush due at once, but it still waits for a
 // worker that already won the commit (up to the hard cap), so held keys never interleave with its posts.
+// P2-35 (001 §12 K4): a generation force-flushed while its worker was posting (hard cap, full FIFO, or no longer
+// active) is remembered. Until its stale `finishReplacement` arrives or another `postingHardCapNanos` passes, a
+// double-Shift or auto-fix trigger starts nothing (passes, no signal, no hold), so two workers never post at once.
+// `reset` doesn't clear it: the worker is still running.
 
 import Foundation
 
@@ -48,6 +52,8 @@ struct KeyStreamProcessor: Sendable {
     private var queue: HoldBackQueue
     private var phase: Phase = .idle
     private var generation: UInt64 = 0
+    /// P2-35: a generation flushed while its worker was posting, and when we stop waiting for its finish.
+    private var stalePosting: (gen: UInt64, untilNanos: UInt64)?
     // P2-12: last seen device Shift bits, so each flagsChanged yields exact per-side press/release edges.
     private var leftShiftHeld = false
     private var rightShiftHeld = false
@@ -132,7 +138,11 @@ struct KeyStreamProcessor: Sendable {
             guard now >= cap else { return nil }
         }
         // QA: flushing under a posting worker means it may have posted part of its text: the buffer can't be trusted.
-        if postingStarted { buffer.invalidate() }
+        if postingStarted {
+            buffer.invalidate()
+            // P2-35: its worker may still be posting: block new replacements until its finish or the cap.
+            stalePosting = (r.gen, now + config.postingHardCapNanos)
+        }
         // P2-12: deadline (or hard cap, or abort) → flush unchanged. A late finish for this gen is then ignored.
         phase = .idle
         return queue.drain()
@@ -143,6 +153,8 @@ struct KeyStreamProcessor: Sendable {
     /// The worker is done with `gen`. Returns the held events to replay, in order. A stale `gen` (the deadline
     /// or an abort already flushed) is ignored and returns nothing.
     mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) -> [HeldEvent] {
+        // P2-35: the force-flushed worker is done posting, so new replacements may start again.
+        if stalePosting?.gen == gen { stalePosting = nil }
         guard case let .replacing(r) = phase, r.gen == gen else { return [] }
         phase = .idle
         // QA: after an abort the buffer was already cleared (click, reset) and main owns the input source,
@@ -235,6 +247,7 @@ struct KeyStreamProcessor: Sendable {
     private mutating func doubleShiftFired() -> KeySignal? {
         guard config.doubleShiftEnabled else { return nil }
         guard case .idle = phase else { return nil } // already replacing: one convert at a time
+        guard !staleWorkerMayPost() else { return nil } // P2-35: passes, no signal, no hold
         generation &+= 1
         let gen = generation
         let snapshot = buffer.snapshot(renderedIn: inputSource)
@@ -271,6 +284,7 @@ struct KeyStreamProcessor: Sendable {
         guard config.autoFixEnabled, mode == .active, e.origin == .user, !e.isAutoRepeat else { return nil }
         // QA: never start over held events (a full, aborted FIFO the adapter hasn't flushed yet).
         guard case .idle = phase, queue.isEmpty else { return nil }
+        guard !staleWorkerMayPost() else { return nil } // P2-35: the trigger passes like any boundary
         let snapshot = buffer.snapshot(renderedIn: inputSource)
         guard snapshot.isValid else { return nil }
         generation &+= 1
@@ -283,6 +297,16 @@ struct KeyStreamProcessor: Sendable {
     private mutating func startReplacement(_ kind: ReplacementKind, gen: UInt64) {
         let wait = kind == .convert ? config.convertDeadlineNanos : config.autoFixDeadlineNanos
         phase = .replacing(Replacement(gen: gen, kind: kind, deadlineNanos: clock.nowNanos + wait, hardCapNanos: nil))
+    }
+
+    /// P2-35: true while a force-flushed generation's worker may still be posting. Clears itself at the cap.
+    private mutating func staleWorkerMayPost() -> Bool {
+        guard let stale = stalePosting else { return false }
+        if clock.nowNanos >= stale.untilNanos {
+            stalePosting = nil
+            return false
+        }
+        return true
     }
 
     private mutating func abortReplacement() {
