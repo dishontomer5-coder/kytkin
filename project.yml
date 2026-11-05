@@ -1,0 +1,53 @@
+# P0-5: XcodeGen spec. Run `xcodegen generate` (or ./scripts/build.sh) to create Kytkin.xcodeproj.
+# The .xcodeproj is generated and gitignored; edit this file instead.
+name: Kytkin
+options:
+  bundleIdPrefix: io.github.kytkin
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MARKETING_VERSION: "0.0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    # Local ad-hoc signing: no Apple team needed. Developer ID signing comes in Phase 4.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+targets:
+  Kytkin:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin
+        PRODUCT_NAME: Kytkin
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES # menu-bar only, no Dock icon
+        INFOPLIST_KEY_CFBundleDisplayName: Kytkin
+        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License"
+        ENABLE_HARDENED_RUNTIME: YES
+        # Not sandboxed for now: event taps / Accessibility need it (to be confirmed in P1-8).
+        ENABLE_APP_SANDBOX: NO
+        COMBINE_HIDPI_IMAGES: YES
+    scheme:
+      testTargets:
+        - KytkinTests
+  KytkinTests:
+    type: bundle.unit-test
+    platform: macOS
+    # P0-6: logic tests with no host app. The pure Core sources are compiled straight
+    # into the test bundle, so tests never launch the menu-bar app.
+    sources:
+      - path: Tests/KytkinTests
+      - path: Sources/Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
