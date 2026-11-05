@@ -269,4 +269,41 @@ final class RuleEngineTests: XCTestCase {
         XCTAssertEqual(engine.learnableScope(for: ctx(slack, host: "", domain: "", chat: ChatKey(kind: .id, value: ""))),
                        .app(bundleID: slack))
     }
+
+    // MARK: - QA additions (P2-9 review)
+
+    func testLearnableScopeWithPinnedHostOverrideReturnsThatOverride() {
+        // The learner must see the pinned override (and do nothing) instead of learning a shadowed domain rule.
+        let pinned = rule(.siteHost(host: "docs.google.com"), us, .pinned)
+        let engine = RuleEngine(rules: [pinned, rule(.site(domain: "google.com"), hebrew)])
+        let scope = engine.learnableScope(for: ctx(chrome, host: "docs.google.com", domain: "google.com"))
+        XCTAssertEqual(scope, .siteHost(host: "docs.google.com"))
+        XCTAssertEqual(engine.rule(for: scope)?.origin, .pinned)
+    }
+
+    func testLearnableScopeWithEmptyBundleIDIsEmptyAppScopeThatNeverMatches() {
+        let engine = RuleEngine(rules: [])
+        let scope = engine.learnableScope(for: ctx("", chat: chatKey))
+        XCTAssertEqual(scope, .app(bundleID: ""))
+        // A rule stored under that scope is inert.
+        let stored = RuleEngine(rules: [rule(scope, hebrew)])
+        XCTAssertEqual(stored.resolve(ctx("")).level, .none)
+        XCTAssertNil(stored.rule(for: scope))
+    }
+
+    func testIgnoredPrivateWindowFallsThroughToDefaultWhenNoAppRule() {
+        let engine = RuleEngine(rules: [rule(.site(domain: "google.com"), hebrew)], defaultBehavior: .switchTo(abc),
+                                ignorePrivateWindowsCompletely: true)
+        let r = engine.resolve(ctx(chrome, host: "mail.google.com", domain: "google.com", isPrivate: true))
+        XCTAssertEqual(r.level, .defaultRule)
+        XCTAssertEqual(r.target, abc)
+        XCTAssertNil(r.matched)
+        XCTAssertEqual(engine.learnableScope(for: ctx(chrome, domain: "google.com", isPrivate: true)), .app(bundleID: chrome))
+    }
+
+    func testPinnedAppRuleSurvivesLearnedDuplicateInRuleForScope() {
+        let pinned = rule(.app(bundleID: slack), hebrew, .pinned, at: 0)
+        let learned = rule(.app(bundleID: slack), abc, .learned, at: 500)
+        XCTAssertEqual(RuleEngine(rules: [learned, pinned]).rule(for: .app(bundleID: slack)), pinned)
+    }
 }
