@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 7,
+  "languagePair": { "a": "com.apple.keylayout.ABC", "b": "com.apple.keylayout.Russian" },
+  "general": { "enabled": true, "learnFromManualSwitches": false, "menuBarLabel": "flagEmoji", "somethingNew": 3 },
+  "convert": { "doubleShiftSides": "leftOnly", "doubleShiftWindowMs": 350 },
+  "rules": [
+    { "id": "6F1C0000-0000-4000-8000-000000000001", "scope": { "kind": "app", "bundleID": "com.apple.Safari" },
+      "inputSource": "com.apple.keylayout.Russian", "origin": "pinned", "updatedAt": "2027-03-01T08:00:00Z" },
+    { "id": "6F1C0000-0000-4000-8000-000000000002", "scope": { "kind": "window", "windowID": 42 },
+      "inputSource": "com.apple.keylayout.ABC", "origin": "learned", "updatedAt": "2027-03-01T08:00:00Z" }
+  ],
+  "teleport": { "enabled": true }
+}
