@@ -1,0 +1,441 @@
+{
+  "format" : "kytkin-layoutmap",
+  "id" : "com.apple.keylayout.Hebrew",
+  "kbdType" : 61,
+  "keys" : {
+    "0" : {
+      "capsLock" : "a",
+      "option" : "שׂ",
+      "plain" : "ש",
+      "shift" : "שׁ",
+      "shiftOption" : "שׂ"
+    },
+    "1" : {
+      "capsLock" : "s",
+      "option" : "‎",
+      "plain" : "ד"
+    },
+    "11" : {
+      "capsLock" : "b",
+      "option" : "‘",
+      "plain" : "נ",
+      "shiftOption" : "֜"
+    },
+    "12" : {
+      "capsLock" : "q",
+      "option" : "…",
+      "plain" : "/",
+      "shiftOption" : "…"
+    },
+    "13" : {
+      "capsLock" : "w",
+      "option" : "ָ",
+      "plain" : "׳",
+      "shiftOption" : "ָ"
+    },
+    "14" : {
+      "capsLock" : "e",
+      "plain" : "ק"
+    },
+    "15" : {
+      "capsLock" : "r",
+      "plain" : "ר"
+    },
+    "16" : {
+      "capsLock" : "y",
+      "plain" : "ט"
+    },
+    "17" : {
+      "capsLock" : "t",
+      "plain" : "א"
+    },
+    "18" : {
+      "capsLock" : "1",
+      "option" : "ֲ",
+      "plain" : "1",
+      "shift" : "!",
+      "shiftOption" : "ֲ"
+    },
+    "19" : {
+      "capsLock" : "2",
+      "option" : "ֳ",
+      "plain" : "2",
+      "shift" : "@",
+      "shiftOption" : "ֳ"
+    },
+    "2" : {
+      "capsLock" : "d",
+      "option" : "‏",
+      "plain" : "ג",
+      "shift" : "„"
+    },
+    "20" : {
+      "capsLock" : "3",
+      "option" : "ֱ",
+      "plain" : "3",
+      "shift" : "#",
+      "shiftOption" : "ֱ"
+    },
+    "21" : {
+      "capsLock" : "4",
+      "option" : "ִ",
+      "plain" : "4",
+      "shift" : "$",
+      "shiftOption" : "ִ"
+    },
+    "22" : {
+      "capsLock" : "6",
+      "option" : "ַ",
+      "plain" : "6",
+      "shift" : "^",
+      "shiftOption" : "ַ"
+    },
+    "23" : {
+      "capsLock" : "5",
+      "option" : "ֵ",
+      "plain" : "5",
+      "shift" : "%",
+      "shiftOption" : "ֵ"
+    },
+    "24" : {
+      "capsLock" : "=",
+      "option" : "ֹ",
+      "plain" : "=",
+      "shift" : "+",
+      "shiftOption" : "ֹ"
+    },
+    "25" : {
+      "capsLock" : "9",
+      "option" : "ֶ",
+      "plain" : "9",
+      "shift" : ")",
+      "shiftOption" : "ֶ"
+    },
+    "26" : {
+      "capsLock" : "7",
+      "option" : "ָ",
+      "plain" : "7",
+      "shift" : "₪",
+      "shiftOption" : "ָ"
+    },
+    "27" : {
+      "capsLock" : "-",
+      "option" : "-",
+      "plain" : "-",
+      "shift" : "_",
+      "shiftOption" : "-"
+    },
+    "28" : {
+      "capsLock" : "8",
+      "option" : "ֻ",
+      "plain" : "8",
+      "shift" : "*",
+      "shiftOption" : "ֻ"
+    },
+    "29" : {
+      "capsLock" : "0",
+      "option" : "ְ",
+      "plain" : "0",
+      "shift" : "(",
+      "shiftOption" : "ְ"
+    },
+    "3" : {
+      "capsLock" : "f",
+      "option" : "€",
+      "plain" : "כ",
+      "shiftOption" : "€"
+    },
+    "30" : {
+      "capsLock" : "]",
+      "plain" : "[",
+      "shift" : "{"
+    },
+    "31" : {
+      "capsLock" : "o",
+      "plain" : "ם"
+    },
+    "32" : {
+      "capsLock" : "u",
+      "option" : "וּ",
+      "plain" : "ו",
+      "shift" : "וֹ",
+      "shiftOption" : "וּ"
+    },
+    "33" : {
+      "capsLock" : "[",
+      "plain" : "]",
+      "shift" : "}"
+    },
+    "34" : {
+      "capsLock" : "i",
+      "plain" : "ן"
+    },
+    "35" : {
+      "capsLock" : "p",
+      "plain" : "פ"
+    },
+    "37" : {
+      "capsLock" : "l",
+      "option" : "’",
+      "plain" : "ך"
+    },
+    "38" : {
+      "capsLock" : "j",
+      "option" : "”",
+      "plain" : "ח"
+    },
+    "39" : {
+      "capsLock" : "'",
+      "option" : "ֲ",
+      "plain" : ",",
+      "shift" : "״",
+      "shiftOption" : "ֲ"
+    },
+    "4" : {
+      "capsLock" : "h",
+      "option" : "ײַ",
+      "plain" : "י",
+      "shiftOption" : "ײַ"
+    },
+    "40" : {
+      "capsLock" : "k",
+      "option" : "֜",
+      "plain" : "ל",
+      "shift" : "לֹ"
+    },
+    "41" : {
+      "capsLock" : ";",
+      "option" : ";",
+      "plain" : "ף",
+      "shift" : ":",
+      "shiftOption" : ";"
+    },
+    "42" : {
+      "capsLock" : "\\",
+      "option" : "־",
+      "plain" : "ֿ",
+      "shift" : "|",
+      "shiftOption" : "־"
+    },
+    "43" : {
+      "capsLock" : ",",
+      "option" : "ּ",
+      "plain" : "ת",
+      "shift" : ">",
+      "shiftOption" : "ּ"
+    },
+    "44" : {
+      "capsLock" : "/",
+      "plain" : ".",
+      "shift" : "?"
+    },
+    "45" : {
+      "capsLock" : "n",
+      "option" : "’",
+      "plain" : "מ",
+      "shiftOption" : "’"
+    },
+    "46" : {
+      "capsLock" : "m",
+      "option" : "שׁ",
+      "plain" : "צ",
+      "shiftOption" : "שׁ"
+    },
+    "47" : {
+      "capsLock" : ".",
+      "plain" : "ץ",
+      "shift" : "<"
+    },
+    "49" : {
+      "capsLock" : " ",
+      "option" : " ",
+      "plain" : " ",
+      "shift" : " ",
+      "shiftOption" : " "
+    },
+    "5" : {
+      "capsLock" : "g",
+      "option" : "֞",
+      "plain" : "ע"
+    },
+    "50" : {
+      "capsLock" : "`",
+      "plain" : ";",
+      "shift" : "~"
+    },
+    "53" : {
+      "option" : "‏",
+      "shiftOption" : "‎"
+    },
+    "6" : {
+      "capsLock" : "z",
+      "option" : "–",
+      "plain" : "ז",
+      "shiftOption" : "–"
+    },
+    "65" : {
+      "capsLock" : ".",
+      "option" : ".",
+      "plain" : ".",
+      "shift" : ".",
+      "shiftOption" : "."
+    },
+    "66" : {
+      "option" : "*",
+      "shift" : "*",
+      "shiftOption" : "*"
+    },
+    "67" : {
+      "capsLock" : "*",
+      "option" : "*",
+      "plain" : "*",
+      "shift" : "*",
+      "shiftOption" : "*"
+    },
+    "69" : {
+      "capsLock" : "+",
+      "option" : "+",
+      "plain" : "+",
+      "shift" : "+",
+      "shiftOption" : "+"
+    },
+    "7" : {
+      "capsLock" : "x",
+      "option" : "—",
+      "plain" : "ס",
+      "shiftOption" : "—"
+    },
+    "70" : {
+      "option" : "+",
+      "shift" : "+",
+      "shiftOption" : "+"
+    },
+    "72" : {
+      "option" : "=",
+      "shift" : "=",
+      "shiftOption" : "="
+    },
+    "75" : {
+      "capsLock" : "/",
+      "option" : "/",
+      "plain" : "/",
+      "shift" : "/",
+      "shiftOption" : "/"
+    },
+    "77" : {
+      "option" : "/",
+      "shift" : "/",
+      "shiftOption" : "/"
+    },
+    "78" : {
+      "capsLock" : "-",
+      "option" : "-",
+      "plain" : "-",
+      "shift" : "-",
+      "shiftOption" : "-"
+    },
+    "8" : {
+      "capsLock" : "c",
+      "option" : "“",
+      "plain" : "ב",
+      "shift" : "לֹ",
+      "shiftOption" : "֞"
+    },
+    "81" : {
+      "capsLock" : "=",
+      "option" : "=",
+      "plain" : "=",
+      "shift" : "=",
+      "shiftOption" : "="
+    },
+    "82" : {
+      "capsLock" : "0",
+      "option" : "0",
+      "plain" : "0",
+      "shift" : "0",
+      "shiftOption" : "0"
+    },
+    "83" : {
+      "capsLock" : "1",
+      "option" : "1",
+      "plain" : "1",
+      "shift" : "1",
+      "shiftOption" : "1"
+    },
+    "84" : {
+      "capsLock" : "2",
+      "option" : "2",
+      "plain" : "2",
+      "shift" : "2",
+      "shiftOption" : "2"
+    },
+    "85" : {
+      "capsLock" : "3",
+      "option" : "3",
+      "plain" : "3",
+      "shift" : "3",
+      "shiftOption" : "3"
+    },
+    "86" : {
+      "capsLock" : "4",
+      "option" : "4",
+      "plain" : "4",
+      "shift" : "4",
+      "shiftOption" : "4"
+    },
+    "87" : {
+      "capsLock" : "5",
+      "option" : "5",
+      "plain" : "5",
+      "shift" : "5",
+      "shiftOption" : "5"
+    },
+    "88" : {
+      "capsLock" : "6",
+      "option" : "6",
+      "plain" : "6",
+      "shift" : "6",
+      "shiftOption" : "6"
+    },
+    "89" : {
+      "capsLock" : "7",
+      "option" : "7",
+      "plain" : "7",
+      "shift" : "7",
+      "shiftOption" : "7"
+    },
+    "9" : {
+      "capsLock" : "v",
+      "option" : "”",
+      "plain" : "ה",
+      "shiftOption" : "”"
+    },
+    "91" : {
+      "capsLock" : "8",
+      "option" : "8",
+      "plain" : "8",
+      "shift" : "8",
+      "shiftOption" : "8"
+    },
+    "92" : {
+      "capsLock" : "9",
+      "option" : "9",
+      "plain" : "9",
+      "shift" : "9",
+      "shiftOption" : "9"
+    },
+    "93" : {
+      "plain" : "¥",
+      "shift" : "|"
+    },
+    "94" : {
+      "capsLock" : "`",
+      "plain" : ";",
+      "shift" : "~"
+    }
+  },
+  "language" : "he",
+  "name" : "Hebrew",
+  "source" : "system",
+  "version" : 1
+}

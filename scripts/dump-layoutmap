@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# P2-6: Build and run the headless dump-layoutmap tool (001 §8). Reads keyboard layouts with TIS +
+# UCKeyTranslate and writes kytkin-layoutmap JSON. Never switches input sources; no GUI, no permission.
+#   ./scripts/dump-layoutmap                 regenerate the 5 fixtures in Tests/KytkinTests/Fixtures/layoutmaps/
+#   ./scripts/dump-layoutmap --out DIR ID…   dump other layouts
+#   ./scripts/dump-layoutmap --list          list installed keyboard layouts
+# The tool is compiled from the app's own sources (System/Input adapter + Core Layout/Model).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+BIN="build/tools/dump-layoutmap"
+mkdir -p "$(dirname "$BIN")"
+
+SOURCES=(
+  Tools/dump-layoutmap/main.swift
+  Sources/System/Input/UCKeyTranslateLayoutMapProvider.swift
+  Sources/Core/Layout/*.swift
+  Sources/Core/Model/InputSourceID.swift
+  Sources/Core/Model/InputSourceInfo.swift
+)
+
+xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -o "$BIN" "${SOURCES[@]}"
+exec "$BIN" "$@"

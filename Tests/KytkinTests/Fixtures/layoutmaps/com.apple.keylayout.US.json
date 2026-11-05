@@ -1,0 +1,498 @@
+{
+  "deadKeys" : {
+    "14" : [
+      "option"
+    ],
+    "32" : [
+      "option"
+    ],
+    "34" : [
+      "option"
+    ],
+    "45" : [
+      "option"
+    ],
+    "50" : [
+      "option"
+    ]
+  },
+  "format" : "kytkin-layoutmap",
+  "id" : "com.apple.keylayout.US",
+  "kbdType" : 61,
+  "keys" : {
+    "0" : {
+      "capsLock" : "A",
+      "option" : "å",
+      "plain" : "a",
+      "shift" : "A",
+      "shiftOption" : "Å"
+    },
+    "1" : {
+      "capsLock" : "S",
+      "option" : "ß",
+      "plain" : "s",
+      "shift" : "S",
+      "shiftOption" : "Í"
+    },
+    "10" : {
+      "capsLock" : "§",
+      "option" : "§",
+      "plain" : "§",
+      "shift" : "±",
+      "shiftOption" : "±"
+    },
+    "11" : {
+      "capsLock" : "B",
+      "option" : "∫",
+      "plain" : "b",
+      "shift" : "B",
+      "shiftOption" : "ı"
+    },
+    "12" : {
+      "capsLock" : "Q",
+      "option" : "œ",
+      "plain" : "q",
+      "shift" : "Q",
+      "shiftOption" : "Œ"
+    },
+    "13" : {
+      "capsLock" : "W",
+      "option" : "∑",
+      "plain" : "w",
+      "shift" : "W",
+      "shiftOption" : "„"
+    },
+    "14" : {
+      "capsLock" : "E",
+      "option" : "´",
+      "plain" : "e",
+      "shift" : "E",
+      "shiftOption" : "´"
+    },
+    "15" : {
+      "capsLock" : "R",
+      "option" : "®",
+      "plain" : "r",
+      "shift" : "R",
+      "shiftOption" : "‰"
+    },
+    "16" : {
+      "capsLock" : "Y",
+      "option" : "¥",
+      "plain" : "y",
+      "shift" : "Y",
+      "shiftOption" : "Á"
+    },
+    "17" : {
+      "capsLock" : "T",
+      "option" : "†",
+      "plain" : "t",
+      "shift" : "T",
+      "shiftOption" : "ˇ"
+    },
+    "18" : {
+      "capsLock" : "1",
+      "option" : "¡",
+      "plain" : "1",
+      "shift" : "!",
+      "shiftOption" : "⁄"
+    },
+    "19" : {
+      "capsLock" : "2",
+      "option" : "™",
+      "plain" : "2",
+      "shift" : "@",
+      "shiftOption" : "€"
+    },
+    "2" : {
+      "capsLock" : "D",
+      "option" : "∂",
+      "plain" : "d",
+      "shift" : "D",
+      "shiftOption" : "Î"
+    },
+    "20" : {
+      "capsLock" : "3",
+      "option" : "£",
+      "plain" : "3",
+      "shift" : "#",
+      "shiftOption" : "‹"
+    },
+    "21" : {
+      "capsLock" : "4",
+      "option" : "¢",
+      "plain" : "4",
+      "shift" : "$",
+      "shiftOption" : "›"
+    },
+    "22" : {
+      "capsLock" : "6",
+      "option" : "§",
+      "plain" : "6",
+      "shift" : "^",
+      "shiftOption" : "ﬂ"
+    },
+    "23" : {
+      "capsLock" : "5",
+      "option" : "∞",
+      "plain" : "5",
+      "shift" : "%",
+      "shiftOption" : "ﬁ"
+    },
+    "24" : {
+      "capsLock" : "=",
+      "option" : "≠",
+      "plain" : "=",
+      "shift" : "+",
+      "shiftOption" : "±"
+    },
+    "25" : {
+      "capsLock" : "9",
+      "option" : "ª",
+      "plain" : "9",
+      "shift" : "(",
+      "shiftOption" : "·"
+    },
+    "26" : {
+      "capsLock" : "7",
+      "option" : "¶",
+      "plain" : "7",
+      "shift" : "&",
+      "shiftOption" : "‡"
+    },
+    "27" : {
+      "capsLock" : "-",
+      "option" : "–",
+      "plain" : "-",
+      "shift" : "_",
+      "shiftOption" : "—"
+    },
+    "28" : {
+      "capsLock" : "8",
+      "option" : "•",
+      "plain" : "8",
+      "shift" : "*",
+      "shiftOption" : "°"
+    },
+    "29" : {
+      "capsLock" : "0",
+      "option" : "º",
+      "plain" : "0",
+      "shift" : ")",
+      "shiftOption" : "‚"
+    },
+    "3" : {
+      "capsLock" : "F",
+      "option" : "ƒ",
+      "plain" : "f",
+      "shift" : "F",
+      "shiftOption" : "Ï"
+    },
+    "30" : {
+      "capsLock" : "]",
+      "option" : "‘",
+      "plain" : "]",
+      "shift" : "}",
+      "shiftOption" : "’"
+    },
+    "31" : {
+      "capsLock" : "O",
+      "option" : "ø",
+      "plain" : "o",
+      "shift" : "O",
+      "shiftOption" : "Ø"
+    },
+    "32" : {
+      "capsLock" : "U",
+      "option" : "¨",
+      "plain" : "u",
+      "shift" : "U",
+      "shiftOption" : "¨"
+    },
+    "33" : {
+      "capsLock" : "[",
+      "option" : "“",
+      "plain" : "[",
+      "shift" : "{",
+      "shiftOption" : "”"
+    },
+    "34" : {
+      "capsLock" : "I",
+      "option" : "ˆ",
+      "plain" : "i",
+      "shift" : "I",
+      "shiftOption" : "ˆ"
+    },
+    "35" : {
+      "capsLock" : "P",
+      "option" : "π",
+      "plain" : "p",
+      "shift" : "P",
+      "shiftOption" : "∏"
+    },
+    "37" : {
+      "capsLock" : "L",
+      "option" : "¬",
+      "plain" : "l",
+      "shift" : "L",
+      "shiftOption" : "Ò"
+    },
+    "38" : {
+      "capsLock" : "J",
+      "option" : "∆",
+      "plain" : "j",
+      "shift" : "J",
+      "shiftOption" : "Ô"
+    },
+    "39" : {
+      "capsLock" : "'",
+      "option" : "æ",
+      "plain" : "'",
+      "shift" : "\"",
+      "shiftOption" : "Æ"
+    },
+    "4" : {
+      "capsLock" : "H",
+      "option" : "˙",
+      "plain" : "h",
+      "shift" : "H",
+      "shiftOption" : "Ó"
+    },
+    "40" : {
+      "capsLock" : "K",
+      "option" : "˚",
+      "plain" : "k",
+      "shift" : "K"
+    },
+    "41" : {
+      "capsLock" : ";",
+      "option" : "…",
+      "plain" : ";",
+      "shift" : ":",
+      "shiftOption" : "Ú"
+    },
+    "42" : {
+      "capsLock" : "\\",
+      "option" : "«",
+      "plain" : "\\",
+      "shift" : "|",
+      "shiftOption" : "»"
+    },
+    "43" : {
+      "capsLock" : ",",
+      "option" : "≤",
+      "plain" : ",",
+      "shift" : "<",
+      "shiftOption" : "¯"
+    },
+    "44" : {
+      "capsLock" : "/",
+      "option" : "÷",
+      "plain" : "/",
+      "shift" : "?",
+      "shiftOption" : "¿"
+    },
+    "45" : {
+      "capsLock" : "N",
+      "option" : "˜",
+      "plain" : "n",
+      "shift" : "N",
+      "shiftOption" : "˜"
+    },
+    "46" : {
+      "capsLock" : "M",
+      "option" : "µ",
+      "plain" : "m",
+      "shift" : "M",
+      "shiftOption" : "Â"
+    },
+    "47" : {
+      "capsLock" : ".",
+      "option" : "≥",
+      "plain" : ".",
+      "shift" : ">",
+      "shiftOption" : "˘"
+    },
+    "49" : {
+      "capsLock" : " ",
+      "option" : " ",
+      "plain" : " ",
+      "shift" : " ",
+      "shiftOption" : " "
+    },
+    "5" : {
+      "capsLock" : "G",
+      "option" : "©",
+      "plain" : "g",
+      "shift" : "G",
+      "shiftOption" : "˝"
+    },
+    "50" : {
+      "capsLock" : "`",
+      "option" : "`",
+      "plain" : "`",
+      "shift" : "~",
+      "shiftOption" : "`"
+    },
+    "6" : {
+      "capsLock" : "Z",
+      "option" : "Ω",
+      "plain" : "z",
+      "shift" : "Z",
+      "shiftOption" : "¸"
+    },
+    "65" : {
+      "capsLock" : ".",
+      "option" : ".",
+      "plain" : ".",
+      "shift" : ".",
+      "shiftOption" : "."
+    },
+    "66" : {
+      "shift" : "*",
+      "shiftOption" : "*"
+    },
+    "67" : {
+      "capsLock" : "*",
+      "option" : "*",
+      "plain" : "*",
+      "shift" : "*",
+      "shiftOption" : "*"
+    },
+    "69" : {
+      "capsLock" : "+",
+      "option" : "+",
+      "plain" : "+",
+      "shift" : "+",
+      "shiftOption" : "+"
+    },
+    "7" : {
+      "capsLock" : "X",
+      "option" : "≈",
+      "plain" : "x",
+      "shift" : "X",
+      "shiftOption" : "˛"
+    },
+    "70" : {
+      "shift" : "+",
+      "shiftOption" : "+"
+    },
+    "72" : {
+      "shift" : "=",
+      "shiftOption" : "="
+    },
+    "75" : {
+      "capsLock" : "/",
+      "option" : "/",
+      "plain" : "/",
+      "shift" : "/",
+      "shiftOption" : "/"
+    },
+    "77" : {
+      "shift" : "/",
+      "shiftOption" : "/"
+    },
+    "78" : {
+      "capsLock" : "-",
+      "option" : "-",
+      "plain" : "-",
+      "shift" : "-",
+      "shiftOption" : "-"
+    },
+    "8" : {
+      "capsLock" : "C",
+      "option" : "ç",
+      "plain" : "c",
+      "shift" : "C",
+      "shiftOption" : "Ç"
+    },
+    "81" : {
+      "capsLock" : "=",
+      "option" : "=",
+      "plain" : "=",
+      "shift" : "=",
+      "shiftOption" : "="
+    },
+    "82" : {
+      "capsLock" : "0",
+      "option" : "0",
+      "plain" : "0",
+      "shift" : "0",
+      "shiftOption" : "0"
+    },
+    "83" : {
+      "capsLock" : "1",
+      "option" : "1",
+      "plain" : "1",
+      "shift" : "1",
+      "shiftOption" : "1"
+    },
+    "84" : {
+      "capsLock" : "2",
+      "option" : "2",
+      "plain" : "2",
+      "shift" : "2",
+      "shiftOption" : "2"
+    },
+    "85" : {
+      "capsLock" : "3",
+      "option" : "3",
+      "plain" : "3",
+      "shift" : "3",
+      "shiftOption" : "3"
+    },
+    "86" : {
+      "capsLock" : "4",
+      "option" : "4",
+      "plain" : "4",
+      "shift" : "4",
+      "shiftOption" : "4"
+    },
+    "87" : {
+      "capsLock" : "5",
+      "option" : "5",
+      "plain" : "5",
+      "shift" : "5",
+      "shiftOption" : "5"
+    },
+    "88" : {
+      "capsLock" : "6",
+      "option" : "6",
+      "plain" : "6",
+      "shift" : "6",
+      "shiftOption" : "6"
+    },
+    "89" : {
+      "capsLock" : "7",
+      "option" : "7",
+      "plain" : "7",
+      "shift" : "7",
+      "shiftOption" : "7"
+    },
+    "9" : {
+      "capsLock" : "V",
+      "option" : "√",
+      "plain" : "v",
+      "shift" : "V",
+      "shiftOption" : "◊"
+    },
+    "91" : {
+      "capsLock" : "8",
+      "option" : "8",
+      "plain" : "8",
+      "shift" : "8",
+      "shiftOption" : "8"
+    },
+    "92" : {
+      "capsLock" : "9",
+      "option" : "9",
+      "plain" : "9",
+      "shift" : "9",
+      "shiftOption" : "9"
+    }
+  },
+  "language" : "en",
+  "name" : "U.S.",
+  "source" : "system",
+  "version" : 1
+}
