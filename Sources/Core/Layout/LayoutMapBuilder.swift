@@ -41,16 +41,11 @@ enum LayoutMapBuilder {
 
     /// P2-6: `text` if a key may "type" it, else `nil`. Drops what isn't text (R6 §2): empty output, any
     /// control character (Return, Tab, Esc, arrows' U+001C–1F, Delete U+007F, keypad Enter U+0003…),
-    /// private-use function-key codes (U+F700–F8FF), and anything over the codec's grapheme limit.
-    /// Invisible format characters (LRM/RLM) and NBSP are real text and are kept.
+    /// private-use function-key codes (U+F700–F8FF), line/paragraph separators, and anything over the
+    /// codec's grapheme or scalar limit. Invisible format characters (LRM/RLM) and NBSP are real text and are kept.
+    /// P2-30: the same predicate the importer uses (`LayoutMap.cellViolation`), so a generated map always
+    /// passes the decoder and `jsonData()`.
     static func typedText(_ text: String) -> String? {
-        guard !text.isEmpty, text.count <= LayoutMap.maxGraphemesPerCell else { return nil }
-        let bad = text.unicodeScalars.contains { scalar in
-            switch scalar.properties.generalCategory {
-            case .control, .privateUse: true
-            default: false
-            }
-        }
-        return bad ? nil : text
+        LayoutMap.cellViolation(text) == nil ? text : nil
     }
 }

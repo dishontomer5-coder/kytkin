@@ -49,16 +49,12 @@ extension LayoutMap {
                     throw LayoutMapError.unknownLayer(keyCode: code, layer: layerKey.stringValue)
                 }
                 let text = try cellContainer.decode(String.self, forKey: layerKey)
-                guard !text.isEmpty else { throw LayoutMapError.emptyString(keyCode: code, layer: layer) }
-                guard text.count <= LayoutMap.maxGraphemesPerCell else {
-                    throw LayoutMapError.tooManyCharacters(keyCode: code, layer: layer)
-                }
                 // Typed text only: a control character (newline, tab, backspace, NUL…) would be replayed into
                 // the user's app on convert (e.g. a newline runs a command in Terminal). The system provider
-                // filters control output too (001 §2.2).
-                guard !text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else {
-                    throw LayoutMapError.controlCharacter(keyCode: code, layer: layer)
-                }
+                // filters the same output (001 §2.2).
+                // P2-30: the rules (non-empty, ≤ 4 graphemes, ≤ 16 scalars, no Cc/Co/Zl/Zp) are shared with
+                // `LayoutMapBuilder` and `jsonData()`, in LayoutMap+CellRules.swift.
+                try LayoutMap.checkCell(text, keyCode: code, layer: layer)
                 cell[layer] = text
             }
             keys[code] = cell
