@@ -134,6 +134,18 @@ final class SwitchAttributorTests: XCTestCase {
         XCTAssertNil(a.didObserve(current: abc))
     }
 
+    // MARK: - Failed select
+
+    func testFailedSelectDropsTokenSoUserSwitchIsExternal() {
+        // P2-10 QA: TIS refused the select, so no notification comes. The user's own switch to that
+        // source a moment later must not be taken for ours.
+        attributor.willSelect(hebrew)
+        attributor.selectFailed()
+        XCTAssertFalse(attributor.hasPendingToken(atNanos: clock.nowNanos))
+        clock.advance(byMilliseconds: 100)
+        XCTAssertEqual(attributor.didObserve(current: hebrew), .external(hebrew, atNanos: clock.nowNanos))
+    }
+
     // MARK: - Timestamped overloads (001 signatures)
 
     func testTimestampedOverloadsIgnoreClock() {

@@ -189,13 +189,44 @@ final class RuleLearnerTests: XCTestCase {
         var l = learner()
         enter(ctx(slack), &l)
         XCTAssertNil(externalSwitch(hebrew, &l))
-        XCTAssertEqual(l.handle(.ourSwitch), .discard(.ourSwitch))
+        XCTAssertEqual(l.handle(.ourSwitch(abc)), .discard(.ourSwitch))
         XCTAssertNil(words(2, &l))
+    }
+
+    func testSwitchBackToOurChoiceCancels() {
+        // P2-10 QA: Kytkin picks Hebrew; the user tries ABC, then goes back to Hebrew. That's a change of mind.
+        var l = learner(current: abc)
+        enter(ctx(slack), &l)
+        XCTAssertNil(l.handle(.ourSwitch(hebrew)))
+        XCTAssertNil(externalSwitch(abc, &l))
+        clock.advance(byMilliseconds: 200)
+        XCTAssertEqual(externalSwitch(hebrew, &l), .discard(.switchedBack))
+        XCTAssertNil(words(2, &l))
+    }
+
+    func testSwitchBackAfterCommitStartsNewCandidate() {
+        // Once committed, switching back is a new preference, not a cancel.
+        var l = learner(current: abc)
+        enter(ctx(slack), &l)
+        XCTAssertNil(externalSwitch(hebrew, &l))
+        XCTAssertEqual(words(2, &l), .learn(.app(bundleID: slack), hebrew))
+        XCTAssertNil(externalSwitch(abc, &l))
+        XCTAssertEqual(words(2, &l), .learn(.app(bundleID: slack), abc))
+    }
+
+    func testDwellCancelledByContextChange() {
+        var l = learner(tap: false)
+        enter(ctx(slack), &l)
+        XCTAssertNil(externalSwitch(hebrew, &l))
+        clock.advance(bySeconds: 2)
+        XCTAssertEqual(l.handle(.contextChanged(ctx(chrome), atNanos: clock.nowNanos)), .discard(.contextChanged))
+        clock.advance(bySeconds: 5)
+        XCTAssertNil(l.handle(.tick(atNanos: clock.nowNanos)))
     }
 
     func testCancelsWithNoCandidateReturnNil() {
         var l = learner()
-        XCTAssertNil(l.handle(.ourSwitch))
+        XCTAssertNil(l.handle(.ourSwitch(abc)))
         XCTAssertNil(l.handle(.contextChanged(ctx(slack), atNanos: clock.nowNanos)))
         XCTAssertNil(l.handle(.wordBoundary(atNanos: clock.nowNanos)))
         XCTAssertNil(l.handle(.tick(atNanos: clock.nowNanos)))
@@ -332,7 +363,7 @@ final class RuleLearnerTests: XCTestCase {
 
         func feed(_ change: InputSourceChange?) -> LearnOutcome? {
             switch change {
-            case .ours?: return l.handle(.ourSwitch)
+            case .ours(let id)?: return l.handle(.ourSwitch(id))
             case .external(let id, let t)?: return l.handle(.externalSwitch(id, atNanos: t))
             case nil: return nil
             }

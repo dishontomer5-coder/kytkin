@@ -33,8 +33,9 @@ enum LearnerInput: Sendable, Equatable {
     case externalSwitch(InputSourceID, atNanos: UInt64)
     case wordBoundary(atNanos: UInt64)
     case tick(atNanos: UInt64)
-    /// Kytkin switched (an `.ours` change). The current source is now Kytkin's choice, not the user's.
-    case ourSwitch
+    /// Kytkin switched (an `.ours` change) to this source. P2-10 QA: it carries the id (001 §2.2 has none) so a
+    /// user's switch away and back to Kytkin's choice still counts as a switch back.
+    case ourSwitch(InputSourceID)
 }
 
 struct LearnerConfig: Sendable, Equatable {
@@ -84,7 +85,7 @@ struct RuleLearner {
 
     private var context: Context?
     private var contextChangedAt: UInt64?
-    /// Last source the user picked (nil after our own switch, since we don't know which one we picked).
+    /// The current source as last reported (the user's or Kytkin's). nil = unknown.
     private var currentSource: InputSourceID?
     private var candidate: Candidate?
 
@@ -110,8 +111,8 @@ struct RuleLearner {
             contextChangedAt = t
             return cancel(.contextChanged)
 
-        case .ourSwitch:
-            currentSource = nil
+        case .ourSwitch(let id):
+            currentSource = id
             return cancel(.ourSwitch)
 
         case .externalSwitch(let id, let t):

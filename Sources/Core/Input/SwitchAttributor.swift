@@ -13,6 +13,8 @@
 //   - `willSelect` for the source that's already current stores no token: TIS sends no notification
 //     for a no-op select, and a stale token could swallow a real user switch back to it.
 //   - A newer `willSelect` replaces the older token (only the latest request is expected).
+//   - If `TISSelectInputSource` fails, the switcher calls `selectFailed()`: no notification will come, and a
+//     leftover token would swallow a real user switch to that source within 500 ms (P2-10 QA).
 //
 // Time comes from the injected `Clock` (design.md) or, in the `atNanos:` overloads (the 001 contract),
 // from the caller. Both are monotonic nanoseconds.
@@ -67,6 +69,11 @@ struct SwitchAttributor {
         }
         let (deadline, overflow) = now.addingReportingOverflow(tokenWindowNanos)
         token = Token(target: id, deadline: overflow ? .max : deadline)
+    }
+
+    /// P2-10 QA: the select didn't happen (TIS returned an error), so drop the token it set.
+    mutating func selectFailed() {
+        token = nil
     }
 
     /// nil = duplicate (the source didn't change since the last notification).
