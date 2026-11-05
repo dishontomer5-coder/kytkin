@@ -1,0 +1,11 @@
+{
+  "format": "kytkin-layoutmap",
+  "version": 1,
+  "id": "user.t",
+  "name": "T",
+  "language": "he",
+  "source": "imported",
+  "keys": {
+    "0": { "plain": "á́́́́́́́́́́́́́́́" }
+  }
+}

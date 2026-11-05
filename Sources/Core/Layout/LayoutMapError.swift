@@ -27,6 +27,18 @@ enum LayoutMapError: Error, Equatable, Sendable {
     case tooManyCharacters(keyCode: UInt16, layer: KeyLayer)
     /// A cell contains a control character (newline, tab, NUL…), which a key must not type.
     case controlCharacter(keyCode: UInt16, layer: KeyLayer)
+    /// P2-30: `source: "system"` on import. System maps are generated, export only (001 §4.3).
+    case systemSourceImport
+    /// P2-30: the id (with its `user.` prefix) uses something other than `[A-Za-z0-9._-]`.
+    case invalidIDCharacters(String)
+    /// P2-30: the id (with its `user.` prefix) is longer than 64 characters.
+    case idTooLong(length: Int)
+    /// P2-30: the id is just `user.`, with no name after it.
+    case idOnlyPrefix
+    /// P2-30: a cell has more than 16 Unicode scalars (e.g. one letter with a long run of combining marks).
+    case tooManyScalars(keyCode: UInt16, layer: KeyLayer)
+    /// P2-30: a cell contains a private-use character (Co) or a line/paragraph separator (Zl/Zp).
+    case untypeableCharacter(keyCode: UInt16, layer: KeyLayer)
 
     /// Short English text for the Languages tab.
     var message: String {
@@ -48,6 +60,18 @@ enum LayoutMapError: Error, Equatable, Sendable {
         case .tooManyCharacters(let code, let layer): "Key \(code), \(layer.rawValue): more than 4 characters."
         case .controlCharacter(let code, let layer):
             "Key \(code), \(layer.rawValue): the text contains a control character (like a newline or tab)."
+        // P2-30: the id messages don't repeat the id: it may be long or contain characters that don't display.
+        case .systemSourceImport:
+            "This is an exported system layout, which can't be imported. Change \"source\" to \"imported\" to use it as a full map."
+        case .invalidIDCharacters:
+            "The id may only use the letters A–Z and a–z, the digits 0–9, and the characters . _ -"
+        case .idTooLong(let length):
+            "The id is too long (\(length) characters including \"user.\", the limit is \(LayoutMap.maxIDLength))."
+        case .idOnlyPrefix: "The id needs a name after \"user.\"."
+        case .tooManyScalars(let code, let layer):
+            "Key \(code), \(layer.rawValue): the text has too many accents or combining marks (the limit is \(LayoutMap.maxScalarsPerCell) code points)."
+        case .untypeableCharacter(let code, let layer):
+            "Key \(code), \(layer.rawValue): the text contains a character a key can't type (a private-use character or a line separator)."
         }
     }
 }

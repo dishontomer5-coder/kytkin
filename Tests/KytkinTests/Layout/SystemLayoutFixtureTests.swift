@@ -28,9 +28,17 @@ final class SystemLayoutFixtureTests: XCTestCase {
             XCTAssertGreaterThan(map.keys.count, 60, id)
 
             // validate() itself, with the id moved out of Apple's namespace: everything else must pass.
+            // P2-30: system maps are export only, so the renamed copy is also re-labelled `imported`
+            // (what a user does to import an exported system map as a full map).
             var renamed = map
             renamed.id = InputSourceID("user.fixture")
+            renamed.source = .imported
             XCTAssertNoThrow(try LayoutMap.validate(try renamed.jsonData()), id)
+            // P2-30: still `system`, it is rejected even with a valid id.
+            renamed.source = .system
+            XCTAssertThrowsError(try LayoutMap.validate(try renamed.jsonData()), id) {
+                XCTAssertEqual($0 as? LayoutMapError, .systemSourceImport, id)
+            }
             // And the real id is rejected on import, as 001 §4.3 says.
             XCTAssertThrowsError(try LayoutMap.validate(data)) {
                 XCTAssertEqual($0 as? LayoutMapError, .reservedID(id))
