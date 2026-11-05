@@ -1,0 +1,14 @@
+{
+  "format": "kytkin-layoutmap",
+  "version": 1,
+  "id": "he-niqqud",
+  "name": "Hebrew with niqqud (imported)",
+  "language": "he",
+  "source": "imported",
+  "keys": {
+    "0":   { "plain": "ש", "option": "שׁ" },
+    "38":  { "plain": "ח", "shift": "לֹ" },
+    "127": { "plain": "x" }
+  },
+  "futureField": "ignored by v1"
+}

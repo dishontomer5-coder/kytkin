@@ -1,0 +1,16 @@
+{
+  "format": "kytkin-layoutmap",
+  "version": 1,
+  "id": "com.apple.keylayout.Hebrew",
+  "name": "Hebrew (hand-written sample)",
+  "language": "he",
+  "source": "system",
+  "kbdType": 61,
+  "keys": {
+    "0":  { "plain": "ש", "shift": "A", "capsLock": "a" },
+    "14": { "plain": "ק", "shift": "E", "capsLock": "e", "option": "€" },
+    "25": { "plain": "9", "shift": "(", "capsLock": "9" },
+    "31": { "plain": "ם", "shift": "O", "capsLock": "o" }
+  },
+  "deadKeys": { "14": ["option"] }
+}

@@ -1,0 +1,15 @@
+{
+  "format": "kytkin-layoutmap",
+  "version": 1,
+  "id": "user.he-custom",
+  "name": "Hebrew (custom)",
+  "language": "he",
+  "source": "user",
+  "base": "com.apple.keylayout.Hebrew",
+  "kbdType": 61,
+  "keys": {
+    "0":  { "plain": "ש", "capsLock": "a" },
+    "25": { "plain": "9", "shift": ")" }
+  },
+  "deadKeys": { "14": ["option"] }
+}
