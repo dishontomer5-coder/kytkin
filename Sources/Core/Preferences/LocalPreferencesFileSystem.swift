@@ -44,4 +44,9 @@ struct LocalPreferencesFileSystem: PreferencesFileSystem {
     func moveItem(at source: URL, to destination: URL) throws {
         try FileManager.default.moveItem(at: source, to: destination)
     }
+
+    // P2-37: chmod 0600 for a file that was moved, not written (moveItem keeps its old mode).
+    func setOwnerOnlyPermissions(at url: URL) throws {
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
 }

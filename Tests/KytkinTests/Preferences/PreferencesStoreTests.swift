@@ -306,6 +306,83 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertEqual(fs.writes, [fileURL])
     }
 
+    // MARK: - P2-37: backup suffix and quarantine mode
+
+    func testSecondMigrationFromTheSameVersionKeepsBothBackups() throws {
+        let chain = PreferencesMigrator(currentVersion: 2, steps: [.init(from: 1) { $0 }])
+        let first = URL(fileURLWithPath: "/virtual/Kytkin/preferences.v1.bak.json")
+        let second = URL(fileURLWithPath: "/virtual/Kytkin/preferences.v1-2.bak.json")
+        let older = Data(#"{"schemaVersion":1,"general":{"enabled":true}}"#.utf8)
+        let newer = Data(#"{"schemaVersion":1,"general":{"enabled":false}}"#.utf8)
+        let fs = InMemoryPreferencesFileSystem(files: [fileURL: older])
+
+        let store1 = makeStore(fs, migrator: chain)
+        store1.update { $0.general.learnFromManualSwitches = false }
+        store1.flush()
+        XCTAssertEqual(store1.originalBackupURL, first)
+
+        // A downgrade wrote a v1 file again; the next upgrade migrates from v1 a second time.
+        fs[fileURL] = newer
+        let store2 = makeStore(fs, migrator: chain)
+        XCTAssertEqual(store2.loadIssue, .migrated(from: 1))
+        store2.update { $0.general.learnFromManualSwitches = false }
+        store2.flush()
+        XCTAssertEqual(store2.originalBackupURL, second)
+        XCTAssertEqual(fs[first], older, "the older backup is never overwritten")
+        XCTAssertEqual(fs[second], newer)
+    }
+
+    func testQuarantinedFileIsSetToOwnerOnly() {
+        let fs = InMemoryPreferencesFileSystem(files: [fileURL: Data("{".utf8)])
+        let store = makeStore(fs)
+        let q = URL(fileURLWithPath: "/virtual/Kytkin/preferences.corrupt-2026-11-05T100000Z.json")
+        XCTAssertEqual(store.loadIssue, .corruptQuarantined(q))
+        XCTAssertEqual(fs.ownerOnlyURLs, [q])
+    }
+
+    func testChmodFailureAfterQuarantineDoesNotChangeTheLoad() throws {
+        let fs = InMemoryPreferencesFileSystem(files: [fileURL: Data("{".utf8)])
+        fs.failPermissions = true
+        let store = makeStore(fs)
+        let q = URL(fileURLWithPath: "/virtual/Kytkin/preferences.corrupt-2026-11-05T100000Z.json")
+        XCTAssertEqual(store.loadIssue, .corruptQuarantined(q))
+        XCTAssertFalse(store.isReadOnly)
+        XCTAssertEqual(fs[q], Data("{".utf8))
+        store.update { $0.general.enabled = false }
+        store.flush()
+        XCTAssertFalse(try saved(fs).general.enabled, "saving still works")
+    }
+
+    func testRealFileSystemQuarantinedFileIs0600() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let url = tempDir.appendingPathComponent("preferences.json")
+        try Data("{".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        let store = PreferencesStore(fileURL: url, clock: FakeClock(), fileSystem: LocalPreferencesFileSystem(),
+                                     now: { self.fixedDate })
+        let q = tempDir.appendingPathComponent("preferences.corrupt-2026-11-05T100000Z.json")
+        XCTAssertEqual(store.loadIssue, .corruptQuarantined(q))
+        let attrs = try FileManager.default.attributesOfItem(atPath: q.path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testRealFileSystemSecondMigrationKeepsBothBackups() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let url = tempDir.appendingPathComponent("preferences.json")
+        let chain = PreferencesMigrator(currentVersion: 2, steps: [.init(from: 1) { $0 }])
+        let older = Data(#"{"schemaVersion":1,"general":{"enabled":true}}"#.utf8)
+        let newer = Data(#"{"schemaVersion":1,"general":{"enabled":false}}"#.utf8)
+        for original in [older, newer] {
+            try original.write(to: url)
+            let store = PreferencesStore(fileURL: url, clock: FakeClock(), fileSystem: LocalPreferencesFileSystem(),
+                                         migrator: chain, now: { self.fixedDate })
+            store.update { $0.general.learnFromManualSwitches = false }
+            store.flush()
+        }
+        XCTAssertEqual(try Data(contentsOf: tempDir.appendingPathComponent("preferences.v1.bak.json")), older)
+        XCTAssertEqual(try Data(contentsOf: tempDir.appendingPathComponent("preferences.v1-2.bak.json")), newer)
+    }
+
     // MARK: - Real files (temporary directory only)
 
     func testRealFileSystemRoundTripWith0600() throws {
@@ -391,6 +468,8 @@ final class PreferencesStoreTests: XCTestCase {
 
     func testBackupAndQuarantineNames() {
         XCTAssertEqual(PreferencesLocation.backupURL(for: fileURL, version: 3).lastPathComponent, "preferences.v3.bak.json")
+        XCTAssertEqual(PreferencesLocation.backupURL(for: fileURL, version: 3, attempt: 2).lastPathComponent,
+                       "preferences.v3-2.bak.json")
         XCTAssertEqual(PreferencesLocation.quarantineURL(for: fileURL, at: fixedDate).lastPathComponent,
                        "preferences.corrupt-2026-11-05T100000Z.json")
         XCTAssertEqual(PreferencesLocation.quarantineURL(for: fileURL, at: fixedDate, attempt: 3).lastPathComponent,

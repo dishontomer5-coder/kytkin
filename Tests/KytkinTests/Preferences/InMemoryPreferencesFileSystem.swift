@@ -12,6 +12,8 @@ final class InMemoryPreferencesFileSystem: PreferencesFileSystem, @unchecked Sen
     private var _failWrites = false
     private var _failMoves = false
     private var _failWritesTo: Set<URL> = []
+    private var _failPermissions = false
+    private var _ownerOnly: Set<URL> = []
 
     init(files: [URL: Data] = [:]) { self.files = files }
 
@@ -32,6 +34,13 @@ final class InMemoryPreferencesFileSystem: PreferencesFileSystem, @unchecked Sen
         get { lock.withLock { _failMoves } }
         set { lock.withLock { _failMoves = newValue } }
     }
+    /// P2-37: makes `setOwnerOnlyPermissions` throw.
+    var failPermissions: Bool {
+        get { lock.withLock { _failPermissions } }
+        set { lock.withLock { _failPermissions = newValue } }
+    }
+    /// P2-37: files a successful `setOwnerOnlyPermissions` was called on (a moved file loses the mark).
+    var ownerOnlyURLs: Set<URL> { lock.withLock { _ownerOnly } }
     /// Every successful write, in order.
     var writes: [URL] { lock.withLock { _writes } }
 
@@ -66,6 +75,14 @@ final class InMemoryPreferencesFileSystem: PreferencesFileSystem, @unchecked Sen
             if _failMoves { throw Failure() }
             guard files[destination] == nil, let data = files.removeValue(forKey: source) else { throw Failure() }
             files[destination] = data
+            _ownerOnly.remove(source)
+        }
+    }
+
+    func setOwnerOnlyPermissions(at url: URL) throws {
+        try lock.withLock {
+            if _failPermissions || files[url] == nil { throw Failure() }
+            _ownerOnly.insert(url)
         }
     }
 }

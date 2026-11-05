@@ -42,8 +42,10 @@ enum PreferencesLocation {
     }
 
     /// `preferences.v<N>.bak.json`, the copy kept before the first migrating write.
-    static func backupURL(for fileURL: URL, version: Int) -> URL {
-        sibling(of: fileURL, named: "\(baseName(fileURL)).v\(version).bak.json")
+    // P2-37: `attempt` works as in `quarantineURL` (`preferences.v<N>-2.bak.json`…), so a second migration
+    // from the same version (say, after a downgrade and another upgrade) never overwrites the older backup.
+    static func backupURL(for fileURL: URL, version: Int, attempt: Int = 1) -> URL {
+        sibling(of: fileURL, named: "\(baseName(fileURL)).v\(version)\(suffix(attempt)).bak.json")
     }
 
     private static func stamp(_ date: Date) -> String {
