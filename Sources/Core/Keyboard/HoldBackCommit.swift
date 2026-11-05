@@ -37,7 +37,9 @@ struct HoldBackCommit: Sendable, Equatable {
         return true
     }
 
-    /// Either side, when this generation is over.
+    /// When this generation is over. QA: call it on the tap thread *after* `finishReplacement` (or the flush) ran.
+    /// If the worker reset the state before its finish hopped over, a deadline poll in between would see `idle`,
+    /// flush, and drop the finish: the auto-fix Space would then be posted twice.
     mutating func finish(gen: UInt64) {
         switch state {
         case .pending(let g), .posting(let g), .flushed(let g):

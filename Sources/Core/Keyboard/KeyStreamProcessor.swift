@@ -10,6 +10,12 @@
 //   (400 ms convert, 150 ms auto-fix), an overflow, a shortcut, a click or a reset flushes them unchanged.
 // - O(1) per event, no allocation except a snapshot on a trigger, no logging (lint-enforced).
 // Time for deadlines comes from the injected Clock (same uptime base as event timestamps).
+//
+// Adapter protocol (B3, QA): after every `handle`, every main/worker hop, and on the deadline timer:
+//   if let gen = activeGeneration, let due = nextDeadlineNanos, due <= now { posting = !commit.claimFlush(gen) }
+//   pollFlush(postingStarted: posting)
+// An abort (overflow, shortcut, click, reset, mode change) makes the flush due at once, but it still waits for a
+// worker that already won the commit (up to the hard cap), so held keys never interleave with its posts.
 
 import Foundation
 
@@ -20,15 +26,15 @@ struct KeyStreamProcessor: Sendable {
         let gen: UInt64
         let kind: ReplacementKind
         let deadlineNanos: UInt64
-        /// Set once the deadline passed while the worker was posting (B3): forced flush at this time.
+        /// Set once the flush was due while the worker was posting (B3): forced flush at this time.
         var hardCapNanos: UInt64?
+        /// QA: aborted (overflow, shortcut, click, reset): the flush is due now, and the finish only replays.
+        var aborted = false
     }
 
     private enum Phase: Sendable {
         case idle
         case replacing(Replacement)
-        /// Aborted (overflow, shortcut, click, reset): the held events go out on the next `pollFlush`.
-        case flushPending
     }
 
     let config: KeyProcessorConfig
@@ -56,12 +62,14 @@ struct KeyStreamProcessor: Sendable {
 
     // MARK: - Reading
 
+    /// A replacement is running and hasn't been aborted.
     var isReplacing: Bool {
-        if case .replacing = phase { return true }
+        if case let .replacing(r) = phase { return !r.aborted }
         return false
     }
 
-    /// The generation being replaced, if any.
+    /// The generation whose held events are still out (running or aborted), if any. The adapter claims the
+    /// B3 flush for this generation.
     var activeGeneration: UInt64? {
         if case let .replacing(r) = phase { return r.gen }
         return nil
@@ -70,8 +78,7 @@ struct KeyStreamProcessor: Sendable {
     /// When the adapter's tap-thread timer should next call `pollFlush`.
     var nextDeadlineNanos: UInt64? {
         switch phase {
-        case let .replacing(r): return r.hardCapNanos ?? r.deadlineNanos
-        case .flushPending: return 0
+        case let .replacing(r): return r.hardCapNanos ?? (r.aborted ? 0 : r.deadlineNanos)
         case .idle: return nil
         }
     }
@@ -112,27 +119,23 @@ struct KeyStreamProcessor: Sendable {
     /// otherwise nil. The adapter calls it after every `handle` and from its deadline timer.
     /// `postingStarted`: the worker won the B3 commit for this generation, so wait (up to the hard cap).
     mutating func pollFlush(postingStarted: Bool = false) -> [HeldEvent]? {
-        switch phase {
-        case .idle:
-            return nil
-        case .flushPending:
-            phase = .idle
-            return queue.drain()
-        case var .replacing(r):
-            let now = clock.nowNanos
-            guard now >= r.deadlineNanos else { return nil }
-            if postingStarted {
-                guard let cap = r.hardCapNanos else {
-                    r.hardCapNanos = now + config.postingHardCapNanos
-                    phase = .replacing(r)
-                    return nil
-                }
-                guard now >= cap else { return nil }
+        guard case var .replacing(r) = phase else { return nil }
+        let now = clock.nowNanos
+        guard r.aborted || now >= r.deadlineNanos else { return nil }
+        // QA: wait for a posting worker only while waiting can keep order: keys can still be held.
+        if postingStarted && mode == .active && !queue.isFull {
+            guard let cap = r.hardCapNanos else {
+                r.hardCapNanos = now + config.postingHardCapNanos
+                phase = .replacing(r)
+                return nil
             }
-            // P2-12: deadline (or hard cap) → flush unchanged. A late finish for this gen is then ignored.
-            phase = .idle
-            return queue.drain()
+            guard now >= cap else { return nil }
         }
+        // QA: flushing under a posting worker means it may have posted part of its text: the buffer can't be trusted.
+        if postingStarted { buffer.invalidate() }
+        // P2-12: deadline (or hard cap, or abort) → flush unchanged. A late finish for this gen is then ignored.
+        phase = .idle
+        return queue.drain()
     }
 
     // MARK: - From the worker / main (hopped onto the tap thread)
@@ -142,14 +145,19 @@ struct KeyStreamProcessor: Sendable {
     mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) -> [HeldEvent] {
         guard case let .replacing(r) = phase, r.gen == gen else { return [] }
         phase = .idle
-        if let newRendering { inputSource = newRendering }
-        if let bufferAfter { buffer.replaceCurrentWord(with: bufferAfter) }
+        // QA: after an abort the buffer was already cleared (click, reset) and main owns the input source,
+        // so only replay.
+        if !r.aborted {
+            if let newRendering { inputSource = newRendering }
+            if let bufferAfter { buffer.replaceCurrentWord(with: bufferAfter) }
+        }
         var held = queue.drain()
         if r.kind == .autoFix, newRendering != nil, !held.isEmpty {
             // §3d: on a fix, the worker posted the trigger itself (marked `ours`), so don't replay it, and
-            // end the word here because our own Space never reaches the buffer.
+            // end the word here because our own Space never reaches the buffer. The trigger is always the
+            // first held event: an auto-fix only starts from idle with an empty FIFO.
             held.removeFirst()
-            buffer.boundary()
+            if !r.aborted { buffer.boundary() }
         }
         return held
     }
@@ -183,17 +191,16 @@ struct KeyStreamProcessor: Sendable {
     // MARK: - Private
 
     /// Keys are held while replacing, and while an abort waits for its flush (to keep them in order).
+    /// QA: only an active tap can swallow; a `.hold` anywhere else would deliver the key now and replay it later.
     private var holdsKeys: Bool {
-        switch phase {
-        case .replacing: return true
-        case .flushPending: return !queue.isFull
-        case .idle: return false
-        }
+        guard mode == .active, case .replacing = phase else { return false }
+        return !queue.isFull
     }
 
     private mutating func hold(_ e: KeyEvent) -> (TapVerdict, KeySignal?) {
+        // `holdsKeys` checked the room, so this never fails; never answer `.hold` for an event not queued.
+        guard queue.append(HeldEvent(event: e)) else { return (.pass, nil) }
         if e.kind == .keyDown { _ = detector.handle(.otherKeyDown) }
-        queue.append(HeldEvent(event: e))
         // R5: a ⌘/⌃ shortcut during a replacement ends it (replayed after the held keys, so order holds).
         // A full FIFO aborts too: flush unchanged, never drop a key (B2).
         if (e.kind == .keyDown && e.commandOrControl) || queue.isFull {
@@ -262,6 +269,8 @@ struct KeyStreamProcessor: Sendable {
     /// so "keep" or a deadline replays it in place.
     private mutating func autoFixTrigger(_ e: KeyEvent) -> (TapVerdict, KeySignal?)? {
         guard config.autoFixEnabled, mode == .active, e.origin == .user, !e.isAutoRepeat else { return nil }
+        // QA: never start over held events (a full, aborted FIFO the adapter hasn't flushed yet).
+        guard case .idle = phase, queue.isEmpty else { return nil }
         let snapshot = buffer.snapshot(renderedIn: inputSource)
         guard snapshot.isValid else { return nil }
         generation &+= 1
@@ -277,7 +286,10 @@ struct KeyStreamProcessor: Sendable {
     }
 
     private mutating func abortReplacement() {
-        if case .replacing = phase { phase = .flushPending }
+        if case var .replacing(r) = phase {
+            r.aborted = true
+            phase = .replacing(r)
+        }
     }
 
     private mutating func invalidateBuffer() -> KeySignal? {
