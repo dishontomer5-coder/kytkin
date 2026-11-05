@@ -1,6 +1,6 @@
 // P2-11: Pure double-Shift state machine, ported from our own R4 sketch (docs/research/keyboard-event-tap.md §2).
 // Fires on the second Shift *release*, never the press, so a second press that turns into Shift+letter doesn't count.
-// Time comes from the injected `Clock`, read once per input, so tests drive it with FakeClock.
+// Time comes from each Shift input's event timestamp, so it is deterministic in tests and immune to tap latency.
 
 import Foundation
 
@@ -15,13 +15,14 @@ struct DoubleShiftDetector: Sendable {
     }
 
     let config: DoubleShiftConfig
-    private let clock: any Clock
     private var state: State = .idle
-    private var shiftsHeld = 0
+    /// Held state per side, not a counter: a lost release then heals on that side's next press
+    /// instead of leaving the detector stuck in "chord" until the next reset.
+    private var leftHeld = false
+    private var rightHeld = false
 
-    init(config: DoubleShiftConfig = .init(), clock: any Clock) {
+    init(config: DoubleShiftConfig = .init()) {
         self.config = config
-        self.clock = clock
     }
 
     /// Returns true exactly once per completed double tap, on the second Shift release.
@@ -29,19 +30,19 @@ struct DoubleShiftDetector: Sendable {
         switch input {
         case .reset:
             state = .idle
-            shiftsHeld = 0
+            leftHeld = false
+            rightHeld = false
             return false
 
         case .otherKeyDown, .otherModifierChanged, .pointerDown:
             // Shift held while something else happens = Shift used as a modifier.
-            state = shiftsHeld > 0 ? .spoiled : .idle
+            state = anyHeld ? .spoiled : .idle
             return false
 
-        case let .shiftDown(side):
-            let now = clock.nowNanos
-            shiftsHeld += 1
+        case let .shiftDown(side, now):
+            setHeld(side, true)
             // Both Shifts at once is a chord, not a tap.
-            if shiftsHeld > 1 || !allowed(side) {
+            if isHeld(side.other) || !allowed(side) {
                 state = .spoiled
                 return false
             }
@@ -55,9 +56,8 @@ struct DoubleShiftDetector: Sendable {
             }
             return false
 
-        case let .shiftUp(side):
-            let now = clock.nowNanos
-            shiftsHeld = max(0, shiftsHeld - 1)
+        case let .shiftUp(side, now):
+            setHeld(side, false)
             switch state {
             case let .firstDown(s, at) where s == side:
                 if let hold = elapsed(from: at, to: now), hold <= config.maxHoldNanos {
@@ -71,10 +71,20 @@ struct DoubleShiftDetector: Sendable {
                 guard let hold = elapsed(from: at, to: now) else { return false }
                 return hold <= config.maxHoldNanos
             default:
-                if shiftsHeld == 0 { state = .idle }
+                if !anyHeld { state = .idle }
                 return false
             }
         }
+    }
+
+    private var anyHeld: Bool { leftHeld || rightHeld }
+
+    private func isHeld(_ side: ShiftSide) -> Bool {
+        side == .left ? leftHeld : rightHeld
+    }
+
+    private mutating func setHeld(_ side: ShiftSide, _ held: Bool) {
+        if side == .left { leftHeld = held } else { rightHeld = held }
     }
 
     private func allowed(_ side: ShiftSide) -> Bool {
@@ -86,7 +96,7 @@ struct DoubleShiftDetector: Sendable {
     }
 
     /// P2-11: nil when time went backwards. R4 found a UInt64 underflow crash here, so never subtract unguarded
-    /// (a clock fed from event timestamps can deliver them out of order).
+    /// (event timestamps can arrive out of order).
     private func elapsed(from start: UInt64, to end: UInt64) -> UInt64? {
         end >= start ? end - start : nil
     }

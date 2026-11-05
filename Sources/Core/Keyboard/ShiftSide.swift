@@ -4,4 +4,6 @@ import Foundation
 
 enum ShiftSide: Sendable, Equatable {
     case left, right
+
+    var other: ShiftSide { self == .left ? .right : .left }
 }

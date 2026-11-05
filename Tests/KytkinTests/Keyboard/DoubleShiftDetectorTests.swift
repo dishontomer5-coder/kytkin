@@ -1,38 +1,25 @@
-// P2-11: The 19 DoubleShiftDetector cases from R4 (docs/research/keyboard-event-tap.md §2), driven by FakeClock.
+// P2-11: The 19 DoubleShiftDetector cases from R4 (docs/research/keyboard-event-tap.md §2), plus edge cases
+// (exact window/hold limits, leftOnly, side restart, lost releases). Times are event timestamps in the inputs.
 
 import XCTest
 
 final class DoubleShiftDetectorTests: XCTestCase {
-    /// One input at a time in milliseconds. `nil` time = the input doesn't read the clock (e.g. reset).
-    private typealias Step = (ms: UInt64?, input: ShiftInput)
+    private let ms: UInt64 = 1_000_000
 
-    private func tap(_ side: ShiftSide, _ downMs: UInt64, _ upMs: UInt64) -> [Step] {
-        [(downMs, .shiftDown(side)), (upMs, .shiftUp(side))]
+    private func down(_ side: ShiftSide, _ t: UInt64) -> ShiftInput { .shiftDown(side, atNanos: t * ms) }
+    private func up(_ side: ShiftSide, _ t: UInt64) -> ShiftInput { .shiftUp(side, atNanos: t * ms) }
+
+    private func tap(_ side: ShiftSide, _ downMs: UInt64, _ upMs: UInt64) -> [ShiftInput] {
+        [down(side, downMs), up(side, upMs)]
     }
 
-    /// Feeds the steps with a monotonic FakeClock and returns how many times the detector fired.
-    private func fires(_ steps: [Step], config: DoubleShiftConfig = .init()) -> Int {
-        let clock = FakeClock()
-        var detector = DoubleShiftDetector(config: config, clock: clock)
-        var count = 0
-        for step in steps {
-            if let ms = step.ms { clock.set(nowNanos: ms * 1_000_000) }
-            if detector.handle(step.input) { count += 1 }
-        }
-        return count
+    /// Feeds the inputs and returns how many times the detector fired.
+    private func fires(_ inputs: [ShiftInput], config: DoubleShiftConfig = .init()) -> Int {
+        var detector = DoubleShiftDetector(config: config)
+        return inputs.filter { detector.handle($0) }.count
     }
 
-    /// Same, but with a clock that may go backwards (FakeClock forbids that), for the underflow guards.
-    private func firesWithUnorderedTimes(_ steps: [Step]) -> Int {
-        let clock = SettableClock()
-        var detector = DoubleShiftDetector(clock: clock)
-        var count = 0
-        for step in steps {
-            if let ms = step.ms { clock.nowNanos = ms * 1_000_000 }
-            if detector.handle(step.input) { count += 1 }
-        }
-        return count
-    }
+    // MARK: - The 19 R4 cases
 
     // 1
     func testBasicDoubleLeft() {
@@ -61,18 +48,18 @@ final class DoubleShiftDetectorTests: XCTestCase {
 
     // 6
     func testShiftAsModifierThenTap() {
-        let shiftA: [Step] = [(0, .shiftDown(.left)), (30, .otherKeyDown), (80, .shiftUp(.left))]
+        let shiftA: [ShiftInput] = [down(.left, 0), .otherKeyDown, up(.left, 80)]
         XCTAssertEqual(fires(shiftA + tap(.left, 150, 200)), 0)
     }
 
     // 7
     func testTypingBetweenTaps() {
-        XCTAssertEqual(fires(tap(.left, 0, 50) + [(100, .otherKeyDown)] + tap(.left, 150, 200)), 0)
+        XCTAssertEqual(fires(tap(.left, 0, 50) + [.otherKeyDown] + tap(.left, 150, 200)), 0)
     }
 
     // 8
     func testCommandBetweenTaps() {
-        XCTAssertEqual(fires(tap(.left, 0, 50) + [(100, .otherModifierChanged)] + tap(.left, 150, 200)), 0)
+        XCTAssertEqual(fires(tap(.left, 0, 50) + [.otherModifierChanged] + tap(.left, 150, 200)), 0)
     }
 
     // 9
@@ -90,12 +77,12 @@ final class DoubleShiftDetectorTests: XCTestCase {
     func testRightOnlyIgnoresLeft() {
         let config = DoubleShiftConfig(sides: .rightOnly)
         XCTAssertEqual(fires(tap(.left, 0, 50) + tap(.left, 150, 200), config: config), 0)
+        XCTAssertEqual(fires(tap(.right, 0, 50) + tap(.right, 150, 200), config: config), 1)
     }
 
     // 12
     func testBothShiftsHeldTogetherIsAChord() {
-        let chord: [Step] = [(0, .shiftDown(.left)), (10, .shiftDown(.right)),
-                             (50, .shiftUp(.left)), (60, .shiftUp(.right))]
+        let chord: [ShiftInput] = [down(.left, 0), down(.right, 10), up(.left, 50), up(.right, 60)]
         XCTAssertEqual(fires(chord + tap(.left, 100, 150)), 0)
     }
 
@@ -106,8 +93,8 @@ final class DoubleShiftDetectorTests: XCTestCase {
 
     // 14
     func testQuadrupleTapFiresTwice() {
-        let steps = tap(.left, 0, 50) + tap(.left, 100, 150) + tap(.left, 200, 250) + tap(.left, 300, 350)
-        XCTAssertEqual(fires(steps), 2)
+        let inputs = tap(.left, 0, 50) + tap(.left, 100, 150) + tap(.left, 200, 250) + tap(.left, 300, 350)
+        XCTAssertEqual(fires(inputs), 2)
     }
 
     // 15
@@ -117,27 +104,109 @@ final class DoubleShiftDetectorTests: XCTestCase {
 
     // 16
     func testResetMidGesture() {
-        XCTAssertEqual(fires(tap(.left, 0, 50) + [(nil, .reset)] + tap(.left, 100, 150)), 0)
+        XCTAssertEqual(fires(tap(.left, 0, 50) + [.reset] + tap(.left, 100, 150)), 0)
     }
 
     // 17
     func testShiftClick() {
-        let shiftClick: [Step] = [(0, .shiftDown(.left)), (20, .pointerDown), (60, .shiftUp(.left))]
+        let shiftClick: [ShiftInput] = [down(.left, 0), .pointerDown, up(.left, 60)]
         XCTAssertEqual(fires(shiftClick + tap(.left, 100, 150)), 0)
     }
 
-    // 18
+    // 18: second press timestamped before the first release (no UInt64 underflow crash).
     func testNonMonotonicTimesAreSafe() {
-        XCTAssertEqual(firesWithUnorderedTimes(tap(.left, 500, 550) + tap(.left, 100, 150)), 0)
+        XCTAssertEqual(fires(tap(.left, 500, 550) + tap(.left, 100, 150)), 0)
     }
 
-    // 19
+    // 19: a release timestamped before its own press.
     func testReleaseTimedBeforePressIsSafe() {
-        XCTAssertEqual(firesWithUnorderedTimes(tap(.left, 500, 100)), 0)
+        XCTAssertEqual(fires(tap(.left, 500, 100)), 0)
+        XCTAssertEqual(fires(tap(.left, 0, 50) + tap(.left, 500, 100)), 0)
     }
-}
 
-/// P2-11: A clock that can move backwards, standing in for out-of-order event timestamps.
-private final class SettableClock: Clock, @unchecked Sendable { // @unchecked: single-threaded test use only
-    var nowNanos: UInt64 = 0
+    // MARK: - Edges beyond R4 (QA)
+
+    func testGapExactlyAtWindowFires() {
+        var detector = DoubleShiftDetector()
+        let window = DoubleShiftConfig().windowNanos
+        XCTAssertFalse(detector.handle(.shiftDown(.left, atNanos: 0)))
+        XCTAssertFalse(detector.handle(.shiftUp(.left, atNanos: 10)))
+        XCTAssertFalse(detector.handle(.shiftDown(.left, atNanos: 10 + window)))
+        XCTAssertTrue(detector.handle(.shiftUp(.left, atNanos: 20 + window)))
+    }
+
+    func testGapOneNanosecondOverWindowDoesNotFire() {
+        let window = DoubleShiftConfig().windowNanos
+        let inputs: [ShiftInput] = [.shiftDown(.left, atNanos: 0), .shiftUp(.left, atNanos: 10),
+                                    .shiftDown(.left, atNanos: 11 + window), .shiftUp(.left, atNanos: 20 + window)]
+        XCTAssertEqual(fires(inputs), 0)
+    }
+
+    func testHoldsExactlyAtLimitFire() {
+        let hold = DoubleShiftConfig().maxHoldNanos
+        let inputs: [ShiftInput] = [.shiftDown(.left, atNanos: 0), .shiftUp(.left, atNanos: hold),
+                                    .shiftDown(.left, atNanos: hold + 1), .shiftUp(.left, atNanos: 2 * hold + 1)]
+        XCTAssertEqual(fires(inputs), 1)
+    }
+
+    func testFirstHoldOneNanosecondOverLimitDoesNotFire() {
+        let hold = DoubleShiftConfig().maxHoldNanos
+        let inputs: [ShiftInput] = [.shiftDown(.left, atNanos: 0), .shiftUp(.left, atNanos: hold + 1),
+                                    .shiftDown(.left, atNanos: hold + 2), .shiftUp(.left, atNanos: hold + 3)]
+        XCTAssertEqual(fires(inputs), 0)
+    }
+
+    func testSecondHoldOneNanosecondOverLimitDoesNotFire() {
+        let hold = DoubleShiftConfig().maxHoldNanos
+        let inputs: [ShiftInput] = [.shiftDown(.left, atNanos: 0), .shiftUp(.left, atNanos: 1),
+                                    .shiftDown(.left, atNanos: 2), .shiftUp(.left, atNanos: hold + 3)]
+        XCTAssertEqual(fires(inputs), 0)
+    }
+
+    func testCustomWindowIsHonored() {
+        let config = DoubleShiftConfig(windowNanos: 500 * ms)
+        XCTAssertEqual(fires(tap(.left, 0, 50) + tap(.left, 450, 500), config: config), 1)
+    }
+
+    /// The reason we fire on release: a second press that becomes Shift+letter must not convert.
+    func testSecondPressUsedAsModifierDoesNotFire() {
+        let inputs = tap(.left, 0, 50) + [down(.left, 100), .otherKeyDown, up(.left, 150)]
+        XCTAssertEqual(fires(inputs), 0)
+    }
+
+    func testLeftOnlyIgnoresRight() {
+        let config = DoubleShiftConfig(sides: .leftOnly)
+        XCTAssertEqual(fires(tap(.right, 0, 50) + tap(.right, 150, 200), config: config), 0)
+        XCTAssertEqual(fires(tap(.left, 0, 50) + tap(.left, 150, 200), config: config), 1)
+    }
+
+    func testOtherSideRestartsGestureUnderSameSide() {
+        XCTAssertEqual(fires(tap(.left, 0, 50) + tap(.right, 100, 150) + tap(.right, 200, 250)), 1)
+    }
+
+    func testOtherKeyWhileNoShiftHeldStillCancelsFirstTap() {
+        XCTAssertEqual(fires(tap(.left, 0, 50) + [.pointerDown] + tap(.left, 100, 150)), 0)
+    }
+
+    func testDuplicateReleaseIsHarmless() {
+        XCTAssertEqual(fires([up(.left, 0), up(.right, 5)] + tap(.left, 10, 50) + tap(.left, 100, 150)), 1)
+    }
+
+    /// A lost release must not leave the detector stuck: that side's next press heals it.
+    func testLostReleaseHealsOnNextPressOfThatSide() {
+        // Left goes down, its release is never seen.
+        let inputs = [down(.left, 0)] + tap(.left, 1000, 1050) + tap(.left, 1100, 1150)
+        XCTAssertEqual(fires(inputs), 1)
+    }
+
+    func testResetClearsHeldShifts() {
+        let inputs = [down(.left, 0), down(.right, 10), .reset] + tap(.left, 100, 150) + tap(.left, 200, 250)
+        XCTAssertEqual(fires(inputs), 1)
+    }
+
+    func testFiresAgainAfterAFullCycle() {
+        let inputs = tap(.left, 0, 50) + tap(.left, 100, 150) + [.otherKeyDown] + tap(.left, 2000, 2050)
+            + tap(.left, 2100, 2150)
+        XCTAssertEqual(fires(inputs), 2)
+    }
 }
