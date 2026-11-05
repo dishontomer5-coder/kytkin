@@ -5,3 +5,6 @@ DerivedData/
 *.xcworkspace/xcuserdata/
 xcuserdata/
 .claude/settings.local.json
+
+# P2-3: local, per-machine settings for build.sh (e.g. KYTKIN_SIGN_IDENTITY)
+scripts/local.env
