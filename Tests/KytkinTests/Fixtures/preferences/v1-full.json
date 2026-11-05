@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "languagePair": { "a": "com.apple.keylayout.US", "b": "com.apple.keylayout.Hebrew-PC" },
+  "general": {
+    "enabled": false,
+    "learnFromManualSwitches": false,
+    "defaultBehavior": { "kind": "switchTo", "inputSource": "com.apple.keylayout.US" },
+    "menuBarLabel": "languageCode",
+    "checkForUpdates": false
+  },
+  "convert": {
+    "doubleShiftEnabled": false,
+    "doubleShiftSides": "either",
+    "doubleShiftWindowMs": 420,
+    "switchLanguageAfterConvert": false
+  },
+  "autoFix": {
+    "enabled": false,
+    "mode": "allWords",
+    "switchLanguageAfterFix": false,
+    "backspaceUndoes": false
+  },
+  "browsers": {
+    "ignorePrivateWindowsCompletely": true,
+    "appleEventsOptIn": { "com.google.Chrome": true, "com.brave.Browser": false }
+  },
+  "rules": [
+    { "id": "6F1C0000-0000-4000-8000-000000000001", "scope": { "kind": "app", "bundleID": "com.tinyspeck.slackmacgap" },
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "learned", "updatedAt": "2026-11-05T10:00:00Z" },
+    { "id": "A2D90000-0000-4000-8000-000000000002", "scope": { "kind": "site", "domain": "ynet.co.il" },
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "pinned", "updatedAt": "2026-11-05T10:01:00Z" },
+    { "id": "B7E00000-0000-4000-8000-000000000003", "scope": { "kind": "siteHost", "host": "docs.google.com" },
+      "inputSource": "com.apple.keylayout.ABC", "origin": "pinned", "updatedAt": "2026-11-05T10:02:00Z" },
+    { "id": "C3F40000-0000-4000-8000-000000000004", "scope": { "kind": "chat", "bundleID": "com.tinyspeck.slackmacgap",
+      "key": { "kind": "id", "value": "T0123/C0456" } }, "label": "Slack chat 1",
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "learned", "updatedAt": "2026-11-05T10:03:00Z" }
+  ],
+  "apps": {
+    "com.apple.Terminal": { "disabled": false, "convertEnabled": true, "autoFixEnabled": false, "replacementMethod": "keysOnly" },
+    "com.microsoft.VSCode": { "disabled": true }
+  },
+  "autoFixExceptions": {
+    "algorithm": "HMAC-SHA256", "cap": 1500,
+    "entries": [ { "h": "q2VhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "lastUsed": "2026-11-05" } ]
+  }
+}

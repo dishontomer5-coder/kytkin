@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "unknownTopLevelKey": [1, 2, 3],
+  "languagePair": { "a": "com.apple.keylayout.ABC" },
+  "general": { "enabled": "yes", "learnFromManualSwitches": false, "defaultBehavior": { "kind": "teleport" } },
+  "convert": { "doubleShiftSides": "bothAtOnce", "doubleShiftWindowMs": 9000, "switchLanguageAfterConvert": false },
+  "autoFix": "on",
+  "browsers": { "appleEventsOptIn": { "com.google.Chrome": true, "com.brave.Browser": "maybe" } },
+  "rules": [
+    { "id": "6F1C0000-0000-4000-8000-000000000001", "scope": { "kind": "app", "bundleID": "com.apple.Safari" },
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "learned", "updatedAt": "2026-11-05T10:00:00Z" },
+    { "id": "not-a-uuid", "scope": { "kind": "app", "bundleID": "com.apple.Notes" },
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "learned", "updatedAt": "2026-11-05T10:00:00Z" },
+    { "id": "6F1C0000-0000-4000-8000-000000000003", "scope": { "kind": "window", "windowID": 7 },
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "learned", "updatedAt": "2026-11-05T10:00:00Z" },
+    { "id": "6F1C0000-0000-4000-8000-000000000004", "scope": { "kind": "site", "domain": "  ynet.co.il \n" },
+      "inputSource": "com.apple.keylayout.Hebrew", "origin": "pinned", "updatedAt": "2026-11-05T10:01:00.250Z" },
+    { "id": "6F1C0000-0000-4000-8000-000000000005", "scope": { "kind": "siteHost", "host": "\tdocs.google.com " },
+      "inputSource": "com.apple.keylayout.ABC", "origin": "pinned", "updatedAt": "2026-11-05T10:02:00Z" },
+    { "id": "6F1C0000-0000-4000-8000-000000000006", "scope": { "kind": "app", "bundleID": "com.apple.Mail" },
+      "inputSource": "com.apple.keylayout.ABC", "origin": "learned", "updatedAt": "yesterday" },
+    { "id": "6F1C0000-0000-4000-8000-000000000007", "scope": { "kind": "app", "bundleID": "com.apple.TextEdit" },
+      "inputSource": "com.apple.keylayout.ABC", "origin": "guessed", "updatedAt": "2026-11-05T10:00:00Z" },
+    "not even an object",
+    { "id": "6F1C0000-0000-4000-8000-000000000009", "scope": { "kind": "app", "bundleID": "com.apple.Terminal" },
+      "inputSource": "com.apple.keylayout.ABC", "origin": "pinned", "updatedAt": "2026-11-05T10:05:00Z" }
+  ],
+  "apps": {
+    "com.apple.Terminal": { "replacementMethod": "telepathy", "convertEnabled": true },
+    "com.apple.Notes": 5,
+    "  ": { "disabled": true }
+  },
+  "autoFixExceptions": { "cap": -1, "entries": [ { "h": "abc=", "lastUsed": "2026-11-05" }, { "h": 12 } ] }
+}
