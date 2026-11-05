@@ -11,6 +11,7 @@ final class InMemoryPreferencesFileSystem: PreferencesFileSystem, @unchecked Sen
     private var _failReads = false
     private var _failWrites = false
     private var _failMoves = false
+    private var _failWritesTo: Set<URL> = []
 
     init(files: [URL: Data] = [:]) { self.files = files }
 
@@ -21,6 +22,11 @@ final class InMemoryPreferencesFileSystem: PreferencesFileSystem, @unchecked Sen
     var failWrites: Bool {
         get { lock.withLock { _failWrites } }
         set { lock.withLock { _failWrites = newValue } }
+    }
+    /// Writes to just these URLs fail.
+    var failWritesTo: Set<URL> {
+        get { lock.withLock { _failWritesTo } }
+        set { lock.withLock { _failWritesTo = newValue } }
     }
     var failMoves: Bool {
         get { lock.withLock { _failMoves } }
@@ -49,7 +55,7 @@ final class InMemoryPreferencesFileSystem: PreferencesFileSystem, @unchecked Sen
 
     func writeAtomically(_ data: Data, to url: URL) throws {
         try lock.withLock {
-            if _failWrites { throw Failure() }
+            if _failWrites || _failWritesTo.contains(url) { throw Failure() }
             files[url] = data
             _writes.append(url)
         }

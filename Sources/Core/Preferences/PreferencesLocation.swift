@@ -30,14 +30,28 @@ enum PreferencesLocation {
     }
 
     /// `preferences.corrupt-<ISO date>.json` next to the file (colons left out: Finder shows them as "/").
-    static func quarantineURL(for fileURL: URL, at date: Date) -> URL {
-        let stamp = date.formatted(Date.ISO8601FormatStyle(timeSeparator: .omitted))
-        return sibling(of: fileURL, named: "\(baseName(fileURL)).corrupt-\(stamp).json")
+    /// `attempt` 2, 3… gives `preferences.corrupt-<ISO date>-2.json`, for a name that is already taken.
+    static func quarantineURL(for fileURL: URL, at date: Date, attempt: Int = 1) -> URL {
+        sibling(of: fileURL, named: "\(baseName(fileURL)).corrupt-\(stamp(date))\(suffix(attempt)).json")
+    }
+
+    /// `preferences.lossy-<ISO date>.bak.json`, the copy of a file that decoded with something dropped or
+    /// defaulted, kept before the first save overwrites it. `attempt` works as in `quarantineURL`.
+    static func lossyBackupURL(for fileURL: URL, at date: Date, attempt: Int = 1) -> URL {
+        sibling(of: fileURL, named: "\(baseName(fileURL)).lossy-\(stamp(date))\(suffix(attempt)).bak.json")
     }
 
     /// `preferences.v<N>.bak.json`, the copy kept before the first migrating write.
     static func backupURL(for fileURL: URL, version: Int) -> URL {
         sibling(of: fileURL, named: "\(baseName(fileURL)).v\(version).bak.json")
+    }
+
+    private static func stamp(_ date: Date) -> String {
+        date.formatted(Date.ISO8601FormatStyle(timeSeparator: .omitted))
+    }
+
+    private static func suffix(_ attempt: Int) -> String {
+        attempt > 1 ? "-\(attempt)" : ""
     }
 
     private static func baseName(_ url: URL) -> String {

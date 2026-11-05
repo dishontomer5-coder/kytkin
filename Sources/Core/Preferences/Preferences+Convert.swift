@@ -44,11 +44,13 @@ extension Preferences.Convert: Codable {
         self.init()
         if let v = c.lenient(Bool.self, .doubleShiftEnabled) { doubleShiftEnabled = v }
         if let v = c.lenient(DoubleShiftConfig.SidePolicy.self, .doubleShiftSides) { doubleShiftSides = v }
-        // P2-31: a fractional or huge number still clamps; a non-number keeps the default.
+        // P2-31: a fractional or huge number still clamps; a non-number keeps the default. A changed
+        // value counts as a decoding loss, so the store keeps the original file.
         if let v = c.lenient(Double.self, .doubleShiftWindowMs), v.isFinite {
             let bounded = min(max(v.rounded(), Double(Self.windowRangeMs.lowerBound)),
                               Double(Self.windowRangeMs.upperBound))
             doubleShiftWindowMs = Int(bounded)
+            if bounded != v { PreferencesDecodingLoss.record() }
         }
         if let v = c.lenient(Bool.self, .switchLanguageAfterConvert) { switchLanguageAfterConvert = v }
     }

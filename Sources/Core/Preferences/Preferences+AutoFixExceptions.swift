@@ -33,7 +33,9 @@ extension Preferences.AutoFixExceptions: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
         if let v = c.lenient(String.self, .algorithm) { algorithm = v }
-        if let v = c.lenient(Int.self, .cap), v > 0 { cap = v }
+        if let v = c.lenient(Int.self, .cap) {
+            if v > 0 { cap = v } else { PreferencesDecodingLoss.record() }
+        }
         if let v = c.lenient([Lossy<Entry>].self, .entries) { entries = v.compactMap(\.value) }
     }
 }

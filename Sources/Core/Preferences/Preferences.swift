@@ -44,9 +44,14 @@ extension Preferences: Codable {
         }
         if let v = c.lenient([String: Lossy<AppOverride>].self, .apps) {
             var apps: [String: AppOverride] = [:]
-            for (bundleID, entry) in v {
+            // Sorted, so which of two IDs that trim to the same one wins doesn't depend on hash order.
+            for (bundleID, entry) in v.sorted(by: { $0.key < $1.key }) {
                 let id = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !id.isEmpty, let value = entry.value else { continue }
+                guard !id.isEmpty, let value = entry.value, apps[id] == nil else {
+                    // A bad entry was already recorded by Lossy; record a blank or duplicate ID here.
+                    if entry.value != nil { PreferencesDecodingLoss.record() }
+                    continue
+                }
                 apps[id] = value
             }
             self.apps = apps

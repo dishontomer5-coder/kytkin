@@ -193,6 +193,57 @@ final class PreferencesCodecTests: XCTestCase {
         XCTAssertEqual(r.prefs.rules.first?.scope, .app(bundleID: " com.x "))
     }
 
+    // MARK: - Lossy flag (gap 4)
+
+    func testCleanFilesAreNotLossy() throws {
+        XCTAssertFalse(try PreferencesCodec.decodeDetailed(Fixtures.data("preferences/v1-full.json")).isLossy)
+        XCTAssertFalse(try PreferencesCodec.decodeDetailed(Fixtures.data("preferences/v1-minimal.json")).isLossy)
+        XCTAssertFalse(try decode("{}").isLossy)
+        XCTAssertFalse(try decode(#"{"general":{},"convert":{"doubleShiftWindowMs":350}}"#).isLossy)
+        XCTAssertFalse(try decode(#"{"someFutureKey":1,"general":{"alsoUnknown":true}}"#).isLossy,
+                       "unknown keys are ignored, not counted (001 §4.1)")
+        XCTAssertFalse(try decode(#"{"general":{"enabled":null},"rules":null}"#).isLossy, "null holds nothing to lose")
+        XCTAssertFalse(try decode("""
+        {"rules":[{"id":"6F1C0000-0000-4000-8000-000000000001","scope":{"kind":"site","domain":" ynet.co.il "},
+          "inputSource":"x","origin":"learned","updatedAt":"2026-11-05T10:00:00Z"}]}
+        """).isLossy, "trimming is a normalization, not a loss")
+    }
+
+    func testLenientFixtureIsLossy() throws {
+        XCTAssertTrue(try PreferencesCodec.decodeDetailed(Fixtures.data("preferences/v1-lenient.json")).isLossy)
+    }
+
+    func testEachKindOfDropIsLossy() throws {
+        let cases = [
+            #"{"rules":{"oops":1}}"#,                                       // non-array rules
+            #"{"rules":["not a rule"]}"#,                                   // one bad entry
+            #"{"general":{"enabled":"yes"}}"#,                              // mistyped field
+            #"{"general":{"defaultBehavior":{"kind":"teleport"}}}"#,        // unknown enum value
+            #"{"autoFix":"on"}"#,                                           // mistyped section
+            #"{"languagePair":{"a":"com.apple.keylayout.ABC"}}"#,           // half a pair
+            #"{"convert":{"doubleShiftWindowMs":9000}}"#,                   // clamped
+            #"{"convert":{"doubleShiftWindowMs":333.6}}"#,                  // rounded
+            #"{"browsers":{"appleEventsOptIn":{"com.brave.Browser":"maybe"}}}"#,
+            #"{"apps":{"com.apple.Notes":5}}"#,
+            #"{"apps":{"  ":{"disabled":true}}}"#,                          // blank bundle ID
+            #"{"apps":{"com.x":{"disabled":true}," com.x":{"disabled":false}}}"#,   // duplicate after trimming
+            #"{"apps":{"com.apple.Terminal":{"replacementMethod":"telepathy"}}}"#,
+            #"{"autoFixExceptions":{"cap":-1}}"#,
+            #"{"autoFixExceptions":{"entries":[{"h":12}]}}"#,
+        ]
+        for json in cases {
+            XCTAssertTrue(try decode(json).isLossy, json)
+        }
+    }
+
+    func testLossyFlagDoesNotLeakIntoTheNextDecode() throws {
+        XCTAssertTrue(try decode(#"{"general":{"enabled":"yes"}}"#).isLossy)
+        XCTAssertFalse(try decode("{}").isLossy)
+        // Outside a codec decode, recording is a no-op (no recorder installed).
+        XCTAssertNil(PreferencesDecodingLoss.current)
+        _ = try JSONDecoder().decode(Preferences.self, from: Data(#"{"general":{"enabled":"yes"}}"#.utf8))
+    }
+
     // MARK: - P2-31 clamp
 
     func testDoubleShiftWindowIsClampedOnDecode() throws {

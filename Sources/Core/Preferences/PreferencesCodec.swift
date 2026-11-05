@@ -8,6 +8,8 @@
 //   3. A newer version is decoded as far as v1 understands it (`newerSchemaVersion` is set); the
 //      store then never writes the file (read-only, 001 §4.1).
 //   4. Fields decode leniently (Preferences.swift). Dates are ISO 8601, with or without fractional seconds.
+//      If leniency dropped or defaulted a stored value, `isLossy` is set; the store then keeps a copy of
+//      the original file before its first save (`preferences.lossy-<ISO date>.bak.json`).
 // Encode: pretty-printed, sorted keys (stable bytes), ISO 8601 dates in whole seconds, plus `schemaVersion`.
 
 import Foundation
@@ -27,6 +29,9 @@ enum PreferencesCodec {
         let migratedFrom: Int?
         /// The file's version when it is newer than this build knows (open read-only).
         let newerSchemaVersion: Int?
+        /// Lenient decoding threw something stored away: a bad entry, a mistyped or unknown-valued
+        /// field, a non-array `rules`, a clamped number. Unknown keys and missing fields don't count.
+        let isLossy: Bool
     }
 
     /// The 001 §2.2 contract. Use `decodeDetailed` to also learn about a newer schema.
@@ -71,8 +76,12 @@ enum PreferencesCodec {
         }
 
         do {
-            let prefs = try makeDecoder().decode(Preferences.self, from: body)
-            return Decoded(prefs: prefs, migratedFrom: migratedFrom, newerSchemaVersion: newer)
+            let recorder = PreferencesDecodingLoss.Recorder()
+            let prefs = try PreferencesDecodingLoss.$current.withValue(recorder) {
+                try makeDecoder().decode(Preferences.self, from: body)
+            }
+            return Decoded(prefs: prefs, migratedFrom: migratedFrom, newerSchemaVersion: newer,
+                           isLossy: recorder.count > 0)
         } catch {
             throw DecodeError.notAnObject
         }
