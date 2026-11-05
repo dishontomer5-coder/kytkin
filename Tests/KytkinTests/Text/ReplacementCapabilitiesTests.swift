@@ -5,8 +5,8 @@ import XCTest
 final class ReplacementCapabilitiesTests: XCTestCase {
     func testSeeds() {
         let c = ReplacementCapabilities()
-        XCTAssertEqual(c.method(for: "com.apple.Terminal"), .keysOnly)
-        XCTAssertEqual(c.method(for: "com.googlecode.iterm2"), .keysOnly)
+        XCTAssertEqual(c.method(for: "com.apple.Terminal"), .terminal)
+        XCTAssertEqual(c.method(for: "com.googlecode.iterm2"), .terminal)
         XCTAssertEqual(c.method(for: "com.microsoft.VSCode"), .keysOnly)
         XCTAssertEqual(c.method(for: "com.jetbrains.intellij"), .keysOnly)
         XCTAssertEqual(c.method(for: "com.jetbrains.pycharm.ce"), .keysOnly)
@@ -16,10 +16,31 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         XCTAssertEqual(c.method(for: ""), .auto)
     }
 
+    func testTerminalSeeds() {
+        // P2-36 (001 §12 T1): every known terminal is in the terminal class, not keysOnly.
+        let c = ReplacementCapabilities()
+        for id in ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty",
+                   "org.alacritty", "io.alacritty", "net.kovidgoyal.kitty", "com.github.wez.wezterm",
+                   "co.zeit.hyper"] {
+            XCTAssertEqual(c.method(for: id), .terminal, id)
+        }
+        // IDEs stay keysOnly: their embedded terminals are covered by the T2 control-character rule instead.
+        XCTAssertEqual(c.method(for: "com.microsoft.VSCode"), .keysOnly)
+        XCTAssertEqual(c.method(for: "com.jetbrains.goland"), .keysOnly)
+    }
+
+    func testChromiumBrowserSeeds() {
+        // P2-36 (001 §12 T7).
+        let c = ReplacementCapabilities()
+        for id in ["com.google.Chrome", "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium"] {
+            XCTAssertEqual(c.method(for: id), .keysOnly, id)
+        }
+    }
+
     func testBundleIDsAreCaseInsensitive() {
         let c = ReplacementCapabilities()
-        XCTAssertEqual(c.method(for: "COM.APPLE.TERMINAL"), .keysOnly)
-        XCTAssertEqual(c.method(for: " com.apple.Terminal "), .keysOnly)
+        XCTAssertEqual(c.method(for: "COM.APPLE.TERMINAL"), .terminal)
+        XCTAssertEqual(c.method(for: " com.apple.Terminal "), .terminal)
     }
 
     func testOverrideBeatsSeed() {
@@ -28,7 +49,7 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         c.setOverride(.auto, for: "com.jetbrains.goland")
         XCTAssertEqual(c.method(for: "com.jetbrains.goland"), .auto)
         c.setOverride(nil, for: "com.apple.Terminal")
-        XCTAssertEqual(c.method(for: "com.apple.Terminal"), .keysOnly)
+        XCTAssertEqual(c.method(for: "com.apple.Terminal"), .terminal)
     }
 
     func testLongestPrefixWins() {
@@ -87,5 +108,10 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         for m in Preferences.AppOverride.ReplacementMethod.allCases {
             XCTAssertNotNil(MethodHint(rawValue: m.rawValue), m.rawValue)
         }
+        // P2-36: and the other way round, every hint except `disabled` can be stored as an override.
+        for h in MethodHint.allCases where h != .disabled {
+            XCTAssertNotNil(Preferences.AppOverride.ReplacementMethod(rawValue: h.rawValue), h.rawValue)
+        }
+        XCTAssertEqual(MethodHint(rawValue: Preferences.AppOverride.ReplacementMethod.terminal.rawValue), .terminal)
     }
 }

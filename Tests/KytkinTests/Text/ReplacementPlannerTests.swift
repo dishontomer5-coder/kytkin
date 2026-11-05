@@ -46,7 +46,7 @@ final class ReplacementPlannerTests: XCTestCase {
     }
 
     func testSelectionInKeysOnlyAppNeverUsesAX() {
-        XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(selection: "akuo")),
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.microsoft.VSCode", focus: field(selection: "akuo")),
                        .steps([.typeOverSelection]))
         XCTAssertEqual(plan(.convertSelection, bundle: "com.google.Chrome", focus: field(selection: "akuo")),
                        .steps([.typeOverSelection]))
@@ -87,6 +87,112 @@ final class ReplacementPlannerTests: XCTestCase {
         // Never in terminals (bracketed paste, R5).
         XCTAssertFalse(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(selection: "x"),
                             paste: true).steps.contains(.pasteboard))
+        // P2-36 (001 §12 T3): keysOnly allows the opt-in paste (⌘V is a key), still without AX.
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.google.Chrome", focus: field(selection: "x"), paste: true),
+                       .steps([.typeOverSelection, .pasteboard]))
+        let terminal = ReplacementCapabilities(overrides: [textEdit: .terminal])
+        XCTAssertEqual(plan(.convertSelection, focus: field(selection: "x"), caps: terminal, paste: true),
+                       .refuse(.terminalSelection))
+    }
+
+    // MARK: - Terminals (P2-36, 001 §12 T1)
+
+    func testSelectionInTerminalIsRefused() {
+        for id in ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty",
+                   "org.alacritty", "net.kovidgoyal.kitty", "com.github.wez.wezterm", "co.zeit.hyper"] {
+            XCTAssertEqual(plan(.convertSelection, bundle: id, focus: field(selection: "akuo")),
+                           .refuse(.terminalSelection), id)
+            XCTAssertEqual(plan(.convertSelection, bundle: id, focus: field(selection: "akuo"), paste: true),
+                           .refuse(.terminalSelection), id)
+        }
+        // Even when the selection couldn't be read: the terminal hint is the better explanation.
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(selection: nil)),
+                       .refuse(.terminalSelection))
+        // A user override to terminal works the same in any app.
+        let c = ReplacementCapabilities(overrides: [textEdit: .terminal])
+        XCTAssertEqual(plan(.convertSelection, focus: field(selection: "akuo"), caps: c), .refuse(.terminalSelection))
+    }
+
+    func testTerminalLastWordIsBackspaceAndTypeOnly() {
+        XCTAssertEqual(plan(.convertLastWord, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
+                            focus: field()), .steps([.backspaceAndType(count: 4)]))
+        // Stale buffer: no AX path in a terminal, so a beep.
+        XCTAssertEqual(plan(.convertLastWord, bundle: "com.mitchellh.ghostty", snap: nil, focus: field()),
+                       .refuse(.bufferStale))
+        XCTAssertEqual(plan(.convertLastWord, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
+                            focus: field(), paste: true), .steps([.backspaceAndType(count: 4)]))
+    }
+
+    func testTerminalNeverPlansAXOrPaste() {
+        let c = ReplacementCapabilities(overrides: [textEdit: .terminal])
+        for kind in allKinds {
+            let steps = plan(kind, snap: snapshot(), typed: 4, focus: field(selection: "x"), caps: c, paste: true).steps
+            XCTAssertFalse(steps.contains(.pasteboard), "\(kind)")
+            XCTAssertFalse(steps.contains(.axWriteSelection(verify: true)), "\(kind)")
+            XCTAssertFalse(steps.contains(.axReadBeforeCaret(maxChars: 64)), "\(kind)")
+        }
+    }
+
+    func testHardRulesBeatTheTerminalRefusal() {
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(secure: true, selection: "x")),
+                       .refuse(.secureField))
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: nil), .refuse(.focusUnknown))
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(marked: true, selection: "x")),
+                       .refuse(.composing))
+    }
+
+    // MARK: - Control characters in the selection (P2-36, 001 §12 T2)
+
+    private let unsafeSelections = ["two\nlines", "tab\there", "cr\rhere", "crlf\r\nhere", "esc\u{1B}",
+                                    "nul\u{0}", "del\u{7F}", "c1\u{85}", "ls\u{2028}", "ps\u{2029}", "\n"]
+
+    func testUnsafeSelectionIsOnlyReplacedByAVerifiedAXWrite() {
+        for sel in unsafeSelections {
+            XCTAssertEqual(plan(.convertSelection, focus: field(selection: sel)),
+                           .steps([.axWriteSelection(verify: true)]), sel.debugDescription)
+            XCTAssertEqual(plan(.convertSelection, focus: field(selection: sel), paste: true),
+                           .steps([.axWriteSelection(verify: true)]), sel.debugDescription)
+            let prefer = ReplacementCapabilities(overrides: [textEdit: .preferPaste])
+            XCTAssertEqual(plan(.convertSelection, focus: field(selection: sel), caps: prefer, paste: true),
+                           .steps([.axWriteSelection(verify: true)]), sel.debugDescription)
+        }
+    }
+
+    func testUnsafeSelectionWithoutAXRefuses() {
+        var broken = ReplacementCapabilities()
+        broken.record(.failedVerify, of: .axWriteSelection(verify: true), for: textEdit)
+        for sel in unsafeSelections {
+            XCTAssertEqual(plan(.convertSelection, focus: field(settable: false, selection: sel)),
+                           .refuse(.unsafeSelection), sel.debugDescription)
+            XCTAssertEqual(plan(.convertSelection, focus: field(selection: sel), caps: broken, paste: true),
+                           .refuse(.unsafeSelection), sel.debugDescription)
+            // keysOnly apps (IDEs, so also their embedded terminals) never type it.
+            XCTAssertEqual(plan(.convertSelection, bundle: "com.microsoft.VSCode", focus: field(selection: sel),
+                                paste: true), .refuse(.unsafeSelection), sel.debugDescription)
+            XCTAssertEqual(plan(.convertSelection, bundle: "com.jetbrains.intellij", focus: field(selection: sel)),
+                           .refuse(.unsafeSelection), sel.debugDescription)
+            // A noUnicode app without AX is unsafe first (the reason the user can act on).
+            XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.ScreenSharing",
+                                focus: field(settable: false, selection: sel)), .refuse(.unsafeSelection))
+        }
+    }
+
+    func testSafeCharactersAreStillTyped() {
+        // Spaces, NBSP, LRM/RLM, niqqud, emoji and Hebrew are not control characters.
+        for sel in ["two words", "a\u{00A0}b", "\u{200E}שלום\u{200F}", "שָׁלוֹם", "👍🏽 ok", " "] {
+            XCTAssertFalse(ReplacementPlanner.containsUnsafeCharacter(sel), sel.debugDescription)
+            XCTAssertEqual(plan(.convertSelection, bundle: "com.microsoft.VSCode", focus: field(selection: sel)),
+                           .steps([.typeOverSelection]), sel.debugDescription)
+        }
+        for sel in unsafeSelections {
+            XCTAssertTrue(ReplacementPlanner.containsUnsafeCharacter(sel), sel.debugDescription)
+        }
+    }
+
+    func testLastWordIgnoresTheSelectionCheck() {
+        // The control-character rule is about the selection only; the last word is rebuilt from strokes.
+        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(), typed: 4, focus: field(selection: "a\nb")),
+                       .steps([.backspaceAndType(count: 4)]))
     }
 
     // MARK: - Last word

@@ -10,6 +10,8 @@ extension Preferences {
         /// which is `AppOverride.disabled`).
         enum ReplacementMethod: String, Codable, Sendable, CaseIterable {
             case auto, keysOnly, noUnicode, preferPaste
+            // P2-36 (001 §12 T1, §4.2): the terminal class (no AX, no paste, no selection convert).
+            case terminal
         }
 
         /// Kytkin does nothing in this app.

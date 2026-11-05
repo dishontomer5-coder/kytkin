@@ -17,6 +17,12 @@ enum ReplacementPlan: Sendable, Equatable {
         case selectionUnreadable
         /// No valid buffer and no AX path to find the last word.
         case bufferStale
+        /// P2-36 (001 §12 T1): a selection convert in a terminal. The selection is display only, so typing over it
+        /// would type at the shell prompt. The menu hint says "In terminals, convert the last word instead".
+        case terminalSelection
+        /// P2-36 (001 §12 T2): the selection holds a line break, tab or other control character (Cc/Zl/Zp), and no
+        /// verified AX write is available. Typing it could send a message or run a command.
+        case unsafeSelection
         /// Nothing in the chain can work in this app/field (e.g. keys-only app with AX-only needs).
         case noMethod
     }

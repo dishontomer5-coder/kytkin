@@ -236,6 +236,17 @@ final class PreferencesCodecTests: XCTestCase {
         }
     }
 
+    func testTerminalReplacementMethodRoundTrips() throws {
+        // P2-36 (001 §12 T1, §4.2): `terminal` is a stored method; the old `keysOnly` value keeps working.
+        let d = try decode(#"{"apps":{"com.mitchellh.ghostty":{"replacementMethod":"terminal"},"#
+                           + #""com.google.Chrome":{"replacementMethod":"keysOnly"}}}"#)
+        XCTAssertFalse(d.isLossy)
+        XCTAssertEqual(d.prefs.apps["com.mitchellh.ghostty"]?.replacementMethod, .terminal)
+        XCTAssertEqual(d.prefs.apps["com.google.Chrome"]?.replacementMethod, .keysOnly)
+        let again = try PreferencesCodec.decodeDetailed(try PreferencesCodec.encode(d.prefs))
+        XCTAssertEqual(again.prefs.apps, d.prefs.apps)
+    }
+
     func testLossyFlagDoesNotLeakIntoTheNextDecode() throws {
         XCTAssertTrue(try decode(#"{"general":{"enabled":"yes"}}"#).isLossy)
         XCTAssertFalse(try decode("{}").isLossy)
