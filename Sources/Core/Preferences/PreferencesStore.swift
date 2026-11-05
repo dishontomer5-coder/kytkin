@@ -7,7 +7,8 @@
 //   - decodes, but leniency dropped or defaulted something (a bad rule, a mistyped field…) →
 //     `loadWasLossy`, and the original bytes are written to `preferences.lossy-<ISO date>.bak.json`
 //     just before the first save (a migrated file's `.v<N>.bak.json` already is that copy).
-//   - doesn't decode → moved to `preferences.corrupt-<ISO date>.json`, defaults, `.corruptQuarantined`.
+//   - doesn't decode → moved to `preferences.corrupt-<ISO date>.json` (set to 0600, best effort), defaults,
+//     `.corruptQuarantined`.
 //   - can't be read, or can't be moved aside → defaults, `.unreadable`, read-only (nothing on disk is lost).
 // Save: `update` applies the change at once and saves 0.5 s after the last change (debounced, measured
 // on the injected Clock), atomically with mode 0600. `flush()` saves now (on quit).
@@ -147,7 +148,8 @@ import Observation
             // The original is copied first; if that fails, the file isn't overwritten either.
             switch pendingBackup {
             case .migrated(let data, let version):
-                let url = PreferencesLocation.backupURL(for: fileURL, version: version)
+                // P2-37: `-N` suffix if taken (001 §12 S4).
+                let url = firstFreeURL { PreferencesLocation.backupURL(for: fileURL, version: version, attempt: $0) }
                 try fileSystem.writeAtomically(data, to: url)
                 originalBackupURL = url
             case .lossy(let data):
@@ -185,6 +187,10 @@ import Observation
         } catch {
             loadIssue = .unreadable
             isReadOnly = true
+            return
         }
+        // P2-37: moveItem keeps the old mode, and a hand-edited file may be 0644 (001 §12 S5). Best effort:
+        // a failure is ignored and doesn't change the load, since the file was already the user's.
+        try? fileSystem.setOwnerOnlyPermissions(at: dest)
     }
 }

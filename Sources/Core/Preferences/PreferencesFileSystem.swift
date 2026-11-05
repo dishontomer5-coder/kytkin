@@ -12,4 +12,6 @@ protocol PreferencesFileSystem: Sendable {
     func writeAtomically(_ data: Data, to url: URL) throws
     /// Renames a file. Fails if `destination` exists.
     func moveItem(at source: URL, to destination: URL) throws
+    /// P2-37: Sets an existing file to mode 0600 (owner read/write only), e.g. a quarantined file.
+    func setOwnerOnlyPermissions(at url: URL) throws
 }
