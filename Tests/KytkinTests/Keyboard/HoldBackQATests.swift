@@ -155,6 +155,8 @@ final class HoldBackQATests: XCTestCase {
     // MARK: - Exactly once, in order, across many replacements
 
     /// Every user key goes out exactly once: passed, or held and returned once by a flush or a finish.
+    /// P2-35: also, no replacement starts while a force-flushed worker may still be posting. Every 5th generation's
+    /// worker hangs while posting, so it is forced out (hard cap or full FIFO); half of those finish late, the rest never.
     func testEveryHeldKeyComesOutExactlyOnceInOrder() {
         let clock = FakeClock()
         var p = makeProcessor(clock, autoFix: true)
@@ -163,6 +165,17 @@ final class HoldBackQATests: XCTestCase {
         var gen: UInt64?
         var heldCount = 0
         var code: UInt16 = 0
+        var stale: (gen: UInt64, until: UInt64)?
+        var starts = 0, refusedWindows = 0, refusals = 0
+        func isHung(_ g: UInt64) -> Bool { g % 5 == 0 }
+        func staleMayPost() -> Bool { stale.map { clock.nowNanos < $0.until } ?? false }
+        // P2-35: a new start is only allowed when no stale worker may post.
+        func started(_ g: UInt64) {
+            starts += 1
+            if let st = stale, clock.nowNanos < st.until { XCTFail("gen \(g) started while stale gen \(st.gen) may post") }
+            stale = nil
+            gen = g
+        }
         for step in 0..<5_000 {
             let e: KeyEvent
             switch step % 37 {
@@ -173,24 +186,45 @@ final class HoldBackQATests: XCTestCase {
                 code = (code + 1) % 30
                 e = F.key(code == KeyCode.delete ? 0 : code)
             }
-            if step % 53 == 0 { for ev in F.doubleShift(at: UInt64(step) * 1000) { if case let .doubleShift(_, g)? = p.handle(ev).1 { gen = g } } }
+            if step % 53 == 0 {
+                var fired = false
+                for ev in F.doubleShift(at: UInt64(step) * 1000) {
+                    if case let .doubleShift(_, g)? = p.handle(ev).1 { started(g); fired = true }
+                }
+                if !fired, p.activeGeneration == nil, staleMayPost() { refusals += 1 }
+            }
             if e.kind == .keyDown { sent.append(e.keyCode) }
             let (verdict, signal) = p.handle(e)
-            if case let .wordEnded(_, g)? = signal { gen = g }
+            if case let .wordEnded(_, g)? = signal { started(g) }
             if verdict == .pass, e.kind == .keyDown { out.append(e.keyCode) }
             if verdict == .hold { heldCount += 1 }
-            if step % 7 == 0, let g = gen {
-                out += p.finishReplacement(gen: g, newRendering: nil, bufferAfter: nil).map(\.event.keyCode)
+            if step % 7 == 0, let g = gen, !(isHung(g) && p.activeGeneration == g) {
+                // A hung worker finishes only after it was forced out (a stale finish), and only for half of them.
+                if !isHung(g) || g % 10 == 0 {
+                    out += p.finishReplacement(gen: g, newRendering: nil, bufferAfter: nil).map(\.event.keyCode)
+                    if stale?.gen == g { stale = nil }
+                }
                 gen = nil
             }
             if step % 13 == 0 { p.reset(.contextChange) }
             clock.advance(byMilliseconds: 20)
-            out += (p.pollFlush(postingStarted: step % 3 == 0) ?? []).map(\.event.keyCode)
+            let active = p.activeGeneration
+            let posting = active.map(isHung) ?? false || step % 3 == 0
+            if let flushed = p.pollFlush(postingStarted: posting) {
+                out += flushed.map(\.event.keyCode)
+                if posting, let active {
+                    stale = (active, clock.nowNanos + KeyProcessorConfig().postingHardCapNanos)
+                    refusedWindows += 1
+                }
+            }
         }
         clock.advance(bySeconds: 5)
         out += (p.pollFlush() ?? []).map(\.event.keyCode)
         XCTAssertEqual(p.heldCount, 0)
         XCTAssertGreaterThan(heldCount, 100, "the run must exercise hold-back")
         XCTAssertEqual(out, sent)
+        XCTAssertGreaterThan(starts, 50, "the run must start many replacements")
+        XCTAssertGreaterThan(refusedWindows, 5, "the run must force-flush under a posting worker")
+        XCTAssertGreaterThan(refusals, 0, "the run must refuse a double-Shift during a stale window")
     }
 }
