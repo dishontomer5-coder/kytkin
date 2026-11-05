@@ -96,13 +96,18 @@ struct LayoutMap: Codable, Sendable, Equatable {
             throw LayoutMapError(error)
         }
         let raw = map.id.rawValue
-        if raw.hasPrefix(reservedIDPrefix) { throw LayoutMapError.reservedID(raw) }
+        if isReservedID(raw) { throw LayoutMapError.reservedID(raw) }
         // P2-30: after the reserved-id check, so a re-imported Apple export still says "reserved for Apple".
         if map.source == .system { throw LayoutMapError.systemSourceImport }
         if !raw.hasPrefix(userIDPrefix) { map.id = InputSourceID(userIDPrefix + raw) }
         try checkImportableID(map.id.rawValue)
         if map.source == .user, map.base?.rawValue.isEmpty ?? true { throw LayoutMapError.missingBase }
         return map
+    }
+
+    /// QA (P2-30): `com.apple.` in any ASCII case (`COM.Apple.x`) is reserved too.
+    static func isReservedID(_ raw: String) -> Bool {
+        raw.prefix(reservedIDPrefix.count).lowercased() == reservedIDPrefix
     }
 
     /// P2-30: the id rules for an id that already has its `user.` prefix.
@@ -141,7 +146,7 @@ struct LayoutMap: Codable, Sendable, Equatable {
         }
         guard source != .system else { return }
         let raw = id.rawValue
-        if raw.hasPrefix(Self.reservedIDPrefix) { throw LayoutMapError.reservedID(raw) }
+        if Self.isReservedID(raw) { throw LayoutMapError.reservedID(raw) }
         try Self.checkImportableID(raw.hasPrefix(Self.userIDPrefix) ? raw : Self.userIDPrefix + raw)
         if source == .user, base?.rawValue.isEmpty ?? true { throw LayoutMapError.missingBase }
     }

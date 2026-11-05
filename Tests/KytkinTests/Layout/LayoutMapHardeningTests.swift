@@ -94,6 +94,19 @@ final class LayoutMapHardeningTests: XCTestCase {
         }
     }
 
+    func testReservedIDPrefixIgnoresCase() throws {
+        // QA (P2-30): Apple's namespace in any case is reserved, on import and on export.
+        for id in ["COM.APPLE.x", "Com.Apple.keylayout.ABC", "com.Apple."] {
+            XCTAssertThrowsError(try LayoutMap.validate(Self.json(id: id)), id) {
+                XCTAssertEqual($0 as? LayoutMapError, .reservedID(id), id)
+            }
+            assertEncodeThrows(Self.map(id: id), .reservedID(id))
+        }
+        // Only the prefix counts: "com.applex" and "user.com.apple.x" are ordinary names.
+        XCTAssertEqual(try LayoutMap.validate(Self.json(id: "com.applex")).id, InputSourceID("user.com.applex"))
+        XCTAssertNoThrow(try LayoutMap.validate(Self.json(id: "user.COM.APPLE.x")))
+    }
+
     // MARK: (3) scalar cap
 
     func testMoreThan16ScalarsInOneGraphemeIsRejected() throws {
