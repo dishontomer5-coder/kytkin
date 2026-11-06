@@ -7,6 +7,8 @@ final class FakeTextField: AXTextElement {
     enum WriteBehavior {
         /// Replaces the selection and leaves the caret after the new text (NSTextView, R5).
         case normal
+        /// Replaces the selection and leaves the new text selected (some apps do, R5 read-back accepts it).
+        case normalKeepsSelection
         /// Returns success and changes nothing (NSTextField not editing, WebKit, R5).
         case silentNoop
         /// Returns success but writes something else.
@@ -93,6 +95,10 @@ final class FakeTextField: AXTextElement {
         guard a == .selectedText, selTextSettable else { return .failure(.failed) }
         switch writeBehavior {
         case .normal: replaceSelection(with: value)
+        case .normalKeepsSelection:
+            let start = selection.location
+            replaceSelection(with: value)
+            selection = TextRange(location: start, length: value.utf16.count)
         case .silentNoop: break
         case .garble: replaceSelection(with: "?")
         case .fails: return .failure(.failed)

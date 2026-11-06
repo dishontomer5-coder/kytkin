@@ -125,9 +125,35 @@ import Foundation
     /// then read back.
     private func axWriteSelection(old: String, new: String, verify: Bool) -> StepOutcome {
         guard let el = element, !old.isEmpty, !new.isEmpty else { return .unavailable }
+        guard let pending = pendingRange else { return axWrite(el, old: old, new: new, verify: verify, select: nil) }
+        // P2-18 QA: the stale path selected the word itself. Whatever happens, never leave a selection behind:
+        // the user's next key would replace it (the word, or the converted word) and their text would be lost.
+        pendingRange = nil
+        let outcome = axWrite(el, old: old, new: new, verify: verify, select: pending)
+        if outcome.verdict == .done {
+            collapseSelection(el, to: pending.location + new.utf16.count)
+        } else if outcome.fieldUntouched {
+            collapseSelection(el, to: pending.end)   // back where the user left the caret
+        } else {
+            collapseSelection(el, to: nil)           // unknown text: only drop the selection, at its end
+        }
+        return outcome
+    }
+
+    /// Best effort, range only (never text): if something is selected, put a caret at `location` (nil = the
+    /// selection's end), and read it back. A caret the app already placed is left alone.
+    private func collapseSelection(_ el: any AXTextElement, to location: Int?) {
+        guard case .success(let current) = el.range(.selectedTextRange), !current.isCaret else { return }
+        let caret = TextRange(location: location ?? current.end, length: 0)
+        guard case .success = el.setRange(caret, for: .selectedTextRange) else { return }
+        _ = el.range(.selectedTextRange)   // read back; nothing more to try if it didn't take
+    }
+
+    private func axWrite(_ el: any AXTextElement, old: String, new: String, verify: Bool,
+                         select pending: TextRange?) -> StepOutcome {
         guard case .success(true) = el.isSettable(.selectedText) else { return .unavailable }
         let target: TextRange
-        if let pending = pendingRange {
+        if let pending {
             guard case .success = el.setRange(pending, for: .selectedTextRange) else { return .unavailable }
             target = pending
         } else {

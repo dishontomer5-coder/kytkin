@@ -181,7 +181,113 @@ final class ReplacementChainTests: XCTestCase {
         XCTAssertTrue(f.writes.isEmpty)
     }
 
+    // MARK: - Stale path never leaves a selection behind (P2-18 QA)
+
+    /// Runs the stale-buffer plan on "hello ,usv" (caret at the end) with the given write behavior.
+    @TextActor private func staleRun(_ behavior: FakeTextField.WriteBehavior) -> (FakeTextField, ReplacementOutcome) {
+        let f = FakeTextField("hello ,usv")
+        f.writeBehavior = behavior
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps)
+        return (f, out)
+    }
+
+    @TextActor func testStaleNoopWriteRestoresTheCaretSoTheNextKeyCantEatTheWord() async {
+        let (f, out) = staleRun(.silentNoop)
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(f.text, "hello ,usv")
+        XCTAssertEqual(f.selection, sel(10, 0), "the word must not stay selected after a failed convert")
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testStaleFailedWriteRestoresTheCaret() async {
+        let (f, out) = staleRun(.fails)
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(f.text, "hello ,usv")
+        XCTAssertEqual(f.selection, sel(10, 0))
+    }
+
+    @TextActor func testStaleWriteThatLeavesTheNewWordSelectedEndsWithACaret() async {
+        let (f, out) = staleRun(.normalKeepsSelection)
+        XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
+        XCTAssertEqual(f.text, "hello תודה")
+        XCTAssertEqual(f.selection, sel(10, 0), "the converted word must not stay selected")
+    }
+
+    @TextActor func testStaleGarbledWriteHaltsAndLeavesNoSelection() async {
+        let (f, out) = staleRun(.garble)
+        XCTAssertEqual(out.result, .halted(after: .axWriteSelection(verify: true)))
+        XCTAssertTrue(f.selection.isCaret)
+        XCTAssertTrue(poster.events.isEmpty, "never type after an unknown write")
+    }
+
+    @TextActor func testStaleWordChangedBeforeTheWriteIsNotWrittenAndCaretIsRestored() async {
+        let f = FakeTextField("hello ,usv")
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.perform(.axReadBeforeCaret(maxChars: 64), old: "", new: "").verdict, .done)
+        f.units = Array("hello ,usx".utf16)   // the app changed the word between the read and the write
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: ",usv", new: "תודה"), .unavailable)
+        XCTAssertEqual(f.text, "hello ,usx")
+        XCTAssertEqual(f.selection, sel(10, 0))
+    }
+
+    @TextActor func testSelectionPathKeepsTheUsersOwnSelection() async {
+        let f = FakeTextField("hello akuo world", selection: sel(6, 4))
+        f.writeBehavior = .fails
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertEqual(f.selection, sel(6, 4), "the user's selection is theirs; the next step types over it")
+    }
+
     // MARK: - Gate, budget, cleanup
+
+    @TextActor func testKeyGateIsAskedExactlyOnceAcrossKeySteps() async {
+        let f = FakeTextField("hello akuo world", selection: sel(6, 4))
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        poster.failFrom = 0   // the first key step can't post anything, so the chain falls through
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.typeOverSelection, .typeOverSelection]), on: x, bundleID: app,
+                                       old: "akuo", convert: convert, capabilities: &caps,
+                                       mayPostKeys: { asked += 1; return true })
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(asked, 1)
+    }
+
+    @TextActor func testKeyGateIsNotAskedWhenAXWins() async {
+        let f = FakeTextField("hello akuo world", selection: sel(6, 4))
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axWriteSelection(verify: true), .typeOverSelection]), on: x,
+                                       bundleID: app, old: "akuo", convert: convert, capabilities: &caps,
+                                       mayPostKeys: { asked += 1; return true })
+        XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
+        XCTAssertEqual(asked, 0, "the hold-back commit is only taken when keys will be posted")
+    }
+
+    @TextActor func testKeyGateIsNotAskedAfterTheBudgetRanOut() async {
+        let f = FakeTextField("hello akuo world", selection: sel(6, 4))
+        f.writeBehavior = .silentNoop
+        let clock = FakeClock()
+        let slow = SlowReplacer(executor(f), clock: clock, stepNanos: 450_000_000)
+        _ = slow.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axWriteSelection(verify: true), .typeOverSelection]), on: slow,
+                                       bundleID: app, old: "akuo", convert: convert, capabilities: &caps,
+                                       clock: clock, mayPostKeys: { asked += 1; return true })
+        XCTAssertEqual(out.result, .timedOut)
+        XCTAssertEqual(asked, 0)
+    }
+
 
     @TextActor func testKeyPostingGateAbandonsSilently() async {
         let f = FakeTextField("hello akuo world", selection: sel(6, 4))
