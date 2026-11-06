@@ -114,8 +114,21 @@ final class KeyEventTranslatorTests: XCTestCase {
         XCTAssertEqual(n.nanos(fromEventTimestamp: 990_000, machNow: machNow, uptimeNanosNow: uptimeNow),
                        990_000 * 125 / 3)
         XCTAssertEqual(n.unit, .machTicks)
-        // Decided once: later events convert without reading the clocks.
-        XCTAssertEqual(n.nanos(fromEventTimestamp: 3, machNow: 0, uptimeNanosNow: 0), 125)
+    }
+
+    /// QA (P2-17): every event is classified on its own, so one odd event can't fix the unit for the tap's lifetime.
+    func testEachEventIsClassifiedOnItsOwn() {
+        var n = EventTimestampNormalizer(numer: 125, denom: 3)
+        let machNow: UInt64 = 3_000_000_000, uptimeNow: UInt64 = machNow * 125 / 3 // ~2 min of uptime
+        // A synthetic event in nanoseconds arrives first…
+        XCTAssertEqual(n.nanos(fromEventTimestamp: uptimeNow - 1_000, machNow: machNow, uptimeNanosNow: uptimeNow),
+                       uptimeNow - 1_000)
+        XCTAssertEqual(n.unit, .nanoseconds)
+        // …then hardware events in ticks, 50 ms apart in real time, still come out 50 ms apart.
+        let t1 = n.nanos(fromEventTimestamp: machNow - 2_400_000, machNow: machNow, uptimeNanosNow: uptimeNow)
+        let t2 = n.nanos(fromEventTimestamp: machNow - 1_200_000, machNow: machNow, uptimeNanosNow: uptimeNow)
+        XCTAssertEqual(n.unit, .machTicks)
+        XCTAssertEqual(t2 - t1, 50_000_000)
     }
 
     func testNanosecondTimestampsPassThrough() {

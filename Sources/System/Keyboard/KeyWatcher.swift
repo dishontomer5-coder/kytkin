@@ -60,7 +60,7 @@ final class KeyWatcher: @unchecked Sendable { // @unchecked: mutable state is gu
         let (thread, engine) = lock.withLock { (self.thread, self.engine) }
         guard let thread, let engine else { return }
         let processor = thread.sync { () -> KeyStreamProcessor in
-            engine.applyMode(.off, userInitiated: true)
+            engine.shutdown()
             return engine.processor
         }
         thread.stopRunLoop()

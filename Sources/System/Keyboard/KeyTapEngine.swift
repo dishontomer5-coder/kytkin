@@ -162,6 +162,14 @@ final class KeyTapEngine: @unchecked Sendable {
         return achieved
     }
 
+    /// Stop for good (KeyWatcher.stop, on the tap thread): remove the tap (held keys are flushed first), then
+    /// invalidate the timers. QA (P2-17): their handlers hold this engine unowned, and main may release the engine
+    /// as soon as stop returns, while a poll could otherwise still fire on the tap thread (a crash on quit).
+    func shutdown() {
+        applyMode(.off, userInitiated: true)
+        backend.detachTimers()
+    }
+
     // MARK: - Timers (tap thread)
 
     /// The one-shot hold-back deadline timer fired.
@@ -220,14 +228,27 @@ final class KeyTapEngine: @unchecked Sendable {
     // MARK: - Contract step 2
 
     /// `claimFlush` before `pollFlush`; re-post the flushed events marked `replay`; then `commit.finish`.
+    ///
+    /// QA (P2-17), two departures from the 001 §2.2 step 2 pseudocode, both needed for B3:
+    /// - Once the hard cap is armed, `nextDeadlineNanos` is the cap (in the future), so the literal rule passed
+    ///   `postingStarted: false` on the next held key and flushed it in the middle of the worker's posts. A worker
+    ///   that holds the commit (`.posting(gen)`) is therefore always reported as posting.
+    /// - `pollFlush` reads the clock again. If the deadline passed between the two reads, it flushed without the
+    ///   claim and a worker could still win `claimPosting` and post after the held keys. So when nothing is due by
+    ///   our one reading and no worker is posting, `pollFlush` isn't called: the timer comes back at `due`.
     func runFlushStep() {
         guard let gen = processor.activeGeneration else {
             disarmDeadline()
             return
         }
-        var posting = false
+        let posting: Bool
         if let due = processor.nextDeadlineNanos, due <= clock.nowNanos {
             posting = !commit.claimFlush(gen: gen)
+        } else if commit.state == .posting(gen: gen) {
+            posting = true // waiting under the hard cap: pollFlush may still flush a full FIFO or a non-active mode
+        } else {
+            rearmDeadline()
+            return
         }
         if let events = processor.pollFlush(postingStarted: posting) {
             replay(events)

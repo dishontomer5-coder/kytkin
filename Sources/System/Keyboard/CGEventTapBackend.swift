@@ -129,6 +129,13 @@ final class CGEventTapBackend: KeyTapBackend {
         CFRunLoopTimerSetNextFireDate(deadlineTimer, Date.distantFuture.timeIntervalSinceReferenceDate)
     }
 
+    func detachTimers() {
+        if let deadlineTimer { CFRunLoopTimerInvalidate(deadlineTimer) }
+        if let pollTimer { CFRunLoopTimerInvalidate(pollTimer) }
+        deadlineTimer = nil
+        pollTimer = nil
+    }
+
     func runSoon(_ block: @escaping () -> Void) {
         CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue, block)
         CFRunLoopWakeUp(runLoop)

@@ -12,8 +12,12 @@
 // Time for deadlines comes from the injected Clock (same uptime base as event timestamps).
 //
 // Adapter protocol (B3, QA): after every `handle`, every main/worker hop, and on the deadline timer:
-//   if let gen = activeGeneration, let due = nextDeadlineNanos, due <= now { posting = !commit.claimFlush(gen) }
+//   guard let gen = activeGeneration; read `now` once
+//   if let due = nextDeadlineNanos, due <= now { posting = !commit.claimFlush(gen) }
+//   else if commit.state == .posting(gen) { posting = true }   // P2-17 QA: the hard-cap wait (due = the cap)
+//   else { return }                                             // not due: never flush without the claim
 //   pollFlush(postingStarted: posting)
+// (KeyTapEngine.runFlushStep is the reference implementation.)
 // An abort (overflow, shortcut, click, reset, mode change) makes the flush due at once, but it still waits for a
 // worker that already won the commit (up to the hard cap), so held keys never interleave with its posts.
 // P2-35 (001 §12 K4): a generation force-flushed while its worker was posting (hard cap, full FIFO, or no longer

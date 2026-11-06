@@ -37,6 +37,9 @@ protocol KeyTapBackend: AnyObject {
     /// One-shot deadline at `uptimeNanos` (same base as `Clock`). Re-arming replaces the old time.
     func armDeadline(atUptimeNanos: UInt64)
     func cancelDeadline()
+    /// QA (P2-17): invalidate both timers (on stop, on the tap thread). Afterwards no timer handler runs again, so the
+    /// engine they point at (unowned) can be released from any thread.
+    func detachTimers()
     /// Run a block on the tap thread after the current callback returns (e.g. replacing the tap from inside it).
     func runSoon(_ block: @escaping () -> Void)
 }

@@ -47,11 +47,11 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
         mode == .off || granted.contains(mode)
     }
 
-    /// Runs at each post, e.g. to check the commit state at that moment.
-    var onPost: (() -> Void)?
+    /// Runs at each post (with the event), e.g. to check the commit state at that moment.
+    var onPost: ((CGEvent) -> Void)?
 
     func post(_ event: CGEvent) {
-        onPost?()
+        onPost?(event)
         posted.append((event.getIntegerValueField(.keyboardEventKeycode),
                        event.getIntegerValueField(.eventSourceUserData), event.type == .keyDown))
     }
@@ -67,6 +67,13 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
     func armDeadline(atUptimeNanos due: UInt64) { armedDeadline = due }
     func cancelDeadline() { armedDeadline = nil }
     func runSoon(_ block: @escaping () -> Void) { soon.append(block) }
+    private(set) var timersDetached = false
+    func detachTimers() {
+        timersDetached = true
+        deadlineHandler = nil
+        pollHandler = nil
+        armedDeadline = nil
+    }
 
     // MARK: - Test driving
 

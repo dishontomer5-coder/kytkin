@@ -146,7 +146,7 @@ final class KeyTapEngineTests: XCTestCase {
         // K1: at the moment of the replay, the commit still belongs to the worker; finish comes after.
         var statesAtPost: [HoldBackCommit.State] = []
         let commit = commit!
-        backend.onPost = { statesAtPost.append(commit.state) }
+        backend.onPost = { _ in statesAtPost.append(commit.state) }
         engine.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil)
         XCTAssertEqual(postedCodes, [Int64(a)])
         XCTAssertEqual(statesAtPost, [.posting(gen: gen)], "commit.finish runs after the replay, never before")
@@ -171,6 +171,36 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertEqual(postedCodes, [Int64(a)], "the keyboard never stays held past the hard cap")
         engine.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil)
         XCTAssertEqual(postedCodes, [Int64(a)], "its late finish replays nothing")
+    }
+
+    /// QA (P2-17): once the hard cap is armed, the next held key must not flush under the posting worker.
+    func testKeysTypedDuringTheHardCapWaitStayHeldBehindThePostingWorker() {
+        makeEngine()
+        let gen = doubleShift()
+        _ = deliver(T.key(a))
+        XCTAssertTrue(commit.claimPosting(gen: gen))
+        clock.advance(byMilliseconds: 400)
+        backend.fireDeadline()
+        clock.advance(byMilliseconds: 10)
+        XCTAssertEqual(deliver(T.key(s)), false, "still held")
+        XCTAssertTrue(backend.posted.isEmpty, "never interleave held keys with the worker's posts")
+        XCTAssertEqual(engine.heldCGEventCount, 2)
+        engine.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil)
+        XCTAssertEqual(postedCodes, [Int64(a), Int64(s)])
+    }
+
+    /// QA (P2-17): same after an abort (click) while the worker posts.
+    func testKeysTypedAfterAnAbortWhileTheWorkerPostsStayHeld() {
+        makeEngine()
+        let gen = doubleShift()
+        _ = deliver(T.key(a))
+        XCTAssertTrue(commit.claimPosting(gen: gen))
+        _ = deliver(T.mouseDown())
+        XCTAssertEqual(deliver(T.key(s)), false)
+        engine.perform { _ in }
+        XCTAssertTrue(backend.posted.isEmpty)
+        engine.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil)
+        XCTAssertEqual(postedCodes, [Int64(a), Int64(s)])
     }
 
     func testAStaleFinishLeavesANewerReplacementAlone() {
@@ -292,6 +322,20 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertEqual(postedCodes, [Int64(a)], "a stop never eats a key")
         XCTAssertNil(backend.handler)
         XCTAssertEqual(statuses.last?.health.mode, .off)
+    }
+
+    /// QA (P2-17): stop flushes, removes the tap, and invalidates the timers (their handlers hold the engine unowned).
+    func testShutdownFlushesThenDetachesTheTimers() {
+        makeEngine()
+        _ = doubleShift()
+        _ = deliver(T.key(a))
+        engine.shutdown()
+        XCTAssertEqual(postedCodes, [Int64(a)])
+        XCTAssertNil(backend.handler)
+        XCTAssertTrue(backend.timersDetached)
+        backend.fireDeadline() // a detached timer can't call back
+        backend.firePoll()
+        XCTAssertEqual(postedCodes, [Int64(a)])
     }
 
     func testSwitchingToListenOnlyMidHoldFlushes() {
