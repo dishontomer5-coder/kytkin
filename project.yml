@@ -70,6 +70,9 @@ targets:
       # one on purpose: Phase 3 AX adapters landing in System/Context must not slip into the tests.
       - path: Sources/System/Context/ContextMonitor.swift
       - path: Sources/System/Context/WorkspaceAppActivationSource.swift
+      # P2-16: only the manager's plumbing (fake probe/requester, private notification centers). Never add
+      # SystemPermissionRequester here: it shows permission prompts and opens System Settings.
+      - path: Sources/System/Permissions/PermissionsManager.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
