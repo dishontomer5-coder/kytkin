@@ -45,7 +45,8 @@ struct KeyStreamProcessor: Sendable {
         case replacing(Replacement)
     }
 
-    let config: KeyProcessorConfig
+    /// P2-50: replaced at runtime by `updateConfig` (001 §12 W6), except `mode` and `holdBackCapacity`.
+    private(set) var config: KeyProcessorConfig
     private let clock: any Clock
     private(set) var mode: TapMode
     /// The layout the buffer's strokes are typed in, as told by main.
@@ -191,10 +192,27 @@ struct KeyStreamProcessor: Sendable {
         if let deviceFlags { reseedShifts(deviceFlags) }
     }
 
-    mutating func setMode(_ newMode: TapMode) {
+    /// `deviceFlags`: as for `reset`. P2-50: the adapter passes them when a new tap goes in, so a Shift held across
+    /// a mode switch is remembered.
+    mutating func setMode(_ newMode: TapMode, deviceFlags: UInt64? = nil) {
         guard newMode != mode else { return }
         mode = newMode
-        reset(.modeChange)
+        reset(.modeChange, deviceFlags: deviceFlags)
+    }
+
+    /// P2-50 (001 §12 W6): the settings changed at runtime (Convert tab, auto-fix toggle).
+    /// - `mode` is ignored (it follows the installed tap) and so is `holdBackCapacity` (the FIFO is sized at init).
+    /// - The DoubleShiftDetector restarts under the new window/side policy: a half-done gesture is dropped. A Shift
+    ///   still down joins it as held and spoiled (as after a reset), so its release can't count as a tap.
+    /// - The word buffer, the held keys and a running replacement's armed deadline are left alone (the deadline is an
+    ///   absolute time fixed when the replacement started).
+    mutating func updateConfig(_ newConfig: KeyProcessorConfig) {
+        var c = newConfig
+        c.mode = config.mode
+        c.holdBackCapacity = config.holdBackCapacity
+        config = c
+        detector = DoubleShiftDetector(config: c.doubleShift)
+        spoilHeldShifts()
     }
 
     /// Main saw the input source change. Our own after-convert switch keeps the buffer (it was re-rendered);
@@ -331,6 +349,11 @@ struct KeyStreamProcessor: Sendable {
     private mutating func reseedShifts(_ flags: UInt64) {
         leftShiftHeld = flags & KeyEvent.leftShiftDeviceBit != 0
         rightShiftHeld = flags & KeyEvent.rightShiftDeviceBit != 0
+        spoilHeldShifts()
+    }
+
+    /// Tells a fresh detector about the Shifts we know are down, as held and spoiled.
+    private mutating func spoilHeldShifts() {
         guard leftShiftHeld || rightShiftHeld else { return }
         if leftShiftHeld { _ = detector.handle(.shiftDown(.left, atNanos: 0)) }
         if rightShiftHeld { _ = detector.handle(.shiftDown(.right, atNanos: 0)) }
