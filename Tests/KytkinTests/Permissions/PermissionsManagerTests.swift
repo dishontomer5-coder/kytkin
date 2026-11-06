@@ -71,10 +71,10 @@ final class PermissionsManagerTests: XCTestCase {
         manager.pollTick()
         manager.pollTick()
         XCTAssertEqual(published.count, 1)
-        probe.reading.secureInput = true
+        probe.reading.inputMonitoringGranted = true
         manager.pollTick()
         XCTAssertEqual(published.count, 2)
-        XCTAssertTrue(manager.secureInput)
+        XCTAssertEqual(manager.inputMonitoring, .granted)
         XCTAssertEqual(manager.status, published.last)
     }
 
@@ -126,14 +126,6 @@ final class PermissionsManagerTests: XCTestCase {
         XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.backgroundPollNanos)
     }
 
-    func testWatchingSecureInputPollsEverySecond() {
-        manager.start()
-        manager.setWatchesSecureInput(true)
-        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.secureInputPollNanos)
-        manager.setWatchesSecureInput(false)
-        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.backgroundPollNanos)
-    }
-
     func testIntervalChangesBeforeStartApplyOnStart() {
         manager.setInteractive(true)
         XCTAssertNil(manager.scheduledPollNanos)
@@ -141,14 +133,13 @@ final class PermissionsManagerTests: XCTestCase {
         XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.interactivePollNanos)
     }
 
-    func testScreenAndSecureInputIntervalsCombine() {
+    // P2-45: only the screen changes the interval; Secure Input no longer speeds the poll up (KeyWatcher owns it).
+    func testIntervalFollowsTheScreenOnlyAndStopClearsIt() {
         manager.start()
-        manager.setWatchesSecureInput(true)
+        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.backgroundPollNanos)
         manager.setInteractive(true)
         XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.interactivePollNanos)
-        manager.setInteractive(false) // still watching Secure Input
-        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.secureInputPollNanos)
-        manager.setWatchesSecureInput(false)
+        manager.setInteractive(false)
         XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.backgroundPollNanos)
         manager.stop()
         XCTAssertNil(manager.scheduledPollNanos)
@@ -156,9 +147,8 @@ final class PermissionsManagerTests: XCTestCase {
 
     // P2-16 QA: the "fresh rows" read only happens while running; before start() / after stop() nothing is
     // read or published.
-    func testScreenAndSecureInputTogglesDontReadWhileStopped() {
+    func testScreenToggleDoesntReadWhileStopped() {
         manager.setInteractive(true)
-        manager.setWatchesSecureInput(true)
         XCTAssertEqual(probe.reads, 0)
         XCTAssertEqual(published, [])
         manager.start()
@@ -204,7 +194,6 @@ final class PermissionsManagerTests: XCTestCase {
         manager.pollTick()
         activateSomeApp()
         manager.setInteractive(true)
-        manager.setWatchesSecureInput(true)
         XCTAssertEqual(requester.calls, [])
     }
 }

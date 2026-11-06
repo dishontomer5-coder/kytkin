@@ -7,6 +7,7 @@
 // Settings), and a repeating main-run-loop timer at `PermissionMonitor.pollIntervalNanos`.
 // Reads never prompt. `request…`/`openSystemSettings` are for user clicks only (onboarding / Permissions tab).
 // Automation per browser is Phase 3 (P3-7): `automation` is always empty for now.
+// P2-45: Secure Input is not read or published here; KeyWatcher is its only owner (001 §12.2 W5).
 // Never logs.
 
 import AppKit
@@ -19,7 +20,6 @@ import Observation
     var accessibility: PermissionState { status.grants.accessibility }
     var inputMonitoring: PermissionState { status.grants.inputMonitoring }
     var automation: [String: PermissionState] { status.grants.automation }
-    var secureInput: Bool { status.secureInput }
 
     @ObservationIgnored var onChange: (@MainActor (PermissionStatus) -> Void)?
     /// The interval the poll timer runs at, nil while stopped. Read by tests.
@@ -81,13 +81,6 @@ import Observation
         // Read now, so the screen opens with fresh rows, not up to 5 s old ones. P2-16 QA: only while running,
         // so nothing is read or published before start() or after stop().
         if visible && running { read(.manual) }
-        rescheduleTimer()
-    }
-
-    func setWatchesSecureInput(_ on: Bool) {
-        guard monitor.watchesSecureInput != on else { return }
-        monitor.watchesSecureInput = on
-        if on && running { read(.manual) }
         rescheduleTimer()
     }
 
