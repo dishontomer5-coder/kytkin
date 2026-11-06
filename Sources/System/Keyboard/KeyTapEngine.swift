@@ -103,10 +103,15 @@ final class KeyTapEngine: @unchecked Sendable {
 
     // MARK: - Hops from main / the worker (already on the tap thread)
 
-    /// Main → tap (contract step 4): run the block on the processor, then the flush step.
-    func perform(_ block: (inout KeyStreamProcessor) -> Void) {
-        block(&processor)
-        runFlushStep()
+    /// Main → tap (contract step 4): one of the operations main may ask for (P2-47), then the flush step.
+    func perform(_ operation: KeyWatcherOperation) {
+        switch operation {
+        case let .reset(reason):
+            reset(reason)
+        case let .inputSourceChanged(id, isOurs):
+            processor.inputSourceChanged(to: id, isOurs: isOurs)
+            runFlushStep()
+        }
     }
 
     /// Reset with the current modifier flags (so a Shift held across it is remembered), then the flush step.
@@ -139,6 +144,13 @@ final class KeyTapEngine: @unchecked Sendable {
                 return requested
             }
         }
+        // P2-47: reset and flush before the old tap goes. Held keys are re-posted while it is still installed, so a
+        // key typed during the switch (into no tap, or into the new one) can't overtake them. The processor is `.off`
+        // for the gap: nothing can be held without a tap, so the flush doesn't wait, not even for a posting worker
+        // (as for any non-active mode; P2-35 then blocks a new replacement until that worker is done).
+        let hadWord = !processor.buffer.isEmpty
+        processor.setMode(.off)
+        runFlushStep()
         backend.uninstall()
         var achieved: TapMode = .off
         if requested != .off, backend.isGranted(requested),
@@ -148,8 +160,7 @@ final class KeyTapEngine: @unchecked Sendable {
             achieved = requested
         }
         timestamps.reset()
-        let hadWord = !processor.buffer.isEmpty
-        processor.setMode(achieved) // a change resets: the replacement aborts and held keys flush below
+        processor.setMode(achieved)
         if hadWord && processor.buffer.isEmpty { sendSignal(.bufferInvalidated) }
         runFlushStep()
         status.health.mode = achieved
