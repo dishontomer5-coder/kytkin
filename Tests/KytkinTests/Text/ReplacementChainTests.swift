@@ -403,6 +403,93 @@ final class ReplacementChainTests: XCTestCase {
         XCTAssertEqual(f.text, "hello תודה")
     }
 
+    // MARK: - Gate over every plan shape the planner can produce (P2-51 QA)
+
+    /// Every write-only chain `ReplacementPlanner.plan` can return. Selection: an optional leading pasteboard
+    /// (`preferPaste`), an optional AX write, an optional type-over, an optional trailing pasteboard (P3 opt-in),
+    /// not all absent. Last word (valid buffer), auto-fix and undo: backspace + type. The stale path (read, then AX
+    /// write) has its own tests above.
+    private static let writePlans: [[ReplacementStep]] = {
+        let ax = ReplacementStep.axWriteSelection(verify: true)
+        return [[ax, .typeOverSelection], [ax], [.typeOverSelection],
+                [ax, .typeOverSelection, .pasteboard], [.pasteboard, ax, .typeOverSelection], [.pasteboard, ax],
+                [.pasteboard], [.typeOverSelection, .pasteboard], [ax, .pasteboard], [.pasteboard, .typeOverSelection],
+                [.backspaceAndType(count: 4)]]
+    }()
+
+    /// The field each shape runs on: a selection for the selection chains, a caret after the word otherwise.
+    private func field(for steps: [ReplacementStep]) -> FakeTextField {
+        if case .backspaceAndType = steps.first { return FakeTextField("hello akuo") }
+        return FakeTextField("hello akuo world", selection: sel(6, 4))
+    }
+
+    @TextActor func testRefusedWriteGateWritesNothingOnEveryPlanShape() async {
+        for steps in Self.writePlans {
+            poster = RecordingPoster()
+            let f = field(for: steps)
+            let (text, selection) = (f.text, f.selection)
+            let x = executor(f)
+            _ = x.focusInfo(timeout: 0.25)
+            var caps = ReplacementCapabilities()
+            var asked = 0
+            let out = ReplacementChain.run(.steps(steps), on: x, bundleID: app, old: "akuo", convert: convert,
+                                           capabilities: &caps, mayWrite: { asked += 1; return false })
+            XCTAssertEqual(out.result, .abandoned, "\(steps)")
+            XCTAssertEqual(asked, 1, "\(steps)")
+            XCTAssertTrue(out.attempts.isEmpty, "\(steps)")
+            XCTAssertTrue(f.writes.isEmpty, "\(steps)")
+            XCTAssertEqual(f.text, text, "\(steps)")
+            XCTAssertEqual(f.selection, selection, "\(steps)")
+            XCTAssertTrue(poster.events.isEmpty, "\(steps)")
+            XCTAssertFalse(caps.isAXWriteBroken(for: app), "\(steps)")
+            XCTAssertFalse(out.shouldBeep, "\(steps)")
+        }
+    }
+
+    /// Every step fails untouched (AX no-op, poster refuses the first event, pasteboard not in the MVP), so the
+    /// chain walks the whole shape: the gate is asked once, before the first step runs, and never again.
+    @TextActor func testWriteGateIsAskedOnceBeforeTheFirstStepOnEveryPlanShape() async {
+        for steps in Self.writePlans {
+            poster = RecordingPoster()
+            poster.failFrom = 0
+            let f = field(for: steps)
+            f.writeBehavior = .silentNoop
+            let counting = CountingReplacer(executor(f))
+            _ = counting.focusInfo(timeout: 0.25)
+            var caps = ReplacementCapabilities()
+            var asked = 0
+            var performedWhenAsked: Int?
+            let out = ReplacementChain.run(.steps(steps), on: counting, bundleID: app, old: "akuo", convert: convert,
+                                           capabilities: &caps, mayWrite: {
+                                               asked += 1
+                                               performedWhenAsked = counting.performed.count
+                                               return true
+                                           })
+            XCTAssertEqual(out.result, .exhausted, "\(steps)")
+            XCTAssertEqual(asked, 1, "\(steps)")
+            XCTAssertEqual(performedWhenAsked, 0, "the claim comes before the first step: \(steps)")
+            XCTAssertEqual(counting.performed, steps, "\(steps)")
+        }
+    }
+
+    @TextActor func testWriteGateIsNotAskedWhenNothingCanBeWrittenOnAnyPlanShape() async {
+        for steps in Self.writePlans {
+            for old in ["xyz", ""] {   // unconvertible text; no text at all
+                let f = field(for: steps)
+                let x = executor(f)
+                _ = x.focusInfo(timeout: 0.25)
+                var caps = ReplacementCapabilities()
+                var asked = 0
+                let out = ReplacementChain.run(.steps(steps), on: x, bundleID: app, old: old, convert: convert,
+                                               capabilities: &caps, mayWrite: { asked += 1; return true })
+                XCTAssertEqual(out.result, old.isEmpty ? .exhausted : .notConvertible, "\(steps)")
+                XCTAssertEqual(asked, 0, "\(steps) old=\(old)")
+                XCTAssertTrue(f.writes.isEmpty, "\(steps)")
+            }
+        }
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
     @TextActor func testBudgetStopsTheChain() async {
         let f = FakeTextField("hello akuo world", selection: sel(6, 4))
         f.writeBehavior = .silentNoop
@@ -445,6 +532,22 @@ final class ReplacementChainTests: XCTestCase {
     func focusInfo(timeout: Double) -> FocusInfo? { inner.focusInfo(timeout: timeout) }
     func perform(_ step: ReplacementStep, old: String, new: String) -> StepOutcome {
         clock.advance(byNanos: stepNanos)
+        return inner.perform(step, old: old, new: new)
+    }
+    var wordBeforeCaret: String? { inner.wordBeforeCaret }
+    func endReplacement() { inner.endReplacement() }
+}
+
+/// Wraps an executor and records the steps the chain ran, to check the write gate comes before the first one.
+@TextActor private final class CountingReplacer: TextReplacing {
+    private let inner: ReplacementExecutor
+    private(set) var performed: [ReplacementStep] = []
+
+    init(_ inner: ReplacementExecutor) { self.inner = inner }
+
+    func focusInfo(timeout: Double) -> FocusInfo? { inner.focusInfo(timeout: timeout) }
+    func perform(_ step: ReplacementStep, old: String, new: String) -> StepOutcome {
+        performed.append(step)
         return inner.perform(step, old: old, new: new)
     }
     var wordBeforeCaret: String? { inner.wordBeforeCaret }
