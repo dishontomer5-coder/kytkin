@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# P2-15: Build and run the headless watch-context tool. It prints one line per Context the tier-0
+# ContextMonitor emits (bundle ID, pid, generation) while you switch apps. Ctrl-C stops it.
+# Listen-only: no window, no permission, never activates or messages another app.
+#   ./scripts/watch-context [--debounce-ms N]
+#   KYTKIN_BUILD_ONLY=1 ./scripts/watch-context   compile only (used by agents; nothing runs)
+# The tool is compiled from the app's own sources (System/Context adapters + Core Context/Model).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+BIN="build/tools/watch-context"
+mkdir -p "$(dirname "$BIN")"
+
+SOURCES=(
+  Tools/watch-context/main.swift
+  Sources/System/Context/*.swift
+  Sources/Core/Context/*.swift
+  Sources/Core/Model/Context.swift
+  Sources/Core/Model/ChatKey.swift
+  Sources/Core/Model/Clock.swift
+  Sources/Core/Support/SystemClock.swift
+  Sources/Core/Platform/KnownSwitchers.swift
+  Sources/Core/Platform/KnownSwitcher.swift
+)
+
+xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -o "$BIN" "${SOURCES[@]}"
+[[ "${KYTKIN_BUILD_ONLY:-}" == 1 ]] && exit 0
+exec "$BIN" "$@"

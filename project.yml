@@ -65,6 +65,11 @@ targets:
         type: folder
         buildPhase: resources
       - path: Sources/Core
+      # P2-15: the two tier-0 context adapters are tested with fake notifications on a private
+      # NotificationCenter (never the real workspace one), so they're compiled in too. Listed one by
+      # one on purpose: Phase 3 AX adapters landing in System/Context must not slip into the tests.
+      - path: Sources/System/Context/ContextMonitor.swift
+      - path: Sources/System/Context/WorkspaceAppActivationSource.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
