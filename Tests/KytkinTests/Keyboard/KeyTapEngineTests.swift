@@ -197,7 +197,7 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertTrue(commit.claimPosting(gen: gen))
         _ = deliver(T.mouseDown())
         XCTAssertEqual(deliver(T.key(s)), false)
-        engine.perform { _ in }
+        engine.runFlushStep() // as after any hop onto the tap thread
         XCTAssertTrue(backend.posted.isEmpty)
         engine.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil)
         XCTAssertEqual(postedCodes, [Int64(a), Int64(s)])
@@ -254,7 +254,7 @@ final class KeyTapEngineTests: XCTestCase {
         makeEngine()
         _ = doubleShift()
         _ = deliver(T.key(a))
-        engine.perform { $0.reset(.contextChange) }
+        engine.perform(.reset(.contextChange))
         XCTAssertEqual(postedCodes, [Int64(a)])
     }
 
@@ -345,6 +345,59 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertEqual(engine.applyMode(.listenOnly, userInitiated: true), .listenOnly)
         XCTAssertEqual(postedCodes, [Int64(a)])
         XCTAssertEqual(backend.installs, [.active, .listenOnly])
+    }
+
+    /// P2-47: held keys are re-posted while the old tap is still installed, so nothing typed during the switch (into
+    /// no tap, or the new one) can overtake them.
+    func testAModeSwitchReplaysHeldKeysBeforeTheOldTapIsRemoved() {
+        makeEngine()
+        _ = doubleShift()
+        _ = deliver(T.key(a))
+        _ = deliver(T.key(s))
+        backend.clearCalls()
+        XCTAssertEqual(engine.applyMode(.listenOnly, userInitiated: true), .listenOnly)
+        XCTAssertEqual(backend.calls, ["post \(a)", "post \(s)", "uninstall", "install listenOnly"])
+        XCTAssertEqual(engine.heldCGEventCount, 0)
+    }
+
+    /// P2-47: same with a worker that already won the commit: there's no tap to hold keys behind it during the gap.
+    func testAModeSwitchUnderAPostingWorkerStillReplaysFirst() {
+        makeEngine()
+        let gen = doubleShift()
+        _ = deliver(T.key(a))
+        XCTAssertTrue(commit.claimPosting(gen: gen))
+        backend.clearCalls()
+        engine.applyMode(.listenOnly, userInitiated: true)
+        XCTAssertEqual(backend.calls, ["post \(a)", "uninstall", "install listenOnly"])
+        engine.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil)
+        XCTAssertEqual(postedCodes, [Int64(a)], "the stale finish replays nothing")
+    }
+
+    /// P2-47: re-installing the same mode (the tap was found disabled), a stop, and the watchdog's downgrade too.
+    func testEveryTapReplacementReplaysHeldKeysFirst() {
+        makeEngine()
+        _ = doubleShift()
+        _ = deliver(T.key(a))
+        backend.enabled = false
+        backend.clearCalls()
+        engine.applyMode(.active, userInitiated: true)
+        XCTAssertEqual(backend.calls, ["post \(a)", "uninstall", "install active"])
+
+        clock.advance(byMilliseconds: 500)
+        _ = doubleShift()
+        _ = deliver(T.key(s))
+        backend.clearCalls()
+        engine.shutdown()
+        XCTAssertEqual(backend.calls, ["post \(s)", "uninstall"])
+
+        makeEngine()
+        for _ in 0..<2 { notifyDisabled() }
+        _ = doubleShift()
+        _ = deliver(T.key(d))
+        notifyDisabled() // the 3rd: downgrade, after the callback
+        backend.runSoonBlocks()
+        XCTAssertEqual(postedCodes, [Int64(d)])
+        XCTAssertEqual(Array(backend.calls.suffix(3)), ["post \(d)", "uninstall", "install listenOnly"])
     }
 
     // MARK: - Watchdog (B4)

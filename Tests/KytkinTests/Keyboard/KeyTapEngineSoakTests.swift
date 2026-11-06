@@ -4,7 +4,9 @@
 //   - every user key event reaches the app exactly once, in the order it was typed (passed or replayed);
 //   - the engine's CGEvent FIFO never desyncs from the processor's queue;
 //   - while keys are held, a deadline timer is always armed (typing can't stay swallowed);
-//   - a key is never passed in a callback that also re-posted held keys (their relative order would be unclear).
+//   - a key is never passed in a callback that also re-posted held keys (their relative order would be unclear);
+//   - P2-47: no held key is replayed while a worker holds the posting claim, before its hard cap (B3), except by
+//     that worker's own finish, a full FIFO, or a tap replacement (no tap can hold keys behind it then).
 // Nothing is installed or posted: events are built in memory and handed to the fake.
 
 import CoreGraphics
@@ -51,9 +53,17 @@ final class KeyTapEngineSoakTests: XCTestCase {
         var expected: [UInt64] = []   // user key events, by unique timestamp, in typing order
         var output: [UInt64] = []     // what the app received, in order
         var postsInCallback = 0
+        // P2-47: when each worker won the claim, and the exempt moments above.
+        var claimedAt: [UInt64: UInt64] = [:]
+        var finishing = false, replacingTap = false, fifoMayOverflow = false
         backend.onPost = { e in
             output.append(e.timestamp)
             postsInCallback += 1
+            if case let .posting(gen) = commit.state, let at = claimedAt[gen],
+               clock.nowNanos < at + config.postingHardCapNanos,
+               !finishing, !replacingTap, !fifoMayOverflow {
+                XCTFail("seed \(seed): a held key was replayed while worker \(gen) was posting, before the hard cap")
+            }
         }
         var workers: [UInt64: (kind: Kind, claimed: Bool)] = [:]
         var seenSignals = 0
@@ -73,6 +83,8 @@ final class KeyTapEngineSoakTests: XCTestCase {
             e.timestamp = clock.nowNanos
             expected.append(e.timestamp)
             postsInCallback = 0
+            fifoMayOverflow = engine.processor.heldCount >= config.holdBackCapacity - 1
+            defer { fifoMayOverflow = false }
             let passed = backend.deliver(isDown ? .keyDown : .keyUp, e) ?? true // no tap: straight to the app
             if passed {
                 if postsInCallback > 0 { fail("a key passed in a callback that also re-posted held keys") }
@@ -117,11 +129,14 @@ final class KeyTapEngineSoakTests: XCTestCase {
             case 61..<71:
                 if let gen = workers.filter({ !$0.value.claimed }).keys.sorted().first {
                     workers[gen]?.claimed = commit.claimPosting(gen: gen)
+                    if workers[gen]?.claimed == true { claimedAt[gen] = clock.nowNanos }
                     if workers[gen]?.claimed == false { workers[gen] = nil } // abandoned: it never finishes
                 }
             case 71..<81:
                 if let gen = workers.keys.sorted().first, let w = workers.removeValue(forKey: gen) {
                     postsInCallback = 0
+                    finishing = true
+                    defer { finishing = false }
                     engine.finishReplacement(gen: gen,
                                              newRendering: w.kind == .convert ? InputSourceID("com.apple.keylayout.Hebrew") : nil,
                                              bufferAfter: nil)
@@ -133,10 +148,14 @@ final class KeyTapEngineSoakTests: XCTestCase {
                 engine.reset(.contextChange)
             case 85:
                 _ = backend.deliver(.tapDisabledByTimeout, T.key(0))
+                replacingTap = true
                 backend.runSoonBlocks()
+                replacingTap = false
             case 86:
                 let target: TapMode = engine.mode == .active ? .listenOnly : .active
+                replacingTap = true
                 engine.applyMode(target, userInitiated: true)
+                replacingTap = false
             case 87:
                 backend.firePoll()
             case 88..<92:
@@ -158,6 +177,7 @@ final class KeyTapEngineSoakTests: XCTestCase {
         }
 
         // Wind down: let the workers finish, wait past every cap, and stop. Nothing may stay behind.
+        finishing = true
         for (gen, w) in workers.sorted(by: { $0.key < $1.key }) {
             engine.finishReplacement(gen: gen, newRendering: w.kind == .convert ? InputSourceID("com.apple.keylayout.Hebrew") : nil,
                                      bufferAfter: nil)
