@@ -5,8 +5,8 @@ import XCTest
 final class PermissionMonitorTests: XCTestCase {
     private let clock = FakeClock(nowNanos: 1_000_000_000)
 
-    private func reading(ax: Bool = false, im: Bool = false, secure: Bool = false) -> PermissionReading {
-        PermissionReading(accessibilityTrusted: ax, inputMonitoringGranted: im, secureInput: secure)
+    private func reading(ax: Bool = false, im: Bool = false) -> PermissionReading {
+        PermissionReading(accessibilityTrusted: ax, inputMonitoringGranted: im)
     }
 
     func testEverythingUnknownBeforeTheFirstRead() {
@@ -15,7 +15,6 @@ final class PermissionMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.status.grants.accessibility, .unknown)
         XCTAssertEqual(monitor.status.grants.inputMonitoring, .unknown)
         XCTAssertEqual(monitor.status.grants.automation, [:])
-        XCTAssertFalse(monitor.status.secureInput)
         XCTAssertFalse(monitor.status.inputMonitoringNeedsRelaunch)
     }
 
@@ -25,7 +24,6 @@ final class PermissionMonitorTests: XCTestCase {
         XCTAssertTrue(monitor.hasRead)
         XCTAssertEqual(status?.grants.accessibility, .notDetermined)
         XCTAssertEqual(status?.grants.inputMonitoring, .notDetermined)
-        XCTAssertEqual(status?.secureInput, false)
     }
 
     func testGrantedMapsToGranted() {
@@ -47,8 +45,6 @@ final class PermissionMonitorTests: XCTestCase {
         _ = monitor.ingest(reading())
         XCTAssertEqual(monitor.ingest(reading(ax: true))?.grants.accessibility, .granted)
         XCTAssertEqual(monitor.ingest(reading(ax: true, im: true))?.grants.inputMonitoring, .granted)
-        XCTAssertEqual(monitor.ingest(reading(ax: true, im: true, secure: true))?.secureInput, true)
-        XCTAssertEqual(monitor.ingest(reading(ax: true, im: true, secure: false))?.secureInput, false)
         // Revoke while running (001 §6.2).
         XCTAssertEqual(monitor.ingest(reading(ax: false, im: true))?.grants.accessibility, .notDetermined)
     }
@@ -74,9 +70,10 @@ final class PermissionMonitorTests: XCTestCase {
 
     func testStatusFeedsFeatureAvailability() throws {
         var monitor = PermissionMonitor(clock: clock)
-        let status = try XCTUnwrap(monitor.ingest(reading(ax: true, im: false, secure: true)))
+        let status = try XCTUnwrap(monitor.ingest(reading(ax: true, im: false)))
+        // P2-45: Secure Input comes from KeyWatcherStatus.secureInputOn (P2-20), not from PermissionStatus.
         let availability = FeatureAvailability.compute(grants: status.grants, tapMode: .active,
-                                                       secureInput: status.secureInput, settings: FeatureSettings())
+                                                       secureInput: true, settings: FeatureSettings())
         XCTAssertTrue(availability.appSwitching)
         XCTAssertFalse(availability.doubleShiftConvert) // Secure Input
         XCTAssertTrue(availability.doubleShiftToggleOnly)
@@ -160,13 +157,11 @@ final class PermissionMonitorTests: XCTestCase {
         var monitor = PermissionMonitor(clock: clock)
         XCTAssertEqual(monitor.pollIntervalNanos, PermissionMonitor.backgroundPollNanos)
         XCTAssertEqual(PermissionMonitor.backgroundPollNanos, 5_000_000_000)
-        monitor.watchesSecureInput = true
-        XCTAssertEqual(monitor.pollIntervalNanos, 1_000_000_000)
-        monitor.watchesSecureInput = false
         monitor.interactive = true
         XCTAssertEqual(monitor.pollIntervalNanos, 1_000_000_000)
-        monitor.watchesSecureInput = true
-        XCTAssertEqual(monitor.pollIntervalNanos, PermissionMonitor.interactivePollNanos)
+        XCTAssertEqual(PermissionMonitor.interactivePollNanos, 1_000_000_000)
+        monitor.interactive = false
+        XCTAssertEqual(monitor.pollIntervalNanos, PermissionMonitor.backgroundPollNanos)
     }
 
     // MARK: - Panes

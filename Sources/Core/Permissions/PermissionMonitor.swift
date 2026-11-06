@@ -10,9 +10,9 @@
 // Poll interval (`pollIntervalNanos`):
 //   - 1 s while the onboarding or Permissions screen is visible (`interactive`), so the row turns green
 //     about a second after the user flips the switch in System Settings (001 §6.1 step 3).
-//   - 1 s while typing features are on (`watchesSecureInput`), so Secure Input is noticed within a second
-//     (001 §2.2 KeyWatcher "Secure Input"; the three checks are cheap and never prompt).
 //   - otherwise every `backgroundPollNanos` (5 s), so a revoke is noticed even without an app change (§6.2).
+// P2-45: Secure Input is not polled here. KeyWatcher owns it (tap thread, 1 s) and publishes
+// `KeyWatcherStatus.secureInputOn` (001 §12.2 W5).
 //
 // Mapping a reading to `PermissionState` (the OS answers only yes/no):
 //   - true → `.granted`.
@@ -31,7 +31,6 @@ import Foundation
 
 struct PermissionMonitor {
     static let interactivePollNanos: UInt64 = 1_000_000_000
-    static let secureInputPollNanos: UInt64 = 1_000_000_000
     static let backgroundPollNanos: UInt64 = 5_000_000_000
     /// App-activation reads closer together than this are coalesced.
     static let minEventGapNanos: UInt64 = 250_000_000
@@ -42,8 +41,6 @@ struct PermissionMonitor {
     private(set) var hasRead = false
     /// The onboarding or Permissions screen is visible.
     var interactive = false
-    /// Typing features are on, so Secure Input matters right now.
-    var watchesSecureInput = false
 
     private let clock: any Clock
     private var lastReadAtNanos: UInt64?
@@ -57,9 +54,7 @@ struct PermissionMonitor {
 
     /// How often the caller's timer should fire right now.
     var pollIntervalNanos: UInt64 {
-        if interactive { return Self.interactivePollNanos }
-        if watchesSecureInput { return Self.secureInputPollNanos }
-        return Self.backgroundPollNanos
+        interactive ? Self.interactivePollNanos : Self.backgroundPollNanos
     }
 
     /// Whether a trigger should cause a read now. Only app activations are coalesced.
@@ -83,7 +78,6 @@ struct PermissionMonitor {
         var next = status
         next.grants.accessibility = state(reading.accessibilityTrusted, .accessibility)
         next.grants.inputMonitoring = state(reading.inputMonitoringGranted, .inputMonitoring)
-        next.secureInput = reading.secureInput
         // A revoke clears the hint: there is nothing to reopen for.
         next.inputMonitoringNeedsRelaunch = reading.inputMonitoringGranted && inputMonitoringSeenNotGranted
 
