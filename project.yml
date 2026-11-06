@@ -65,6 +65,12 @@ targets:
         type: folder
         buildPhase: resources
       - path: Sources/Core
+      # P2-17: KeyWatcher's plumbing is unit-tested with a fake backend. The real CGEventTap backend and the
+      # convenience init that uses it are left out, so no test can install a tap or post an event.
+      - path: Sources/System/Keyboard
+        excludes:
+          - CGEventTapBackend.swift
+          - KeyWatcher+Live.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
