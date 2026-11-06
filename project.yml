@@ -65,6 +65,9 @@ targets:
         type: folder
         buildPhase: resources
       - path: Sources/Core
+      # P2-15: the tier-0 context adapters are tested with fake notifications on a private
+      # NotificationCenter (never the real workspace one), so they're compiled in too.
+      - path: Sources/System/Context
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
