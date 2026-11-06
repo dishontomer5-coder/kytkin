@@ -2,6 +2,9 @@
 # P0-6: One-command build/test for Kytkin.
 #   ./scripts/build.sh         generate the project and build the app (Debug)
 #   ./scripts/build.sh test    generate the project, run the source lints (P2-4) and unit tests
+# P2-28: Debug builds "Kytkin Dev.app", Release builds "Kytkin.app".
+# P2-29: tests use their own derived data (build/test), so `test` never rebuilds or re-signs the
+#        Debug app in build/Build/Products/Debug that the owner runs and has granted permissions to.
 # P2-2: output is quiet. The full xcodebuild log goes to build/last-build.log.
 set -euo pipefail
 
@@ -9,8 +12,12 @@ cd "$(dirname "$0")/.."
 
 ACTION="${1:-build}"
 CONFIG="${CONFIGURATION:-Debug}"
-DERIVED="build"
-LOG="$DERIVED/last-build.log"
+LOG="build/last-build.log"
+if [[ "$ACTION" == "test" ]]; then DERIVED="build/test"; else DERIVED="build"; fi
+case "$CONFIG" in
+  Debug) PRODUCT="Kytkin Dev" ;;
+  *) PRODUCT="Kytkin" ;;
+esac
 
 # P2-2: known Xcode plug-in noise that isn't about our code.
 NOISE='DVTCoreDeviceCore|CoreSimulator|IDETestOperationsObserverDebug|DVTDeviceOperation|DVTPlugInManager'
@@ -38,7 +45,7 @@ if ! XCODE_VERSION="$(xcodebuild -version 2>&1)"; then
   exit 1
 fi
 
-mkdir -p "$DERIVED"
+mkdir -p build "$DERIVED"
 xcodegen generate --quiet >"$LOG" 2>&1 || {
   echo "❌ xcodegen generate failed:" >&2
   grep -Ev "$NOISE" "$LOG" | tail -20 >&2
@@ -95,7 +102,7 @@ case "$ACTION" in
       print_failure "Build ($CONFIG)"
       exit 1
     fi
-    APP="$PWD/$DERIVED/Build/Products/$CONFIG/Kytkin.app"
+    APP="$PWD/$DERIVED/Build/Products/$CONFIG/$PRODUCT.app"
     echo "✅ Build succeeded ($CONFIG): $APP"
     if [[ -n "$SIGN_NOTICE" ]]; then echo "$SIGN_NOTICE"; fi
     ;;
