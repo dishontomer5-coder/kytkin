@@ -27,6 +27,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin
         PRODUCT_NAME: Kytkin
+        # P2-28: the Swift module stays "Kytkin" in both configs (Debug's product name has a space).
+        PRODUCT_MODULE_NAME: Kytkin
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSUIElement: YES # menu-bar only, no Dock icon
         INFOPLIST_KEY_CFBundleDisplayName: Kytkin
@@ -43,6 +45,9 @@ targets:
         # replace a release build's. Release keeps io.github.kytkin.Kytkin / "Kytkin".
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin.dev
+          # P2-28: the product (bundle, CFBundleName, executable) is "Kytkin Dev.app" too, so System
+          # Settings → Privacy & Security never lists two entries both called "Kytkin".
+          PRODUCT_NAME: Kytkin Dev
           INFOPLIST_KEY_CFBundleDisplayName: Kytkin Dev
         Release:
           # P2-3: don't inject com.apple.security.get-task-allow (debugger attach) into Release;
