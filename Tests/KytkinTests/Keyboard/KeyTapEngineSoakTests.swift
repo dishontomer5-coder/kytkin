@@ -7,6 +7,8 @@
 //   - a key is never passed in a callback that also re-posted held keys (their relative order would be unclear);
 //   - P2-47: no held key is replayed while a worker holds the posting claim, before its hard cap (B3), except by
 //     that worker's own finish, a full FIFO, or a tap replacement (no tap can hold keys behind it then).
+// P2-50 QA: runtime `updateConfig` (001 §12 W6) is mixed in: double-Shift on/off, window and side policy, auto-fix
+// on/off and both deadlines change at random, mid-word and mid-replacement. The invariants above must still hold.
 // Nothing is installed or posted: events are built in memory and handed to the fake.
 
 import CoreGraphics
@@ -158,6 +160,23 @@ final class KeyTapEngineSoakTests: XCTestCase {
                 replacingTap = false
             case 87:
                 backend.firePoll()
+            case 92..<96:
+                // P2-50 QA: a settings change. The hard cap stays (the B3 check above reads it).
+                var c = config
+                c.doubleShiftEnabled = rng.below(8) != 0 // mostly on, so the soak still holds keys
+                c.autoFixEnabled = rng.below(2) == 0
+                c.convertDeadlineNanos = UInt64(100 + rng.below(500)) * T.ms
+                c.autoFixDeadlineNanos = UInt64(50 + rng.below(300)) * T.ms
+                c.doubleShift.windowNanos = UInt64(200 + rng.below(400)) * T.ms
+                c.doubleShift.sides = [.either, .sameSide, .leftOnly, .sameSide, .either, .rightOnly][rng.below(6)]
+                c.mode = rng.below(2) == 0 ? .listenOnly : .off // ignored: the mode follows the tap
+                c.holdBackCapacity = 1 + rng.below(4)          // ignored: the FIFO is sized at init
+                let mode = engine.processor.mode
+                engine.perform(.updateConfig(c))
+                if engine.processor.mode != mode { fail("updateConfig changed the mode") }
+                if engine.processor.config.holdBackCapacity != config.holdBackCapacity {
+                    fail("updateConfig changed the FIFO capacity")
+                }
             case 88..<92:
                 // A worker that never finishes (stuck), past the hard cap.
                 tick(400 + UInt64(rng.below(1_200)))

@@ -19,6 +19,8 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
     /// P2-47: runs at the start of `install` and of `currentDeviceFlags`, e.g. to block the tap thread in a test.
     var onInstall: (() -> Void)?
     var onDeviceFlags: (() -> Void)?
+    /// P2-50 QA: runs at each `uninstall` (on the tap thread), e.g. to count removals across engines.
+    var onUninstall: (() -> Void)?
 
     /// Events "re-posted" (never really posted): key code and marker of each.
     private(set) var posted: [(keyCode: Int64, marker: Int64, keyDown: Bool)] = []
@@ -39,6 +41,7 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
 
     func uninstall() {
         uninstallCount += 1
+        onUninstall?()
         calls.append("uninstall")
         handler = nil
         enabled = false
