@@ -76,7 +76,14 @@ struct ContextAssembler {
     /// last emitted state; NSWorkspace activates and reports the next app by itself.
     mutating func appTerminated(pid: Int32) {
         guard pendingDeadlineNanos != nil, let latest, latest.pid == pid else { return }
-        self.latest = current.map(Facts.init)
+        discardPending()
+    }
+
+    /// Drops a held (not yet emitted) change and goes back to the last emitted state. ContextMonitor
+    /// calls it on `stop()`, so a change held before a stop is never emitted after a later `start()`
+    /// (the frontmost app is re-read on start instead).
+    mutating func discardPending() {
+        latest = current.map(Facts.init)
         pendingDeadlineNanos = nil
     }
 

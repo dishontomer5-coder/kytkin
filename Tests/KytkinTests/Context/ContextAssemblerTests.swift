@@ -231,6 +231,19 @@ final class ContextAssemblerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(a.flushIfDue()).bundleID, "B")
     }
 
+    func testDiscardPendingDropsTheHeldChangeAndTheNextChangeIsCompared() throws {
+        var a = makeAssembler()
+        XCTAssertNotNil(a.appActivated(bundleID: "A", pid: 1))
+        clock.advance(byMilliseconds: 20)
+        XCTAssertNil(a.appActivated(bundleID: "B", pid: 2))
+        a.discardPending()
+        XCTAssertNil(a.pendingDeadlineNanos)
+        clock.advance(bySeconds: 1)
+        XCTAssertNil(a.flushIfDue())
+        // B is no longer "latest", so seeing it again is a real change (not deduped away).
+        XCTAssertEqual(try XCTUnwrap(a.appActivated(bundleID: "B", pid: 2)).bundleID, "B")
+    }
+
     func testTerminatingTheEmittedAppKeepsCurrent() {
         var a = makeAssembler()
         XCTAssertNotNil(a.appActivated(bundleID: "A", pid: 1))

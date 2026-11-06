@@ -45,6 +45,9 @@ import Foundation
         source.onTerminate = nil
         flushTimer?.invalidate()
         flushTimer = nil
+        // A held change would otherwise be emitted by the first event after a later start(), even when
+        // that event is Kytkin itself being frontmost. start() re-reads the frontmost app anyway.
+        assembler.discardPending()
     }
 
     // MARK: - Private

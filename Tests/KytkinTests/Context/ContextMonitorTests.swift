@@ -62,6 +62,20 @@ final class WorkspaceAppActivationSourceTests: XCTestCase {
         post(NSWorkspace.didActivateApplicationNotification, on: center, app: me)
         XCTAssertEqual(count, 0)
     }
+
+    func testRestartObservesAgainAndReReadsTheFrontmostApp() {
+        let center = NotificationCenter()
+        let source = WorkspaceAppActivationSource(center: center, frontmost: { self.me })
+        var count = 0
+        source.onActivate = { _, _ in count += 1 }
+        source.start()
+        source.stop()
+        source.start()
+        XCTAssertEqual(count, 2)
+        post(NSWorkspace.didActivateApplicationNotification, on: center, app: me)
+        XCTAssertEqual(count, 3) // one observer, not two
+        source.stop()
+    }
 }
 
 @MainActor
@@ -114,6 +128,89 @@ final class ContextMonitorTests: XCTestCase {
         clock.advance(byMilliseconds: 20)
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         XCTAssertEqual(seen, ["A", "B"])
+        monitor.stop()
+    }
+
+    private func makeMonitor(_ source: FakeSource, _ clock: FakeClock) -> ContextMonitor {
+        ContextMonitor(source: source, clock: clock, ownPID: 999, ownBundleID: "io.github.kytkin.Kytkin.dev",
+                       debounceNanos: 20_000_000)
+    }
+
+    private func spin(_ seconds: TimeInterval = 0.15) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    func testStopCancelsAHeldChange() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        let monitor = makeMonitor(source, clock)
+        var seen: [String] = []
+        monitor.onChange = { seen.append($0.bundleID) }
+        monitor.start()
+        source.onActivate?("A", 1)
+        source.onActivate?("B", 2) // held
+        monitor.stop()
+        clock.advance(bySeconds: 1)
+        spin()
+        XCTAssertEqual(seen, ["A"])
+
+        // Restarted with Kytkin frontmost: the change held before stop() must not come back.
+        monitor.start()
+        source.onActivate?("io.github.kytkin.Kytkin.dev", 999)
+        clock.advance(bySeconds: 1)
+        spin()
+        XCTAssertEqual(seen, ["A"])
+        XCTAssertEqual(monitor.current?.bundleID, "A")
+        monitor.stop()
+    }
+
+    func testTerminatingTheHeldAppCancelsTheTimer() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        let monitor = makeMonitor(source, clock)
+        var seen: [String] = []
+        monitor.onChange = { seen.append($0.bundleID) }
+        monitor.start()
+        source.onActivate?("A", 1)
+        source.onActivate?("B", 2) // held
+        source.onTerminate?(2)
+        clock.advance(bySeconds: 1)
+        spin()
+        XCTAssertEqual(seen, ["A"])
+        monitor.stop()
+    }
+
+    func testTimerThatFiresBeforeTheDeadlineRetriesAndKeepsTheFinalState() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        let monitor = makeMonitor(source, clock)
+        var seen: [String] = []
+        monitor.onChange = { seen.append($0.bundleID) }
+        monitor.start()
+        source.onActivate?("A", 1)
+        source.onActivate?("B", 2)
+        source.onActivate?("C", 3) // burst: only C may come out
+        spin(0.1)                  // the timer fires, but the (fake) clock says it isn't due yet
+        XCTAssertEqual(seen, ["A"])
+        clock.advance(byMilliseconds: 20)
+        spin()
+        XCTAssertEqual(seen, ["A", "C"])
+        spin()
+        XCTAssertEqual(seen, ["A", "C"]) // exactly once
+        monitor.stop()
+    }
+
+    func testKytkinFrontmostAtLaunchEmitsNothingThenTheNextAppAtOnce() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        let monitor = makeMonitor(source, clock)
+        var seen: [String] = []
+        monitor.onChange = { seen.append($0.bundleID) }
+        monitor.start()
+        source.onActivate?("io.github.kytkin.Kytkin.dev", 999)
+        XCTAssertNil(monitor.current)
+        source.onActivate?("com.apple.Safari", 10) // same instant: still the leading edge
+        XCTAssertEqual(seen, ["com.apple.Safari"])
         monitor.stop()
     }
 }
