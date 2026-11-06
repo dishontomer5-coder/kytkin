@@ -225,6 +225,83 @@ final class InputSourceSwitcherTests: XCTestCase {
         XCTAssertEqual(changes, [])
     }
 
+    // MARK: - Races with a user switch whose notification hasn't arrived yet (P2-14 QA)
+
+    /// The user switched ABC → Hebrew; before its notification arrives, a rule asks for Hebrew. Step 1 checks
+    /// TIS (already Hebrew), so nothing is selected and the switch stays the user's.
+    func testRuleTargetAlreadyPickedByUserIsStillExternal() {
+        backend.currentID = hebrew.id   // switched, notification still in flight
+        XCTAssertTrue(switcher.select(hebrew.id, reason: .rule))
+        XCTAssertEqual(backend.selectCalls, [])
+        clock.advance(byMilliseconds: 15)
+        backend.postSelectedChanged()
+        XCTAssertEqual(changes, [.external(hebrew.id, atNanos: clock.nowNanos)])
+    }
+
+    /// The builder's edge case: the user switched ABC → Hebrew, and before that notification arrives Kytkin
+    /// selects ABC back. The late notifications both read ABC, the last known source, so nothing is reported
+    /// (the user's brief switch is simply never seen). No token is left behind either: a real user switch to
+    /// Hebrew and back to ABC right after are both theirs.
+    func testSelectBackBeforeUserSwitchNotificationIsHarmless() {
+        backend.currentID = hebrew.id
+        XCTAssertTrue(switcher.select(abc.id, reason: .rule))
+        XCTAssertEqual(backend.selectCalls, [abc.id])
+        clock.advance(byMilliseconds: 10)
+        backend.postSelectedChanged()   // the user's ABC → Hebrew notification, read after our select
+        backend.postSelectedChanged()   // ours
+        XCTAssertEqual(changes, [])
+        XCTAssertEqual(switcher.current, abc.id)
+        clock.advance(byMilliseconds: 50)
+        backend.externalSwitch(to: hebrew.id)
+        clock.advance(byMilliseconds: 50)
+        backend.externalSwitch(to: abc.id)
+        XCTAssertEqual(changes, [.external(hebrew.id, atNanos: 1_060_000_000),
+                                 .external(abc.id, atNanos: 1_110_000_000)])
+    }
+
+    /// Kytkin selects Hebrew, then ABC again before Hebrew's notification arrives (e.g. a quick app switch):
+    /// net no change, nothing reported, and the Hebrew token doesn't survive to swallow a user switch.
+    func testQuickSelectAndSelectBackReportsNothingAndLeavesNoToken() {
+        switcher.select(hebrew.id, reason: .rule)
+        switcher.select(abc.id, reason: .rule)
+        XCTAssertEqual(backend.selectCalls, [hebrew.id, abc.id])
+        clock.advance(byMilliseconds: 15)
+        backend.postSelectedChanged()
+        XCTAssertEqual(changes, [])
+        clock.advance(byMilliseconds: 50)
+        backend.externalSwitch(to: hebrew.id)
+        XCTAssertEqual(changes, [.external(hebrew.id, atNanos: clock.nowNanos)])
+    }
+
+    /// An external notification delivered while our select is still running (the notification for a switch
+    /// the user made just before) reads the source TIS reports then, which is already our target: it's ours.
+    func testNotificationDeliveredDuringSelectReadsOurTarget() {
+        backend.duringSelect = { [unowned self] in
+            clock.advance(byMilliseconds: 5)
+            backend.postSelectedChanged()
+        }
+        switcher.select(hebrew.id, reason: .afterConvert)
+        clock.advance(byMilliseconds: 15)
+        backend.postSelectedChanged()   // the duplicate
+        XCTAssertEqual(changes, [.ours(hebrew.id)])
+    }
+
+    func testSelectWithNilCurrentStillSelectsAndIsOurs() {
+        backend.currentID = nil
+        XCTAssertTrue(switcher.select(hebrew.id, reason: .rule))
+        XCTAssertEqual(backend.selectCalls, [hebrew.id])
+        clock.advance(byMilliseconds: 15)
+        backend.postSelectedChanged()
+        XCTAssertEqual(changes, [.ours(hebrew.id)])
+    }
+
+    func testCurrentIsEmptyWhenTISReportsNoneAndNothingWasSeen() {
+        let empty = FakeTISBackend(sources: [abc], current: nil)
+        let local = InputSourceSwitcher(backend: empty, clock: clock)
+        XCTAssertEqual(local.current, InputSourceID(""))
+        XCTAssertNil(local.currentInfo)
+    }
+
     // MARK: - Enabled sources changed
 
     func testEnabledSourcesChangedCallsOnSourcesListChanged() {
