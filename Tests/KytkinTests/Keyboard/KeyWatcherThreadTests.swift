@@ -132,6 +132,95 @@ final class KeyWatcherThreadTests: XCTestCase {
         XCTAssertNotNil(fake.handler)
         watcher.stop()
     }
+
+    // MARK: - P2-50: runtime config, main-only API, stop timeout
+
+    func testUpdateConfigReachesTheProcessorAndTheSeed() {
+        let watcher = makeWatcher()
+        var off = KeyProcessorConfig()
+        off.doubleShiftEnabled = false
+        watcher.perform(.updateConfig(off))
+        XCTAssertEqual(watcher.processorSnapshot()?.config.doubleShiftEnabled, false, "before start: the seed")
+        watcher.start(mode: .active)
+        XCTAssertEqual(watcher.processorSnapshot()?.config.doubleShiftEnabled, false, "carried into the engine")
+        watcher.perform(.updateConfig(KeyProcessorConfig()))
+        XCTAssertEqual(watcher.processorSnapshot()?.config.doubleShiftEnabled, true, "on the tap thread")
+        watcher.stop()
+        XCTAssertEqual(watcher.processorSnapshot()?.config.doubleShiftEnabled, true, "kept after a stop")
+    }
+
+    /// The tap thread is stuck when main stops: stop gives up after its timeout, but the engine stays alive until the
+    /// thread exits, no second tap thread starts meanwhile, and nothing main did is lost.
+    func testAStopThatTimesOutKeepsTheEngineUntilTheThreadExits() {
+        let log = BackendLog()
+        let gate = DispatchSemaphore(value: 0)
+        let statuses = StatusLog()
+        let watcher = KeyWatcher(processor: KeyStreamProcessor(), startTimeout: 0.3, stopTimeout: 0.3,
+                                 makeBackend: { _ in log.make() }, onSignal: { _ in },
+                                 onStatus: { statuses.append($0.health.mode) })
+        XCTAssertEqual(watcher.start(mode: .active), .active)
+        let hebrew = InputSourceID("com.apple.keylayout.Hebrew")
+        watcher.perform(.inputSourceChanged(to: hebrew, isOurs: false)) // ran on the tap thread before the stop
+        do {
+            let first = log.backend(0)
+            first?.onDeviceFlags = { gate.wait() }
+        }
+        watcher.perform(.reset(.contextChange)) // blocks the tap thread on the gate
+        watcher.stop() // times out
+
+        XCTAssertNotNil(log.backend(0), "the engine (which owns the backend) is kept while its thread lives")
+        var off = KeyProcessorConfig()
+        off.doubleShiftEnabled = false
+        watcher.perform(.updateConfig(off)) // while the late shutdown is pending
+        XCTAssertEqual(watcher.start(mode: .active), .off, "no second tap thread while the old one is alive")
+        XCTAssertEqual(log.count, 1)
+
+        do {
+            let first = log.backend(0)
+            first?.onDeviceFlags = nil
+        }
+        gate.signal()
+        XCTAssertTrue(waitUntil { log.backend(0) == nil }, "released once the thread has exited")
+        XCTAssertEqual(watcher.status.health.mode, .off, "the late shutdown removed the tap")
+
+        XCTAssertEqual(watcher.start(mode: .active), .active)
+        XCTAssertEqual(log.count, 2)
+        let snapshot = watcher.processorSnapshot()
+        XCTAssertEqual(snapshot?.inputSource, hebrew, "the late shutdown's processor became the seed")
+        XCTAssertEqual(snapshot?.config.doubleShiftEnabled, false, "with main's later operation applied on top")
+        watcher.stop()
+        XCTAssertEqual(watcher.status.health.mode, .off)
+    }
+
+    /// Spins the main run loop (where the test runs) until `condition` holds, at most `timeout` seconds.
+    private func waitUntil(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > end { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        return true
+    }
+}
+
+/// P2-50: makes a fresh fake per tap thread and keeps only weak references, so a test can see an engine released.
+private final class BackendLog: @unchecked Sendable { // @unchecked: guarded by `lock`
+    private final class Weak {
+        weak var backend: FakeKeyTapBackend?
+        init(_ b: FakeKeyTapBackend) { backend = b }
+    }
+
+    private let lock = NSLock()
+    private var made: [Weak] = []
+
+    func make() -> FakeKeyTapBackend {
+        let fake = FakeKeyTapBackend()
+        lock.withLock { made.append(Weak(fake)) }
+        return fake
+    }
+
+    var count: Int { lock.withLock { made.count } }
+    func backend(_ i: Int) -> FakeKeyTapBackend? { lock.withLock { made[i].backend } }
 }
 
 /// Cross-thread test boxes (the tap thread writes, the test reads after a barrier).
