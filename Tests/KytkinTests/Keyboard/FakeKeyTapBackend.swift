@@ -14,6 +14,11 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
     var enabled = false
     var secureInput = false
     var deviceFlags: UInt64 = 0
+    /// P2-47: install / uninstall / post, in call order (posts as "post <key code>").
+    private(set) var calls: [String] = []
+    /// P2-47: runs at the start of `install` and of `currentDeviceFlags`, e.g. to block the tap thread in a test.
+    var onInstall: (() -> Void)?
+    var onDeviceFlags: (() -> Void)?
 
     /// Events "re-posted" (never really posted): key code and marker of each.
     private(set) var posted: [(keyCode: Int64, marker: Int64, keyDown: Bool)] = []
@@ -23,7 +28,9 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
     private var pollHandler: (() -> Void)?
 
     func install(mode: TapMode, handler: @escaping EventHandler) -> Bool {
+        onInstall?()
         installs.append(mode)
+        calls.append("install \(mode)")
         guard installSucceeds else { return false }
         self.handler = handler
         enabled = true
@@ -32,6 +39,7 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
 
     func uninstall() {
         uninstallCount += 1
+        calls.append("uninstall")
         handler = nil
         enabled = false
     }
@@ -52,12 +60,16 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
 
     func post(_ event: CGEvent) {
         onPost?(event)
+        calls.append("post \(event.getIntegerValueField(.keyboardEventKeycode))")
         posted.append((event.getIntegerValueField(.keyboardEventKeycode),
                        event.getIntegerValueField(.eventSourceUserData), event.type == .keyDown))
     }
 
     var isSecureInputEnabled: Bool { secureInput }
-    var currentDeviceFlags: UInt64 { deviceFlags }
+    var currentDeviceFlags: UInt64 {
+        onDeviceFlags?()
+        return deviceFlags
+    }
 
     func attachTimers(deadline: @escaping () -> Void, poll: @escaping () -> Void) {
         deadlineHandler = deadline
@@ -93,4 +105,5 @@ final class FakeKeyTapBackend: KeyTapBackend, @unchecked Sendable { // @unchecke
     }
 
     func clearPosted() { posted = [] }
+    func clearCalls() { calls = [] }
 }

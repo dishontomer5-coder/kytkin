@@ -35,6 +35,8 @@ final class KeyTapEngine: @unchecked Sendable {
     private var held: [(event: KeyEvent, cgEvent: CGEvent)] = []
     private var armedDeadline: UInt64?
     private var pollTicks = 0
+    /// P2-47 QA: counts user-initiated mode changes, so a watchdog replacement queued before one is dropped.
+    private var userModeChanges: UInt64 = 0
 
     /// B4: the watchdog checks `tapIsEnabled` every this many 1 s polls (001 §7 B4: every 2 s).
     static let healthCheckEveryPolls = 2
@@ -103,10 +105,15 @@ final class KeyTapEngine: @unchecked Sendable {
 
     // MARK: - Hops from main / the worker (already on the tap thread)
 
-    /// Main → tap (contract step 4): run the block on the processor, then the flush step.
-    func perform(_ block: (inout KeyStreamProcessor) -> Void) {
-        block(&processor)
-        runFlushStep()
+    /// Main → tap (contract step 4): one of the operations main may ask for (P2-47), then the flush step.
+    func perform(_ operation: KeyWatcherOperation) {
+        switch operation {
+        case let .reset(reason):
+            reset(reason)
+        case let .inputSourceChanged(id, isOurs):
+            processor.inputSourceChanged(to: id, isOurs: isOurs)
+            runFlushStep()
+        }
     }
 
     /// Reset with the current modifier flags (so a Shift held across it is remembered), then the flush step.
@@ -132,6 +139,7 @@ final class KeyTapEngine: @unchecked Sendable {
     @discardableResult
     func applyMode(_ requested: TapMode, userInitiated: Bool) -> TapMode {
         if userInitiated {
+            userModeChanges &+= 1
             policy.reset()
             status.degradedByWatchdog = false
             if requested == mode, requested != .off, backend.isEnabled {
@@ -139,6 +147,13 @@ final class KeyTapEngine: @unchecked Sendable {
                 return requested
             }
         }
+        // P2-47: reset and flush before the old tap goes. Held keys are re-posted while it is still installed, so a
+        // key typed during the switch (into no tap, or into the new one) can't overtake them. The processor is `.off`
+        // for the gap: nothing can be held without a tap, so the flush doesn't wait, not even for a posting worker
+        // (as for any non-active mode; P2-35 then blocks a new replacement until that worker is done).
+        let hadWord = !processor.buffer.isEmpty
+        processor.setMode(.off)
+        runFlushStep()
         backend.uninstall()
         var achieved: TapMode = .off
         if requested != .off, backend.isGranted(requested),
@@ -148,8 +163,7 @@ final class KeyTapEngine: @unchecked Sendable {
             achieved = requested
         }
         timestamps.reset()
-        let hadWord = !processor.buffer.isEmpty
-        processor.setMode(achieved) // a change resets: the replacement aborts and held keys flush below
+        processor.setMode(achieved)
         if hadWord && processor.buffer.isEmpty { sendSignal(.bufferInvalidated) }
         runFlushStep()
         status.health.mode = achieved
@@ -218,9 +232,15 @@ final class KeyTapEngine: @unchecked Sendable {
     }
 
     /// Replacing a tap from inside its own callback is unsafe, so it runs right after the callback returns.
+    /// P2-47 QA: main's start/stop hops share the run loop's block queue, so one can already be queued ahead of this
+    /// block (a stop, a start, or the undo of a timed-out start). The user's later word wins: if a user-initiated
+    /// mode change ran in between, or the tap is already off, the downgrade is dropped, so it can never install a
+    /// tap after main was told `.off` or after `shutdown` (and `weak`: the engine may already be gone after a stop).
     private func replaceTapSoon(with newMode: TapMode) {
         status.degradedByWatchdog = true
-        backend.runSoon { [unowned self] in
+        let decidedAt = userModeChanges
+        backend.runSoon { [weak self] in
+            guard let self, self.userModeChanges == decidedAt, self.mode != .off else { return }
             self.applyMode(newMode, userInitiated: false)
         }
     }
