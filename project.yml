@@ -73,6 +73,12 @@ targets:
       # P2-16: only the manager's plumbing (fake probe/requester, private notification centers). Never add
       # SystemPermissionRequester here: it shows permission prompts and opens System Settings.
       - path: Sources/System/Permissions/PermissionsManager.swift
+      # P2-17: KeyWatcher's plumbing is unit-tested with a fake backend. The real CGEventTap backend and the
+      # convenience init that uses it are left out, so no test can install a tap or post an event.
+      - path: Sources/System/Keyboard
+        excludes:
+          - CGEventTapBackend.swift
+          - KeyWatcher+Live.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
