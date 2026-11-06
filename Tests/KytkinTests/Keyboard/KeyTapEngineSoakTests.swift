@@ -55,13 +55,13 @@ final class KeyTapEngineSoakTests: XCTestCase {
         var postsInCallback = 0
         // P2-47: when each worker won the claim, and the exempt moments above.
         var claimedAt: [UInt64: UInt64] = [:]
-        var finishing = false, replacingTap = false, fifoMayOverflow = false
+        var finishing: UInt64?, windingDown = false, replacingTap = false, fifoMayOverflow = false
         backend.onPost = { e in
             output.append(e.timestamp)
             postsInCallback += 1
             if case let .posting(gen) = commit.state, let at = claimedAt[gen],
                clock.nowNanos < at + config.postingHardCapNanos,
-               !finishing, !replacingTap, !fifoMayOverflow {
+               finishing != gen, !windingDown, !replacingTap, !fifoMayOverflow {
                 XCTFail("seed \(seed): a held key was replayed while worker \(gen) was posting, before the hard cap")
             }
         }
@@ -135,8 +135,8 @@ final class KeyTapEngineSoakTests: XCTestCase {
             case 71..<81:
                 if let gen = workers.keys.sorted().first, let w = workers.removeValue(forKey: gen) {
                     postsInCallback = 0
-                    finishing = true
-                    defer { finishing = false }
+                    finishing = gen // QA: only the posting worker's own finish may replay under its claim
+                    defer { finishing = nil }
                     engine.finishReplacement(gen: gen,
                                              newRendering: w.kind == .convert ? InputSourceID("com.apple.keylayout.Hebrew") : nil,
                                              bufferAfter: nil)
@@ -177,7 +177,7 @@ final class KeyTapEngineSoakTests: XCTestCase {
         }
 
         // Wind down: let the workers finish, wait past every cap, and stop. Nothing may stay behind.
-        finishing = true
+        windingDown = true
         for (gen, w) in workers.sorted(by: { $0.key < $1.key }) {
             engine.finishReplacement(gen: gen, newRendering: w.kind == .convert ? InputSourceID("com.apple.keylayout.Hebrew") : nil,
                                      bufferAfter: nil)

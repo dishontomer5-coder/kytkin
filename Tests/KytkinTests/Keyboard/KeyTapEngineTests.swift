@@ -452,6 +452,34 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertEqual(backend.reEnableCount, 1)
     }
 
+    /// P2-47 QA: the watchdog's downgrade runs after the callback, so a user `applyMode` (main's stop, a start, or the
+    /// undo of a timed-out start) can be queued ahead of it. The stale downgrade must not install a tap behind it.
+    func testAPendingWatchdogDowngradeNeverOverridesAUserModeChange() {
+        makeEngine()
+        for _ in 0..<3 { notifyDisabled() }
+        XCTAssertEqual(backend.soon.count, 1)
+        engine.applyMode(.off, userInitiated: true) // e.g. the undo of a timed-out start
+        backend.runSoonBlocks()
+        XCTAssertEqual(engine.mode, .off)
+        XCTAssertNil(backend.handler, "no listen-only tap after main was told off")
+        XCTAssertEqual(backend.installs, [.active])
+
+        makeEngine()
+        for _ in 0..<3 { notifyDisabled() }
+        engine.shutdown()
+        backend.runSoonBlocks()
+        XCTAssertNil(backend.handler, "nothing installed after a stop")
+        XCTAssertEqual(backend.installs, [.active])
+
+        makeEngine()
+        for _ in 0..<3 { notifyDisabled() }
+        backend.enabled = false
+        XCTAssertEqual(engine.applyMode(.active, userInitiated: true), .active) // the user re-starts active
+        backend.runSoonBlocks()
+        XCTAssertEqual(engine.mode, .active, "the user's later start wins over the older downgrade")
+        XCTAssertEqual(backend.installs, [.active, .active])
+    }
+
     func testAUserStartClearsTheWatchdogHistory() {
         makeEngine()
         notifyDisabled()

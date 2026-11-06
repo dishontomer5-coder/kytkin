@@ -35,6 +35,8 @@ final class KeyTapEngine: @unchecked Sendable {
     private var held: [(event: KeyEvent, cgEvent: CGEvent)] = []
     private var armedDeadline: UInt64?
     private var pollTicks = 0
+    /// P2-47 QA: counts user-initiated mode changes, so a watchdog replacement queued before one is dropped.
+    private var userModeChanges: UInt64 = 0
 
     /// B4: the watchdog checks `tapIsEnabled` every this many 1 s polls (001 §7 B4: every 2 s).
     static let healthCheckEveryPolls = 2
@@ -137,6 +139,7 @@ final class KeyTapEngine: @unchecked Sendable {
     @discardableResult
     func applyMode(_ requested: TapMode, userInitiated: Bool) -> TapMode {
         if userInitiated {
+            userModeChanges &+= 1
             policy.reset()
             status.degradedByWatchdog = false
             if requested == mode, requested != .off, backend.isEnabled {
@@ -229,9 +232,15 @@ final class KeyTapEngine: @unchecked Sendable {
     }
 
     /// Replacing a tap from inside its own callback is unsafe, so it runs right after the callback returns.
+    /// P2-47 QA: main's start/stop hops share the run loop's block queue, so one can already be queued ahead of this
+    /// block (a stop, a start, or the undo of a timed-out start). The user's later word wins: if a user-initiated
+    /// mode change ran in between, or the tap is already off, the downgrade is dropped, so it can never install a
+    /// tap after main was told `.off` or after `shutdown` (and `weak`: the engine may already be gone after a stop).
     private func replaceTapSoon(with newMode: TapMode) {
         status.degradedByWatchdog = true
-        backend.runSoon { [unowned self] in
+        let decidedAt = userModeChanges
+        backend.runSoon { [weak self] in
+            guard let self, self.userModeChanges == decidedAt, self.mode != .off else { return }
             self.applyMode(newMode, userInitiated: false)
         }
     }
