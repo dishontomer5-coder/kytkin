@@ -6,8 +6,9 @@ import Foundation
 extension ReplacementCapabilities {
     static let defaultSeeds: [Seed] = {
         // P2-36 (001 §12 T1): terminals. No AX, no paste, no selection convert (the selection is display only).
-        // Ghostty, Alacritty, kitty, WezTerm and Hyper IDs are from the apps' published bundles; verify them
-        // against the installed apps in P2-18 QA. Alacritty shipped as `io.alacritty` before `org.alacritty`.
+        // Ghostty, Alacritty, kitty, WezTerm and Hyper IDs are from the apps' published bundles. P2-18 read the
+        // installed Info.plists: Terminal and Ghostty confirmed; iTerm2, Warp, Alacritty, kitty, WezTerm and Hyper
+        // weren't installed, so they're still unverified. Alacritty shipped as `io.alacritty` before `org.alacritty`.
         let terminal = [
             "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
             "com.mitchellh.ghostty", "org.alacritty", "io.alacritty", "net.kovidgoyal.kitty",

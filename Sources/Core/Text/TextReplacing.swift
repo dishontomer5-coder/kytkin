@@ -1,0 +1,33 @@
+// P2-18: The text replacer's contract (001 §2.2 `TextReplacing`), used by ConvertController (P2-21) and
+// `ReplacementChain`. One replacement is: `focusInfo` → plan → `perform` each step → `endReplacement`.
+// The live implementation is `System/Text/TextReplacer`; tests use `ReplacementExecutor` with fake seams.
+//
+// Deviations from the 001 sketch (reported in P2-18): isolated to @TextActor (it holds AX elements, which
+// aren't Sendable); `perform` returns a `StepOutcome` so the chain knows whether a failure left the field
+// untouched; `wordBeforeCaret` hands the stale-buffer word back to the caller to convert.
+
+import Foundation
+
+@TextActor protocol TextReplacing: AnyObject {
+    /// Reads the focused element's facts through AX (each call bounded by `timeout`). nil = AX couldn't tell
+    /// (no permission, no focused element, the app didn't answer), so the planner refuses (001 §12 T4).
+    /// Starts a new replacement: anything held from the previous one is dropped first.
+    func focusInfo(timeout: Double) -> FocusInfo?
+
+    /// Runs one step. `old` is the text on screen now (the selection, the current rendering of the word, or the
+    /// word found by `axReadBeforeCaret`); `new` is what replaces it.
+    func perform(_ step: ReplacementStep, old: String, new: String) -> StepOutcome
+
+    /// The word found by the last successful `axReadBeforeCaret` step, in memory for this replacement only.
+    var wordBeforeCaret: String? { get }
+
+    /// Drops the element, ranges and any text held for this replacement (privacy: nothing outlives it).
+    func endReplacement()
+}
+
+extension TextReplacing {
+    /// 001 §2.2's signature: just the verdict.
+    func execute(_ step: ReplacementStep, old: String, new: String) -> StepVerdict {
+        perform(step, old: old, new: new).verdict
+    }
+}
