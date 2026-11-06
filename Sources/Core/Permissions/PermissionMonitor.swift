@@ -21,8 +21,11 @@
 //     ever, so a `.notDetermined` permission may still have been denied in an earlier run: the UI offers the
 //     System Settings deep link for both. `.unknown` only before the first read.
 //
-// Input Monitoring "Quit & Reopen": granted now but not granted at the first read of this run
+// Input Monitoring "Quit & Reopen": granted now, but seen not granted at any earlier read of this run
 // → `inputMonitoringNeedsRelaunch` (a listen-only tap usually fails until a relaunch, keyboard-event-tap.md §1).
+// P2-16 QA: "any earlier read", not only the first: granted at launch → revoked → granted again is the same
+// situation for the tap (KeyWatcher dropped it on the revoke and must create a new one). It is a hint only; the
+// UI shows "Quit & Reopen" only while the tap mode KeyWatcher achieved is still below the desired one.
 
 import Foundation
 
@@ -45,7 +48,8 @@ struct PermissionMonitor {
     private let clock: any Clock
     private var lastReadAtNanos: UInt64?
     private var requested: Set<PermissionPane> = []
-    private var inputMonitoringAtFirstRead: Bool?
+    /// Some read of this run saw Input Monitoring not granted.
+    private var inputMonitoringSeenNotGranted = false
 
     init(clock: any Clock) {
         self.clock = clock
@@ -74,14 +78,14 @@ struct PermissionMonitor {
     mutating func ingest(_ reading: PermissionReading) -> PermissionStatus? {
         lastReadAtNanos = clock.nowNanos
         hasRead = true
-        if inputMonitoringAtFirstRead == nil { inputMonitoringAtFirstRead = reading.inputMonitoringGranted }
+        if !reading.inputMonitoringGranted { inputMonitoringSeenNotGranted = true }
 
         var next = status
         next.grants.accessibility = state(reading.accessibilityTrusted, .accessibility)
         next.grants.inputMonitoring = state(reading.inputMonitoringGranted, .inputMonitoring)
         next.secureInput = reading.secureInput
         // A revoke clears the hint: there is nothing to reopen for.
-        next.inputMonitoringNeedsRelaunch = reading.inputMonitoringGranted && inputMonitoringAtFirstRead == false
+        next.inputMonitoringNeedsRelaunch = reading.inputMonitoringGranted && inputMonitoringSeenNotGranted
 
         guard next != status else { return nil }
         status = next

@@ -98,8 +98,15 @@ final class PermissionMonitorTests: XCTestCase {
         var monitor = PermissionMonitor(clock: clock)
         XCTAssertEqual(monitor.ingest(reading(im: true))?.inputMonitoringNeedsRelaunch, false)
         _ = monitor.ingest(reading(im: false))
-        // Granted at launch, revoked, granted again: the first read decides, so no relaunch hint.
-        XCTAssertEqual(monitor.ingest(reading(im: true))?.inputMonitoringNeedsRelaunch, false)
+        // P2-16 QA: granted at launch, revoked, granted again: KeyWatcher dropped the tap on the revoke and has
+        // to create a new one, the same situation as a first grant mid-run, so the hint shows.
+        XCTAssertEqual(monitor.ingest(reading(im: true))?.inputMonitoringNeedsRelaunch, true)
+    }
+
+    func testAccessibilityChangesNeverSetTheRelaunchHint() {
+        var monitor = PermissionMonitor(clock: clock)
+        _ = monitor.ingest(reading(ax: false, im: true))
+        XCTAssertEqual(monitor.ingest(reading(ax: true, im: true))?.inputMonitoringNeedsRelaunch, false)
     }
 
     // MARK: - When to read
@@ -130,6 +137,15 @@ final class PermissionMonitorTests: XCTestCase {
         _ = monitor.ingest(reading()) // e.g. a timer read, no change
         clock.advance(byMilliseconds: 10)
         XCTAssertFalse(monitor.shouldRead(.appActivated))
+    }
+
+    func testAnActivationRightAfterAnUncoalescedReadIsSkipped() {
+        var monitor = PermissionMonitor(clock: clock)
+        _ = monitor.ingest(reading())
+        clock.advance(bySeconds: 10)
+        XCTAssertTrue(monitor.shouldRead(.kytkinActivated)) // Kytkin's own activation reads...
+        _ = monitor.ingest(reading())
+        XCTAssertFalse(monitor.shouldRead(.appActivated)) // ...so the paired app-activation is coalesced
     }
 
     func testOnlyAppActivationIsCoalesced() {

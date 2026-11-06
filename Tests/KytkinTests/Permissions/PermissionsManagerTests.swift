@@ -141,6 +141,34 @@ final class PermissionsManagerTests: XCTestCase {
         XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.interactivePollNanos)
     }
 
+    func testScreenAndSecureInputIntervalsCombine() {
+        manager.start()
+        manager.setWatchesSecureInput(true)
+        manager.setInteractive(true)
+        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.interactivePollNanos)
+        manager.setInteractive(false) // still watching Secure Input
+        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.secureInputPollNanos)
+        manager.setWatchesSecureInput(false)
+        XCTAssertEqual(manager.scheduledPollNanos, PermissionMonitor.backgroundPollNanos)
+        manager.stop()
+        XCTAssertNil(manager.scheduledPollNanos)
+    }
+
+    // P2-16 QA: the "fresh rows" read only happens while running; before start() / after stop() nothing is
+    // read or published.
+    func testScreenAndSecureInputTogglesDontReadWhileStopped() {
+        manager.setInteractive(true)
+        manager.setWatchesSecureInput(true)
+        XCTAssertEqual(probe.reads, 0)
+        XCTAssertEqual(published, [])
+        manager.start()
+        XCTAssertEqual(probe.reads, 1)
+        manager.stop()
+        manager.setInteractive(false)
+        manager.setInteractive(true)
+        XCTAssertEqual(probe.reads, 1)
+    }
+
     func testRequestAccessibilityCallsTheRequesterThenReads() {
         manager.start()
         manager.requestAccessibility()

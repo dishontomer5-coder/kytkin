@@ -78,15 +78,16 @@ import Observation
     func setInteractive(_ visible: Bool) {
         guard monitor.interactive != visible else { return }
         monitor.interactive = visible
-        // Read now, so the screen opens with fresh rows, not up to 5 s old ones.
-        if visible { read(.manual) }
+        // Read now, so the screen opens with fresh rows, not up to 5 s old ones. P2-16 QA: only while running,
+        // so nothing is read or published before start() or after stop().
+        if visible && running { read(.manual) }
         rescheduleTimer()
     }
 
     func setWatchesSecureInput(_ on: Bool) {
         guard monitor.watchesSecureInput != on else { return }
         monitor.watchesSecureInput = on
-        if on { read(.manual) }
+        if on && running { read(.manual) }
         rescheduleTimer()
     }
 
