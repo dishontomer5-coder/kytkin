@@ -15,7 +15,7 @@ struct ReplacementOutcome: Sendable, Equatable {
         case exhausted
         /// A step failed in a way that may have changed the field, so the chain stopped instead of guessing.
         case halted(after: ReplacementStep)
-        /// The caller withdrew permission to post keys (the hold-back deadline won, 001 §7 B3). Nothing posted.
+        /// The caller refused the write (the hold-back deadline won, 001 §7 B3, §12.2 W8). Nothing written or posted.
         case abandoned
         /// The 400 ms convert budget (001 §7 B5) ran out before a step could start.
         case timedOut
