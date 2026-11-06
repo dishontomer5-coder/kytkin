@@ -4,8 +4,12 @@
 //   - A step that fails but leaves the field untouched falls through to the next step.
 //   - A step that fails with the field in an unknown state halts the chain (never type over a half-written field).
 //   - `axReadBeforeCaret` supplies the text for the steps after it; if it fails, nothing after it can run.
-//   - Before the first step that posts keys, `mayPostKeys` is asked once (ConvertController takes the
-//     hold-back commit there, 001 §7 B3). false = abandon silently.
+//   - Before the first step that writes to the field, `mayWrite` is asked once (ConvertController takes the
+//     hold-back commit there, 001 §7 B3). false = abandon silently, nothing written.
+//     P2-51 (001 §12.2 W8): "writes" covers AX writes as well as key posts. The AX step's own writes include the
+//     stale path's `setRange` (it selects the word, and a held key replayed after that would type over it), so the
+//     claim is taken before the step starts, which also puts the stale-range check under the claim: the deadline
+//     flush can't replay held keys between that check and `AXSelectedText`. Read-only steps never ask.
 //   - The whole run is bounded by `budgetNanos` (001 §7 B5: a convert gives up after 400 ms).
 
 import Foundation
@@ -27,7 +31,7 @@ enum ReplacementChain {
                     capabilities: inout ReplacementCapabilities,
                     clock: any Clock = SystemClock(),
                     budgetNanos: UInt64 = defaultBudgetNanos,
-                    mayPostKeys: () -> Bool = { true }) -> ReplacementOutcome {
+                    mayWrite: () -> Bool = { true }) -> ReplacementOutcome {
         defer { replacer.endReplacement() }
         let steps: [ReplacementStep]
         switch plan {
@@ -38,7 +42,7 @@ enum ReplacementChain {
         var attempts: [ReplacementOutcome.Attempt] = []
         var current = old
         var replacement: String?
-        var keysAllowed = false
+        var writeClaimed = false
 
         for step in steps {
             if clock.nowNanos &- start > budgetNanos {
@@ -56,9 +60,9 @@ enum ReplacementChain {
                 oldText = text
                 newText = r
             }
-            if postsKeys(step) && !keysAllowed {
-                guard mayPostKeys() else { return ReplacementOutcome(result: .abandoned, attempts: attempts) }
-                keysAllowed = true
+            if !isRead(step) && !writeClaimed {
+                guard mayWrite() else { return ReplacementOutcome(result: .abandoned, attempts: attempts) }
+                writeClaimed = true
             }
 
             let outcome = replacer.perform(step, old: oldText, new: newText)
@@ -78,15 +82,10 @@ enum ReplacementChain {
         return ReplacementOutcome(result: .exhausted, attempts: attempts)
     }
 
+    /// The only step that writes nothing (not even a selection range). P2-51: every other step, including any
+    /// added later, counts as a write and takes the claim first.
     private static func isRead(_ step: ReplacementStep) -> Bool {
         if case .axReadBeforeCaret = step { return true }
         return false
-    }
-
-    private static func postsKeys(_ step: ReplacementStep) -> Bool {
-        switch step {
-        case .typeOverSelection, .backspaceAndType, .pasteboard, .keyCodesAfterSwitch: return true
-        case .axWriteSelection, .axReadBeforeCaret: return false
-        }
     }
 }
