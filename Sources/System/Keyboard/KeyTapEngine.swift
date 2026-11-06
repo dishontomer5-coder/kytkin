@@ -113,6 +113,10 @@ final class KeyTapEngine: @unchecked Sendable {
         case let .inputSourceChanged(id, isOurs):
             processor.inputSourceChanged(to: id, isOurs: isOurs)
             runFlushStep()
+        case let .updateConfig(config):
+            // P2-50 (§12 W6): keeps the buffer, held keys and the armed deadline; the flush step re-arms as before.
+            processor.updateConfig(config)
+            runFlushStep()
         }
     }
 
@@ -163,7 +167,9 @@ final class KeyTapEngine: @unchecked Sendable {
             achieved = requested
         }
         timestamps.reset()
-        processor.setMode(achieved)
+        // P2-50: this second reset re-seeds a Shift still held across the switch (as `reset` does), so its release
+        // isn't mistaken for a tap. With no tap there is nothing to remember.
+        processor.setMode(achieved, deviceFlags: achieved == .off ? nil : backend.currentDeviceFlags)
         if hadWord && processor.buffer.isEmpty { sendSignal(.bufferInvalidated) }
         runFlushStep()
         status.health.mode = achieved

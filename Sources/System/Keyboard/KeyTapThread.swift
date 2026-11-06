@@ -7,6 +7,9 @@ final class KeyTapThread: Thread, @unchecked Sendable { // @unchecked: `runLoop`
     static let name = "io.github.kytkin.tap"
 
     private let ready = DispatchSemaphore(value: 0)
+    /// P2-50: entered when `main()` begins (before `ready`), left when it returns, so others can wait for the exit.
+    /// Only meaningful after `startAndWait()`.
+    private let exited = DispatchGroup()
     private var loop: CFRunLoop?
 
     override init() {
@@ -22,6 +25,7 @@ final class KeyTapThread: Thread, @unchecked Sendable { // @unchecked: `runLoop`
     }
 
     override func main() {
+        exited.enter()
         let loop = CFRunLoopGetCurrent()!
         self.loop = loop
         // A never-firing timer keeps the run loop alive while no tap is installed.
@@ -31,6 +35,7 @@ final class KeyTapThread: Thread, @unchecked Sendable { // @unchecked: `runLoop`
         ready.signal()
         CFRunLoopRun()
         CFRunLoopTimerInvalidate(keepAlive)
+        exited.leave()
     }
 
     var isCurrent: Bool { Thread.current === self }
@@ -57,6 +62,16 @@ final class KeyTapThread: Thread, @unchecked Sendable { // @unchecked: `runLoop`
         }
         guard done.wait(timeout: .now() + timeout) == .success else { return nil }
         return box.get()
+    }
+
+    /// P2-50: waits at most `timeout` seconds for the thread to exit (after `stopRunLoop`). True = it has exited.
+    func waitUntilExited(timeout: TimeInterval) -> Bool {
+        exited.wait(timeout: .now() + timeout) == .success
+    }
+
+    /// P2-50: runs `block` on `queue` once the thread has exited (at once if it already has).
+    func onExit(queue: DispatchQueue, _ block: @escaping @Sendable () -> Void) {
+        exited.notify(queue: queue, execute: block)
     }
 
     /// Ends the run loop; the thread then exits.
