@@ -70,6 +70,11 @@ targets:
       # one on purpose: Phase 3 AX adapters landing in System/Context must not slip into the tests.
       - path: Sources/System/Context/ContextMonitor.swift
       - path: Sources/System/Context/WorkspaceAppActivationSource.swift
+      # P2-19: ConflictDetector is tested the same way (private notification centers, fake app list and
+      # preference read). Its reader is compiled in because it is the detector's default; the tests only
+      # call it read-only. Listed one by one, like P2-15.
+      - path: Sources/System/Platform/ConflictDetector.swift
+      - path: Sources/System/Platform/PerDocumentInputReader.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
