@@ -6,8 +6,9 @@ struct ReplacementRequest: Sendable, Equatable {
     enum Kind: Sendable, Equatable {
         /// Double-Shift with a selection.
         case convertSelection
-        /// Double-Shift with no selection: the buffered last word, or AX before the caret if the buffer is stale.
-        case convertLastWord
+        /// P2-59 (001 §12.3): double-Shift with no selection: the run before the caret, through AX in readable
+        /// fields, else the whole word buffer by keys.
+        case convertRun
         /// P4: the word that just ended was typed in the wrong layout.
         case autoFix
         /// P4: Backspace right after a fix.
@@ -22,6 +23,8 @@ struct ReplacementRequest: Sendable, Equatable {
     let selectionLength: Int?
     /// P2-13: grapheme clusters currently on screen for the buffered text (the `render` of the snapshot in
     /// its current layout; for undo, the fix + its trigger). Needed for `backspaceAndType(count:)`.
+    /// P2-59 (X5): for `.convertRun`, the graphemes of `LayoutSnapshot.typedRun`, or nil when there is no buffer run
+    /// (or it holds a dead key or a combining mark).
     let typedLength: Int?
 
     init(kind: Kind, bundleID: String, snapshot: WordSnapshot? = nil, selectionLength: Int? = nil,

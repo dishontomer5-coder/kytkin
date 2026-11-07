@@ -15,10 +15,16 @@ import Foundation
     func focusInfo(timeout: Double) -> FocusInfo?
 
     /// Runs one step. `old` is the text on screen now (the selection, the current rendering of the word, or the
-    /// word found by `axReadBeforeCaret`); `new` is what replaces it.
+    /// run found by `axReadRunBeforeCaret`); `new` is what replaces it.
     func perform(_ step: ReplacementStep, old: String, new: String) -> StepOutcome
 
-    /// The word found by the last successful `axReadBeforeCaret` step, in memory for this replacement only.
+    /// P2-59 (001 §12.3 X4): the `axReadRunBeforeCaret` step. Reads ≤ `maxChars` UTF-16 units before the caret
+    /// (one `AXStringForRange`), and asks `locate` where the run is. A run → `.done`, `wordBeforeCaret` = the run and
+    /// the next AX write targets its range. `locate` returns nil → `.done` with `wordBeforeCaret == nil` ("read fine,
+    /// nothing there"). Any AX failure, or no caret → `.unavailable` (untouched). Writes nothing.
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome
+
+    /// The run found by the last successful `axReadRunBeforeCaret` step, in memory for this replacement only.
     var wordBeforeCaret: String? { get }
 
     /// Drops the element, ranges and any text held for this replacement (privacy: nothing outlives it).

@@ -137,7 +137,7 @@ final class ConvertControllerTests: XCTestCase {
         await sut.handle(request(word(keys, in: IDs.hebrew), gen: 1, current: IDs.hebrew),
                          layouts: ConvertFixtures.layouts)
         XCTAssertFalse(log.performs.contains { if case .backspaceAndType = $0 { true } else { false } })
-        XCTAssertEqual(log.performs.first, .axReadBeforeCaret(maxChars: ReplacementPlanner.maxCharsBeforeCaret))
+        XCTAssertEqual(log.performs.first, .axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars))
         assertOneFinish(1, rendering: nil, after: log.claims.isEmpty ? nil : [])
     }
 
@@ -157,7 +157,7 @@ final class ConvertControllerTests: XCTestCase {
         let sut = make(f)
         let dead = [Stroke(keyCode: 14, layer: .option)] + akuo   // ⌥E on ABC is a dead key
         let out = await sut.handle(request(word(dead, in: IDs.abc), gen: 1), layouts: ConvertFixtures.layouts)
-        XCTAssertEqual(log.performs, [.axReadBeforeCaret(maxChars: ReplacementPlanner.maxCharsBeforeCaret),
+        XCTAssertEqual(log.performs, [.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars),
                                       .axWriteSelection(verify: true)])
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axWriteSelection(verify: true), switched: true))
         // An AX-found word doesn't make the strokes describe the screen: the switch resets the buffer.
@@ -473,8 +473,25 @@ final class ConvertControllerTests: XCTestCase {
 
     // MARK: - With the real executor (fake AX field + recording poster)
 
+    /// P2-59b bridge: in a readable field the AX run goes first (001 §12.3 X4), even with a valid buffer.
+    @TextActor func testRunThroughTheRealExecutorGoesThroughAXFirst() async {
+        let textField = FakeTextField("שלום akuo vh, nhv")
+        let poster = RecordingPoster()
+        let log = self.log!
+        let executor = ReplacementExecutor(focusProvider: FakeFocusProvider(textField), poster: poster)
+        let sut = ConvertController(keyWatcher: watcher, clock: clock, beep: { log.add(.beep) },
+                                    makeReplacer: { executor }, switchLanguage: switches.hook)
+        let out = await sut.handle(request(word(ConvertFixtures.strokes("nhv"), in: IDs.abc), gen: 1),
+                                   layouts: ConvertFixtures.layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axWriteSelection(verify: true), switched: true))
+        XCTAssertEqual(textField.text, "שלום שלום הית מיה")
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(log.claims, [1])
+    }
+
     @TextActor func testLastWordThroughTheRealExecutor() async {
         let textField = FakeTextField("hello akuo")
+        textField.supportsStringForRangeValue = false   // P2-59: unreadable, so the buffer's keys
         let poster = RecordingPoster()
         let log = self.log!
         let executor = ReplacementExecutor(focusProvider: FakeFocusProvider(textField), poster: poster)

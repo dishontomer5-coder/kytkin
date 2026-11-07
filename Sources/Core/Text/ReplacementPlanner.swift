@@ -2,8 +2,11 @@
 //
 //   selection            → AX write + read-back → type over the selection → (P3, opt-in) pasteboard
 //                          (P2-36: refused in terminals; a selection with Cc/Zl/Zp is never typed over or pasted)
-//   last word, valid     → backspace × N + type
-//   last word, stale     → AX read before the caret → AX write + read-back → refuse (beep)
+//   run (P2-59, nothing selected)
+//     readable field     → AX read of the run before the caret → AX write + read-back → backspace × N + type
+//                          (the key step only when there is a buffer run; the chain runs it only if the AX write
+//                          left the field untouched and the AX run is exactly the buffer's text, 001 §12.3 X4)
+//     unreadable/keysOnly/terminal → backspace × N + type over the whole buffer → refuse (beep)
 //   auto-fix / undo (P4) → backspace × N + type (never AX, never the pasteboard)
 //
 // Hard rules checked first, for every kind: never plan anything for a secure field, while an IME is
@@ -12,8 +15,8 @@
 import Foundation
 
 enum ReplacementPlanner {
-    /// R5: the stale-buffer AX read looks back at most this far (it scans back to whitespace only).
-    static let maxCharsBeforeCaret = 64
+    /// P2-59 (001 §12.3 X2): the run read looks back at most this many UTF-16 units; the run is at most this window.
+    static let maxRunReadChars = 256
 
     /// - Parameters:
     ///   - focus: nil when AX couldn't read the focused element (no permission, timeout).
@@ -52,13 +55,18 @@ enum ReplacementPlanner {
             if chain.isEmpty { return .refuse(safe ? .noMethod : .unsafeSelection) }
             return .steps(chain)
 
-        case .convertLastWord:
-            if canType, let n = bufferedLength(r) { return .steps([.backspaceAndType(count: n)]) }
-            // Stale buffer (or the app ignores Unicode): find the word through AX, then write it through AX.
+        case .convertRun:
+            // P2-59 (001 §12.3 X4): AX first in readable fields, even with a valid buffer: only AX sees further back
+            // than the buffer, and its write is verified. keysOnly and terminal apps never read through AX.
+            let keys = canType ? bufferedRunLength(r) : nil   // nil: no buffer run, dead key or combining mark (X5)
             if axWrite && f.canReadBeforeCaret {
-                return .steps([.axReadBeforeCaret(maxChars: maxCharsBeforeCaret), .axWriteSelection(verify: true)])
+                var s: [ReplacementStep] = [.axReadRunBeforeCaret(maxChars: maxRunReadChars),
+                                            .axWriteSelection(verify: true)]
+                if let n = keys { s.append(.backspaceAndType(count: n)) }
+                return .steps(s)
             }
-            return .refuse(bufferedLength(r) == nil ? .bufferStale : .noMethod)
+            if let n = keys { return .steps([.backspaceAndType(count: n)]) }   // the whole buffer
+            return .refuse(hasRun(r.snapshot) ? .noMethod : .bufferStale)
 
         case .autoFix:
             guard let n = bufferedLength(r) else { return .refuse(.bufferStale) }
@@ -80,6 +88,20 @@ enum ReplacementPlanner {
             default: return false
             }
         }
+    }
+
+    /// P2-59 (X5): the backspace count for the whole buffer run (words and the spaces between them), else nil.
+    /// The controller sets `typedLength` from `LayoutSnapshot.typedRun`, nil when the screen can't be counted.
+    private static func bufferedRunLength(_ r: ReplacementRequest) -> Int? {
+        guard let s = r.snapshot, hasRun(s), s.isValid || s.strokes.isEmpty,
+              let n = r.typedLength, n > 0 else { return nil }
+        return n
+    }
+
+    /// 001 §12.3 X5's `WordSnapshot.hasRun` (added by P2-59a), computed here from the fields that exist today.
+    private static func hasRun(_ s: WordSnapshot?) -> Bool {
+        guard let s else { return false }
+        return !s.strokes.isEmpty || !s.previousWords.isEmpty
     }
 
     /// The backspace count when the buffer is exactly what's before the caret, else nil.
