@@ -33,7 +33,7 @@ struct ContextAssembler {
     let ownBundleID: String?
     let debounceNanos: UInt64
     /// Hosts that have their own (siteHost) rule. A host change inside the same registrable domain is a
-    /// change only when the old or new host is in here (001 §3 (e) step 4). Lowercased, no trailing dot.
+    /// change only when the old or new host is in here (001 §3 (e) step 4). HostNormalizer form.
     /// Phase 3 keeps it in sync with the rules; empty in the MVP.
     var hostsWithOverrides: Set<String> = []
 
@@ -173,9 +173,8 @@ struct ContextAssembler {
         return context
     }
 
+    /// P3-2: the shared HostNormalizer (also RuleEngine's), so `hostsWithOverrides` compares like the rules do.
     private static func normalizedHost(_ s: String?) -> String? {
-        guard var h = s?.lowercased() else { return nil }
-        if h.hasSuffix(".") { h.removeLast() }
-        return h
+        s.map(HostNormalizer.normalize)
     }
 }

@@ -4,6 +4,7 @@
 //
 // Matching details:
 // - Hosts and domains match case-insensitively, ignoring one trailing dot ("Docs.Google.com." == "docs.google.com").
+//   P3-2: a Unicode label also matches its Punycode form ("שלום.co.il" == "xn--9dbne9b.co.il"), via HostNormalizer.
 //   Bundle IDs and chat keys match exactly.
 // - Empty strings in a Context count as missing. Rules with an empty key never match.
 // - Two rules for the same scope shouldn't exist (the store upserts), but the JSON file is hand-editable.
@@ -94,10 +95,10 @@ struct RuleEngine: Sendable {
         return s
     }
 
+    /// P3-2: the shared HostNormalizer (lowercase, one trailing dot, IDN → Punycode), the same one
+    /// DomainExtractor uses for context hosts, so a rule and a context always compare equal.
     private static func normalizedHost(_ s: String?) -> String? {
-        guard var h = s?.lowercased() else { return nil }
-        if h.hasSuffix(".") { h.removeLast() }
-        return h.isEmpty ? nil : h
+        HostNormalizer.normalized(s)
     }
 
     /// nil = the rule can never match (empty key).
