@@ -306,4 +306,18 @@ final class RuleEngineTests: XCTestCase {
         let learned = rule(.app(bundleID: slack), abc, .learned, at: 500)
         XCTAssertEqual(RuleEngine(rules: [learned, pinned]).rule(for: .app(bundleID: slack)), pinned)
     }
+
+    // P3-5: the assembler's override hosts come from siteHost rules only, normalized like `resolve` compares them.
+    func testOverrideHostsAreTheNormalizedSiteHostKeys() {
+        let rules = [
+            rule(.siteHost(host: "Mail.Google.com."), hebrew),
+            rule(.siteHost(host: "mail.google.com"), abc, .pinned),   // duplicate after normalization
+            rule(.siteHost(host: "\u{05E9}\u{05DC}\u{05D5}\u{05DD}.co.il"), hebrew),
+            rule(.siteHost(host: ""), hebrew),                          // never matches: left out
+            rule(.site(domain: "google.com"), hebrew),
+            rule(.app(bundleID: slack), hebrew),
+        ]
+        XCTAssertEqual(RuleEngine.overrideHosts(rules), ["mail.google.com", "xn--9dbne9b.co.il"])
+        XCTAssertEqual(RuleEngine.overrideHosts([]), [])
+    }
 }

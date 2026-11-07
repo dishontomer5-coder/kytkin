@@ -25,6 +25,8 @@
 //     waits for the resign (Kytkin's own window is not a context), exactly as for Pause.
 // P2-52 item 1: at resign the frontmost app may still read as Kytkin (or unknown). AppController then asks again a
 //     moment later and calls `recheckAfterResign(frontmostPID:)`.
+// P2-41: when the current app has quit (`context.currentAppIsGone`), external switches don't reach the learner
+//     ("app quit") and its rule isn't re-applied; Pin/Forget still act on its rules.
 
 import Foundation
 
@@ -85,6 +87,9 @@ import Foundation
 
     private func applyRule(for c: Context) {
         guard !paused, store.prefs.general.enabled, !isDisabled(c.bundleID) else { return }
+        // P2-41: the app quit (resign re-apply, resume, Kytkin on again): nothing to switch for. A new Context
+        // clears the flag first, so a real app change always applies.
+        guard !(context.currentAppIsGone && context.current?.pid == c.pid) else { return }
         guard let target = engine.resolve(c).target, target != switcher.current else { return }
         guard switcher.select(target, reason: .rule) else { return }
         conflicts.noteOurSwitch()
@@ -110,6 +115,7 @@ import Foundation
         if isOwnAppActive { return "Kytkin active" }
         if paused { return "paused" }
         guard let c = context.current else { return "no app" }
+        if context.currentAppIsGone { return "app quit" }   // P2-41: nothing is learned for a dead pid
         if isDisabled(c.bundleID) { return "app disabled" }
         return nil
     }

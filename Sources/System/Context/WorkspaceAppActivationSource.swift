@@ -4,6 +4,8 @@
 //   - didActivateApplication → onActivate(bundleID, pid)
 //   - didTerminateApplication → onTerminate(pid)
 //   - activeSpaceDidChange → re-read the frontmost app (the activation isn't always sent on a Space change)
+//   - didWake, sessionDidBecomeActive → re-read the frontmost app (P2-41, 001 §14.5: the front app can change while
+//     the Mac sleeps or another user's session is in front, and no activation is posted for it)
 // and reports the frontmost app on `start()` (there is no initial notification).
 // Thin by design: Kytkin's own activations, empty bundle IDs and duplicates are filtered by ContextAssembler.
 // It only reads; it never activates, hides or messages another app.
@@ -37,6 +39,12 @@ import AppKit
             observe(NSWorkspace.activeSpaceDidChangeNotification) { source, _ in
                 source.reportFrontmost()
             },
+            observe(NSWorkspace.didWakeNotification) { source, _ in
+                source.reportFrontmost()
+            },
+            observe(NSWorkspace.sessionDidBecomeActiveNotification) { source, _ in
+                source.reportFrontmost()
+            },
         ]
         reportFrontmost()
     }
@@ -44,6 +52,11 @@ import AppKit
     func stop() {
         tokens.forEach(center.removeObserver)
         tokens = []
+    }
+
+    /// P2-41: a source released while started removes its observers (the center would keep the blocks otherwise).
+    isolated deinit {
+        tokens.forEach(center.removeObserver)
     }
 
     // MARK: - Private

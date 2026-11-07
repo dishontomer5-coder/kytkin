@@ -1,5 +1,6 @@
 // P2-15: ContextAssembler: ordering, dedupe, debounce (FakeClock), own-app and empty-ID filtering,
 // stale partial updates, and the Phase 3/4 fields.
+// P3-5: browser observations, page state, site grace, override re-evaluation, max hold, dead pid.
 
 import XCTest
 
@@ -253,11 +254,11 @@ final class ContextAssemblerTests: XCTestCase {
 
     // MARK: - Partial updates (Phase 3/4 shape)
 
-    func testBrowserURLChangeOnTheCurrentPIDEmits() throws {
+    func testBrowserObservationOnTheCurrentPIDEmits() throws {
         var a = makeAssembler()
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 200)
-        let c = try XCTUnwrap(a.browserURLChanged(host: "docs.google.com", domain: "google.com", isPrivate: false, pid: 10))
+        let c = try XCTUnwrap(a.site("docs.google.com", "google.com", isPrivate: false, pid: 10))
         XCTAssertEqual(c.bundleID, "com.apple.Safari")
         XCTAssertEqual(c.host, "docs.google.com")
         XCTAssertEqual(c.siteDomain, "google.com")
@@ -265,19 +266,19 @@ final class ContextAssemblerTests: XCTestCase {
         XCTAssertEqual(c.generation, 2)
     }
 
-    func testBrowserURLForAStalePIDIsDropped() {
+    func testBrowserObservationForAStalePIDIsDropped() {
         var a = makeAssembler()
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 200)
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.TextEdit", pid: 11))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNil(a.browserURLChanged(host: "github.com", domain: "github.com", isPrivate: nil, pid: 10))
+        XCTAssertNil(a.site("github.com", "github.com", isPrivate: nil, pid: 10))
         XCTAssertNil(a.current?.siteDomain)
     }
 
-    func testBrowserURLBeforeAnyAppIsDropped() {
+    func testBrowserObservationBeforeAnyAppIsDropped() {
         var a = makeAssembler()
-        XCTAssertNil(a.browserURLChanged(host: "github.com", domain: "github.com", isPrivate: nil, pid: 10))
+        XCTAssertNil(a.site("github.com", "github.com", isPrivate: nil, pid: 10))
         XCTAssertNil(a.chatChanged(ChatKey(kind: .id, value: "T1/C1"), pid: 10))
         XCTAssertNil(a.current)
     }
@@ -286,23 +287,23 @@ final class ContextAssemblerTests: XCTestCase {
         var a = makeAssembler()
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNotNil(a.browserURLChanged(host: "docs.google.com", domain: "google.com", isPrivate: nil, pid: 10))
+        XCTAssertNotNil(a.site("docs.google.com", "google.com", isPrivate: nil, pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNil(a.browserURLChanged(host: "mail.google.com", domain: "google.com", isPrivate: nil, pid: 10))
+        XCTAssertNil(a.site("mail.google.com", "google.com", isPrivate: nil, pid: 10))
         XCTAssertEqual(a.current?.generation, 2)
     }
 
     func testHostChangeCountsWhenEitherHostHasAnOverride() throws {
         var a = makeAssembler()
-        a.hostsWithOverrides = ["mail.google.com"]
+        _ = a.setHostsWithOverrides(["mail.google.com"])
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNotNil(a.browserURLChanged(host: "docs.google.com", domain: "google.com", isPrivate: nil, pid: 10))
+        XCTAssertNotNil(a.site("docs.google.com", "google.com", isPrivate: nil, pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertEqual(try XCTUnwrap(a.browserURLChanged(host: "Mail.Google.com.", domain: "google.com",
+        XCTAssertEqual(try XCTUnwrap(a.site("Mail.Google.com.", "google.com",
                                                          isPrivate: nil, pid: 10)).host, "Mail.Google.com.")
         clock.advance(byMilliseconds: 200)
-        XCTAssertNotNil(a.browserURLChanged(host: "docs.google.com", domain: "google.com", isPrivate: nil, pid: 10),
+        XCTAssertNotNil(a.site("docs.google.com", "google.com", isPrivate: nil, pid: 10),
                         "leaving the override host is a change too")
     }
 
@@ -310,11 +311,11 @@ final class ContextAssemblerTests: XCTestCase {
         var a = makeAssembler()
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNotNil(a.browserURLChanged(host: "a.com", domain: "a.com", isPrivate: nil, pid: 10))
+        XCTAssertNotNil(a.site("a.com", "a.com", isPrivate: nil, pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNotNil(a.browserURLChanged(host: "a.com", domain: "a.com", isPrivate: true, pid: 10))
+        XCTAssertNotNil(a.site("a.com", "a.com", isPrivate: true, pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNil(a.browserURLChanged(host: "a.com", domain: "a.com", isPrivate: true, pid: 10))
+        XCTAssertNil(a.site("a.com", "a.com", isPrivate: true, pid: 10))
     }
 
     func testChatChangeAndDedupe() throws {
@@ -334,7 +335,7 @@ final class ContextAssemblerTests: XCTestCase {
         var a = makeAssembler()
         XCTAssertNotNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 200)
-        XCTAssertNotNil(a.browserURLChanged(host: "a.com", domain: "a.com", isPrivate: false, pid: 10))
+        XCTAssertNotNil(a.site("a.com", "a.com", isPrivate: false, pid: 10))
         clock.advance(byMilliseconds: 200)
         XCTAssertNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         XCTAssertEqual(a.current?.siteDomain, "a.com")
@@ -353,11 +354,20 @@ final class ContextAssemblerTests: XCTestCase {
         clock.advance(byMilliseconds: 20)
         XCTAssertNil(a.appActivated(bundleID: "com.apple.Safari", pid: 10))
         clock.advance(byMilliseconds: 20)
-        XCTAssertNil(a.browserURLChanged(host: "a.com", domain: "a.com", isPrivate: nil, pid: 10))
+        XCTAssertNil(a.site("a.com", "a.com", isPrivate: nil, pid: 10))
         clock.advance(byMilliseconds: 120)
         let c = try XCTUnwrap(a.flushIfDue())
         XCTAssertEqual(c.bundleID, "com.apple.Safari")
         XCTAssertEqual(c.siteDomain, "a.com")
         XCTAssertEqual(c.generation, 2)
+    }
+}
+
+extension ContextAssembler {
+    /// P3-5: a web-page observation, as the browser provider reports it (`siteKey` = domain, else host).
+    mutating func site(_ host: String, _ domain: String?, isPrivate: Bool? = nil, pid: Int32,
+                       pageState: BrowserPageState = .page) -> Context? {
+        browserObserved(site: SiteAddress(host: host, registrableDomain: domain, isWebPage: true),
+                        pageState: pageState, isPrivate: isPrivate, pid: pid)
     }
 }

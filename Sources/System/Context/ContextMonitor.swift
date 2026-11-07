@@ -1,7 +1,10 @@
 // P2-15: `ContextMonitoring`, tier 0 (001 §2.2, §3 flow (a)). Feeds an `AppActivationSource` into the
 // pure `ContextAssembler` and calls `onChange` once per new Context. When the assembler holds a change
 // (debounce), a one-shot main-run-loop timer calls `flushIfDue()` at the deadline.
-// Tier 1 (AX window/browser/chat observers on their own thread) plugs in here in Phase 3/4.
+// Tier 1 (AX window/browser/chat observers on their own thread) plugs in here in Phase 3/4 (P3-14 wires the
+// browser watcher, 001 §14.5).
+// P3-5: `setHostsWithOverrides` and `currentAppIsGone` pass through to the assembler. P2-41: an isolated deinit stops
+// the source and the flush timer, so a monitor released without `stop()` leaves no observer or timer behind.
 // Never logs (titles and URLs never reach this type in tier 0; bundle IDs only).
 
 import Foundation
@@ -9,6 +12,7 @@ import Foundation
 @MainActor final class ContextMonitor: ContextMonitoring {
     var onChange: (@MainActor (Context) -> Void)?
     var current: Context? { assembler.current }
+    var currentAppIsGone: Bool { assembler.currentAppIsGone }
 
     private let source: AppActivationSource
     private let clock: any Clock
@@ -39,6 +43,14 @@ import Foundation
         source.start()
     }
 
+    /// P2-41: the same cleanup as `stop()`, without touching the assembler (it goes away with us).
+    isolated deinit {
+        source.stop()
+        source.onActivate = nil
+        source.onTerminate = nil
+        flushTimer?.invalidate()
+    }
+
     func stop() {
         source.stop()
         source.onActivate = nil
@@ -48,6 +60,10 @@ import Foundation
         // A held change would otherwise be emitted by the first event after a later start(), even when
         // that event is Kytkin itself being frontmost. start() re-reads the frontmost app anyway.
         assembler.discardPending()
+    }
+
+    func setHostsWithOverrides(_ hosts: Set<String>) {
+        deliver(assembler.setHostsWithOverrides(hosts))
     }
 
     // MARK: - Private
