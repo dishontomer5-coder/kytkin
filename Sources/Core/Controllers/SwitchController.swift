@@ -202,6 +202,16 @@ import Foundation
         return true
     }
 
+    /// P2-21: the switch after a double-Shift convert or toggle (flow (c) step 8). Our switch: the expected-switch
+    /// token keeps it out of the learner, and the fight counter hears about it. False = paused/off or select failed.
+    @discardableResult func selectAfterConvert(_ id: InputSourceID) -> Bool {
+        guard !paused, store.prefs.general.enabled else { return false }
+        let wasCurrent = switcher.current == id
+        guard switcher.select(id, reason: .afterConvert) else { return false }
+        if !wasCurrent { conflicts.noteOurSwitch() }
+        return true
+    }
+
     // MARK: - Helpers
 
     private func isDisabled(_ bundleID: String) -> Bool {

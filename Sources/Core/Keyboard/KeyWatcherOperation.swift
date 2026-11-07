@@ -10,7 +10,9 @@ import Foundation
 enum KeyWatcherOperation: Sendable, Equatable {
     /// Forget the word and abort a replacement (held keys flush); the tap thread adds the current modifier flags.
     case reset(ResetReason)
-    /// Main saw the input source change (`isOurs`: our own after-convert switch, which keeps the buffer).
+    /// Main saw the input source change. `isOurs` means "keep the buffer": true ONLY for our own after-convert switch
+    /// that re-rendered the buffer into `to` (P2-21/P2-52 item 7). Rule, menu and toggle switches are ours for the
+    /// learner but pass `false` here: their buffer's strokes were typed in the old layout.
     case inputSourceChanged(to: InputSourceID?, isOurs: Bool)
     /// P2-50 (001 §12 W6): new settings. `mode` and `holdBackCapacity` are ignored; the double-Shift gesture in progress
     /// is dropped; the buffer, held keys and an armed deadline are kept (`KeyStreamProcessor.updateConfig`).

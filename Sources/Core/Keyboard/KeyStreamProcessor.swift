@@ -157,6 +157,9 @@ struct KeyStreamProcessor: Sendable {
 
     /// The worker is done with `gen`. Returns the held events to replay, in order. A stale `gen` (the deadline
     /// or an abort already flushed) is ignored and returns nothing.
+    /// `bufferAfter`: nil = the text is unchanged, keep the buffer; non-empty = the current word is now these
+    /// strokes; empty = the text changed and no strokes describe it: forget the whole buffer (P2-21 QA: keeping the
+    /// earlier words would let a Backspace make one of them "current" again, over text that is no longer there).
     mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) -> [HeldEvent] {
         // P2-35: the force-flushed worker is done posting, so new replacements may start again.
         if stalePosting?.gen == gen { stalePosting = nil }
@@ -166,7 +169,9 @@ struct KeyStreamProcessor: Sendable {
         // so only replay.
         if !r.aborted {
             if let newRendering { inputSource = newRendering }
-            if let bufferAfter { buffer.replaceCurrentWord(with: bufferAfter) }
+            if let bufferAfter {
+                if bufferAfter.isEmpty { buffer.invalidate() } else { buffer.replaceCurrentWord(with: bufferAfter) }
+            }
         }
         var held = queue.drain()
         if r.kind == .autoFix, newRendering != nil, !held.isEmpty {
