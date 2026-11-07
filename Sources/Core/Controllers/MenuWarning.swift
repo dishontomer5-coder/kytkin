@@ -17,6 +17,9 @@ enum MenuWarning: Equatable {
     case perDocumentInput
     /// The watchdog lowered the keyboard tap (001 §7 B4). `canRestart`: "Restart Keyboard Features" is offered.
     case keyboardSlowedDown(canRestart: Bool)
+    /// P2-57 item 1 / P2-52 item 2: the keyboard tap runs below what the permissions allow for another reason (a
+    /// start that timed out, a failed retry or restart). `canRestart`: "Restart Keyboard Features" is offered.
+    case keyboardFeaturesOff(canRestart: Bool)
     /// Secure Input is on (a password field somewhere). Temporary, so it never marks the label.
     case secureInput
     /// preferences.json is never written this session: from a newer Kytkin, or it couldn't be read.
@@ -39,7 +42,12 @@ enum MenuWarning: Equatable {
         }
         if !state.conflicts.runningSwitchers.isEmpty { out.append(.otherSwitchers(state.conflicts.runningSwitchers)) }
         if state.conflicts.perDocumentInputEnabled { out.append(.perDocumentInput) }
-        if state.degradedByWatchdog { out.append(.keyboardSlowedDown(canRestart: state.canRestartKeyboard)) }
+        if state.degradedByWatchdog {
+            out.append(.keyboardSlowedDown(canRestart: state.canRestartKeyboard))
+        } else if state.keyboardBelowDesired, state.enabled, !state.paused, !state.showsQuitAndReopen {
+            // P2-57 item 1: never off silently. "Quit & Reopen" already covers the relaunch case.
+            out.append(.keyboardFeaturesOff(canRestart: state.canRestartKeyboard))
+        }
         if state.secureInputOn { out.append(.secureInput) }
 
         let store = state.store
