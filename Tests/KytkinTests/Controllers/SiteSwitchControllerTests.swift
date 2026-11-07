@@ -137,16 +137,71 @@ final class SiteSwitchControllerTests: XCTestCase {
     }
 
     func testDifferenceIgnoresTheGeneration() {
+        let none = RuleEngine(rules: [])
+        let override = RuleEngine(rules: [host("c.b", IDs.hebrew)])
         let a = Context(bundleID: zen, pid: 1, host: "a.b", siteDomain: "b", pageState: .page, generation: 1)
         var b = a
         b.pageState = .unknown
-        XCTAssertTrue(SwitchController.differsOnlyInPageState(a, b))
-        XCTAssertFalse(SwitchController.differsOnlyInPageState(a, a), "no change at all is not a page-state change")
+        XCTAssertTrue(SwitchController.differsOnlyInPageState(a, b, engine: none))
+        XCTAssertFalse(SwitchController.differsOnlyInPageState(a, a, engine: none), "no change at all is not a page-state change")
         var c = b
         c.host = "c.b"
-        XCTAssertFalse(SwitchController.differsOnlyInPageState(a, c))
+        XCTAssertFalse(SwitchController.differsOnlyInPageState(a, c, engine: override))
         let fromNoBrowser = Context(bundleID: zen, pid: 1, host: "a.b", siteDomain: "b", pageState: nil, generation: 2)
-        XCTAssertTrue(SwitchController.differsOnlyInPageState(fromNoBrowser, a))
+        XCTAssertTrue(SwitchController.differsOnlyInPageState(fromNoBrowser, a, engine: none))
+    }
+
+    /// QA (P3-9): ContextAssembler drops a host change inside one site (no override), so the next page-state
+    /// change carries the newer host. That is still page-state-only for the rules: the manual switch stays.
+    func testAStaleHostWithoutAnOverrideIsStillPageStateOnly() {
+        make([site("google.com", IDs.hebrew)])
+        show(host: "www.google.com", domain: "google.com")
+        userSwitch(to: IDs.abc)                                   // on mail.google.com by now (not emitted)
+        show(host: "mail.google.com", domain: "google.com", page: .editingAddress)
+        show(host: "mail.google.com", domain: "google.com", page: .page)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew], "the manual switch is not undone")
+        XCTAssertEqual(switcher.current, IDs.abc)
+    }
+
+    func testAHostChangeOntoAnOverrideReappliesWithThePageState() {
+        make([site("google.com", IDs.hebrew), host("mail.google.com", IDs.russian)])
+        show(host: "www.google.com", domain: "google.com")
+        show(host: "mail.google.com", domain: "google.com", page: .editingAddress)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.russian])
+        show(host: "www.google.com", domain: "google.com", page: .page)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.russian, IDs.hebrew], "leaving the override re-applies")
+    }
+
+    func testHostCaseAndTrailingDotDontCount() {
+        make([site("ynet.co.il", IDs.hebrew), host("www.ynet.co.il", IDs.hebrew)])
+        show(host: "www.ynet.co.il")
+        userSwitch(to: IDs.abc)
+        show(host: "WWW.ynet.co.il.", page: .editingAddress)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+    }
+
+    /// The learner sequence: a switch made in the address bar can't be learned for the site once the page is back.
+    func testASwitchInTheAddressBarIsNotLearnedAfterReturningToThePage() {
+        make()
+        show()
+        show(page: .editingAddress)
+        userSwitch(to: IDs.hebrew)
+        XCTAssertNil(sut.learner.pending)
+        show(page: .page)
+        twoWords()
+        clock.advance(byMilliseconds: 5_000)
+        twoWords()
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
+    func testACandidateIsDroppedWhenThePageBecomesUnreadable() {
+        make()
+        show()
+        userSwitch(to: IDs.hebrew)
+        XCTAssertNotNil(sut.learner.pending)
+        show(page: .unknown)
+        twoWords()
+        XCTAssertTrue(store.prefs.rules.isEmpty)
     }
 
     // MARK: - Learning on a site vs the app

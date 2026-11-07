@@ -103,7 +103,7 @@ import Foundation
 
     func contextDidChange(_ c: Context) {
         isOwnAppActive = false   // P2-55: another app is frontmost, so Kytkin's own window can't be
-        let pageStateOnly = lastDelivered.map { Self.differsOnlyInPageState($0, c) } ?? false
+        let pageStateOnly = lastDelivered.map { Self.differsOnlyInPageState($0, c, engine: engine) } ?? false
         lastDelivered = c
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
         // P3-9 (D5, 001 §14.6): a change of page state alone (e.g. a click into the address bar and back) cancels a
@@ -113,10 +113,20 @@ import Foundation
         applyRule(for: c)
     }
 
-    /// P3-9: same app, pid, site, host, private flag and chat; only `pageState` (and the generation) differs.
-    static func differsOnlyInPageState(_ a: Context, _ b: Context) -> Bool {
-        a.pageState != b.pageState && a.bundleID == b.bundleID && a.pid == b.pid && a.host == b.host
-            && a.siteDomain == b.siteDomain && a.isPrivateWindow == b.isPrivateWindow && a.chatKey == b.chatKey
+    /// P3-9: same app, pid, site, private flag and chat; only `pageState` (and the generation) differs.
+    /// QA (P3-9): the host counts only as ContextAssembler counts it: when the two differ (after HostNormalizer) and
+    /// either has a siteHost rule. The assembler drops a host-only change inside one site, so the host it emits with
+    /// the next page-state change can be newer than the last one delivered (www.google.com → mail.google.com, then a
+    /// click into the address bar); that must not re-apply the site rule over a manual switch.
+    static func differsOnlyInPageState(_ a: Context, _ b: Context, engine: RuleEngine) -> Bool {
+        guard a.pageState != b.pageState, a.bundleID == b.bundleID, a.pid == b.pid,
+              a.siteDomain == b.siteDomain, a.isPrivateWindow == b.isPrivateWindow, a.chatKey == b.chatKey else {
+            return false
+        }
+        let oldHost = HostNormalizer.normalized(a.host), newHost = HostNormalizer.normalized(b.host)
+        guard oldHost != newHost else { return true }
+        let hasOverride = { (h: String?) in h.map { engine.rule(for: .siteHost(host: $0)) != nil } ?? false }
+        return !hasOverride(oldHost) && !hasOverride(newHost)
     }
 
     private func applyRule(for c: Context) {
