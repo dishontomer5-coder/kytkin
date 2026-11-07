@@ -39,8 +39,12 @@ enum IDs {
 @MainActor final class FakeContextMonitor: ContextMonitoring {
     var current: Context?
     var onChange: (@MainActor (Context) -> Void)?
+    var currentAppIsGone = false
+    /// P3-5: every `setHostsWithOverrides` call, in order.
+    private(set) var overrideHostsCalls: [Set<String>] = []
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    func setHostsWithOverrides(_ hosts: Set<String>) { overrideHostsCalls.append(hosts) }
     /// Emitted from start() (the frontmost app), like the real monitor.
     var emitOnStart: Context?
     private var generation: UInt64 = 0
@@ -56,6 +60,7 @@ enum IDs {
         generation += 1
         let c = Context(bundleID: bundleID, pid: pid, generation: generation)
         current = c
+        currentAppIsGone = false   // like the assembler: cleared by the next emission
         onChange?(c)
         return c
     }

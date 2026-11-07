@@ -88,6 +88,15 @@ struct RuleEngine: Sendable {
         return byScope[key]
     }
 
+    /// P3-5: the hosts of all siteHost rules, normalized exactly as `resolve` compares them (HostNormalizer form),
+    /// for `ContextMonitoring.setHostsWithOverrides` (001 §14.5). Empty keys are left out.
+    static func overrideHosts(_ rules: [Rule]) -> Set<String> {
+        Set(rules.compactMap { rule -> String? in
+            guard case .siteHost(let host)? = normalized(rule.scope) else { return nil }
+            return host
+        })
+    }
+
     // MARK: - Normalization
 
     private static func nonEmpty(_ s: String?) -> String? {

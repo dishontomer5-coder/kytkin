@@ -45,6 +45,23 @@ final class AppControllerTests: XCTestCase {
         if start { sut.start() }
     }
 
+    // MARK: - P3-5: override hosts
+
+    func testOverrideHostsFollowTheSiteHostRules() {
+        let host = Rule(id: UUID(), scope: .siteHost(host: "Mail.Google.com."), inputSource: IDs.hebrew,
+                        origin: .pinned, updatedAt: Date(timeIntervalSince1970: 1_000))
+        var p = Preferences()
+        p.rules = [.app(notes, IDs.hebrew), host]
+        make(p)
+        XCTAssertEqual(monitor.overrideHostsCalls, [["mail.google.com"]], "pushed once at start")
+        store.update { $0.rules.append(.app("com.apple.Terminal", IDs.abc)) }
+        sut.preferencesDidChange()
+        XCTAssertEqual(monitor.overrideHostsCalls.count, 1, "unchanged hosts aren't pushed again")
+        store.update { $0.rules.removeAll { if case .siteHost = $0.scope { true } else { false } } }
+        sut.preferencesDidChange()
+        XCTAssertEqual(monitor.overrideHostsCalls.last, [])
+    }
+
     // MARK: - Start / stop
 
     func testStartStartsEverythingAndTheTapOnce() {
