@@ -6,10 +6,13 @@
 //   context change      → SwitchController (rule + learner), KeyWatcher `.reset(.contextChange)` + `checkSecureInputNow()` (P2-45)
 //   Kytkin active/resign → SwitchController (P2-39), KeyWatcher `.reset(.contextChange)` (+ Secure Input check on resign)
 //   input-source change → SwitchController (learner / fights / re-assert), KeyWatcher `.inputSourceChanged`
+//                         (P2-52 item 7: `isOurs: true`, "keep the buffer", only for our own after-convert switch
+//                         that re-rendered the buffer; rule, menu and toggle switches reset it like any change)
 //   permission change   → FeatureAvailability + TapModePolicy (retry only on a real change, §12 W7)
 //   conflicts change    → the learning flag (P2-38)
 //   KeyWatcher status   → achieved tap mode, Secure Input → FeatureAvailability (§12 W5) → dwell vs words
 //   KeyWatcher signal   → word boundary → learner; double-Shift → ConvertControlling or finished at once
+//   after-convert switch ← ConvertController (P2-21, via the root's hook) → SwitchController.selectAfterConvert
 //   preferences change  → rules, learning flag, `.updateConfig` (only when it changed, clamped), method hints, tap mode
 // FeatureSettings come from the preferences plus the session-only Pause (PreferencesMapping).
 
@@ -39,6 +42,11 @@ import Observation
     private var lastPrefs: Preferences?
     private var lastConfig: KeyProcessorConfig?
     private var lastHints: [String: MethodHint]?
+    private let clock: any Clock
+    /// P2-52 item 7: our after-convert switch whose buffer was re-rendered into `target`; its change notification
+    /// (10–20 ms later) is the only `.ours` change that keeps the tap's word buffer. Expires like a switch token.
+    private var bufferKeepingSwitch: (target: InputSourceID, untilNanos: UInt64)?
+    static let bufferKeepingSwitchWindowNanos: UInt64 = 500_000_000
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          permissions: any PermissionsProviding, conflicts: any ConflictDetecting, keyWatcher: any KeyWatching,
@@ -51,6 +59,7 @@ import Observation
         self.conflicts = conflicts
         self.keyWatcher = keyWatcher
         self.ticker = ticker
+        self.clock = clock
         // P2-21 passes the real ConvertController; until then every generation is finished at once.
         self.convert = convert ?? FinishOnlyConvertController { [keyWatcher] gen in
             keyWatcher.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
@@ -76,6 +85,9 @@ import Observation
         conflicts.start()
         permissions.start()
         applyPreferences(force: true)
+        // P2-21: the processor learns the layout its strokes are typed in only from changes; tell it the
+        // current one at launch, so the first double-Shift knows which way to convert.
+        keyWatcher.perform(.inputSourceChanged(to: switcher.current, isOurs: false))
         context.start()            // emits the frontmost app at once → its rule applies
         recompute(grantsChanged: false)
         observePreferences()
@@ -105,9 +117,15 @@ import Observation
 
     func inputSourceDidChange(_ change: InputSourceChange) {
         switching.inputSourceDidChange(change)
+        // P2-52 item 7: `isOurs` tells the processor "keep the buffer, it is already rendered in `id`". That is true
+        // only for the after-convert switch that re-rendered it. A rule, menu or toggle switch is ours for the
+        // learner (SwitchController above) but the strokes were typed in the old layout, so the buffer must go.
         switch change {
-        case .ours(let id): keyWatcher.perform(.inputSourceChanged(to: id, isOurs: true))
-        case .external(let id, _): keyWatcher.perform(.inputSourceChanged(to: id, isOurs: false))
+        case .ours(let id):
+            keyWatcher.perform(.inputSourceChanged(to: id, isOurs: consumeBufferKeepingSwitch(id)))
+        case .external(let id, _):
+            bufferKeepingSwitch = nil
+            keyWatcher.perform(.inputSourceChanged(to: id, isOurs: false))
         }
         afterEvent()
     }
@@ -208,6 +226,21 @@ import Observation
         switching.selectFromMenu(id)
     }
 
+    /// P2-21: ConvertController's switch after a convert or toggle (flow (c) step 8), hopped onto main by the root.
+    /// `keepsBuffer`: the tap's buffer was re-rendered into `target` (last-word convert), so the change notification
+    /// must not reset it. True when `target` is now selected.
+    @discardableResult func switchAfterConvert(to target: InputSourceID, keepsBuffer: Bool) -> Bool {
+        guard isStarted else { return false }
+        if switcher.current == target { return true }
+        bufferKeepingSwitch = keepsBuffer ? (target, clock.nowNanos + Self.bufferKeepingSwitchWindowNanos) : nil
+        guard switching.selectAfterConvert(target) else {
+            bufferKeepingSwitch = nil
+            return false
+        }
+        afterEvent()
+        return true
+    }
+
     /// Dwell tick (only while `switching.wantsTicks`).
     func tick() {
         switching.tick()
@@ -221,16 +254,26 @@ import Observation
         guard !switching.paused, prefs.general.enabled, !switching.isOwnAppActive,
               let c = context.current else { return finish(gen) }
         let app = prefs.apps[c.bundleID]
-        guard app?.disabled != true, app?.convertEnabled != false else { return finish(gen) }
+        guard app?.disabled != true else { return finish(gen) }
         let mode: ConvertRequest.Mode
         if availability.doubleShiftConvert {
-            mode = .convert
+            // P2-21: "convert off" for this app (Settings → Apps) leaves double-Shift as a language toggle.
+            mode = app?.convertEnabled == false ? .toggleOnly : .convert
         } else if availability.doubleShiftToggleOnly {
             mode = .toggleOnly
         } else {
             return finish(gen)
         }
-        convert.convert(ConvertRequest(snapshot: snapshot, gen: gen, bundleID: c.bundleID, mode: mode))
+        convert.convert(ConvertRequest(snapshot: snapshot, gen: gen, bundleID: c.bundleID, mode: mode,
+                                       pair: prefs.languagePair, currentSource: switcher.current,
+                                       switchAfterConvert: prefs.convert.switchLanguageAfterConvert))
+    }
+
+    /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.
+    private func consumeBufferKeepingSwitch(_ id: InputSourceID) -> Bool {
+        defer { bufferKeepingSwitch = nil }
+        guard let k = bufferKeepingSwitch else { return false }
+        return k.target == id && clock.nowNanos <= k.untilNanos
     }
 
     private func finish(_ gen: UInt64) {

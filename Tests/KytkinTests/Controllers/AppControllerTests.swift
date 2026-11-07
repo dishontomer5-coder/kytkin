@@ -109,12 +109,13 @@ final class AppControllerTests: XCTestCase {
         watcher.clear()
         sut.inputSourceDidChange(.ours(IDs.hebrew))
         sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))
-        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: true)),
+        // P2-52 item 7: an `.ours` change that isn't our buffer-keeping after-convert switch resets the buffer too.
+        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: false)),
                                        .perform(.inputSourceChanged(to: IDs.abc, isOurs: false))])
         XCTAssertEqual(conflicts.externalSwitches, 1)
     }
 
-    func testRuleSwitchReachesTheTapAsOurs() {
+    func testRuleSwitchIsOursForTheLearnerButResetsTheBuffer() {
         var p = Preferences()
         p.rules = [.app(notes, IDs.hebrew)]
         make(p)
@@ -122,7 +123,9 @@ final class AppControllerTests: XCTestCase {
         sut.inputSourceDidChange(.ours(IDs.hebrew))   // the notification of our own select
         XCTAssertEqual(conflicts.ourSwitches, 1)
         XCTAssertEqual(conflicts.externalSwitches, 0)
-        XCTAssertTrue(watcher.calls.contains(.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: true))))
+        // P2-52 item 7: the strokes before a rule switch were typed in the old layout, so the tap drops them.
+        XCTAssertTrue(watcher.calls.contains(.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: false))))
+        XCTAssertFalse(watcher.calls.contains(.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: true))))
     }
 
     func testWordBoundariesReachTheLearner() {
@@ -301,8 +304,11 @@ final class AppControllerTests: XCTestCase {
         make(p, withConvert: true)
         sut.keySignal(.doubleShift(snapshot, gen: 1))            // no context yet
         monitor.activate(notes, pid: 10)
-        sut.keySignal(.doubleShift(snapshot, gen: 2))            // convert off for Notes
+        p.apps["com.apple.TextEdit"] = .init(disabled: true)
+        store.update { $0.apps = p.apps }
+        sut.preferencesDidChange()
         monitor.activate("com.apple.TextEdit", pid: 11)
+        sut.keySignal(.doubleShift(snapshot, gen: 2))            // Kytkin disabled for TextEdit
         sut.kytkinDidBecomeActive()
         sut.keySignal(.doubleShift(snapshot, gen: 3))            // typed in Kytkin's own window
         sut.kytkinDidResignActive(frontmostPID: 11)
@@ -437,5 +443,112 @@ final class AppControllerTests: XCTestCase {
         sut.keySignal(.doubleShift(snapshot, gen: 5))
         XCTAssertEqual(watcher.finishes, [5])
         XCTAssertEqual(watcher.starts, [.active])
+    }
+
+    // MARK: - P2-21: convert requests, the after-convert switch, the buffer-keeping distinction (P2-52 item 7)
+
+    func testStartTellsTheTapTheCurrentLayout() {
+        make()
+        XCTAssertTrue(watcher.calls.contains(.perform(.inputSourceChanged(to: IDs.abc, isOurs: false))))
+    }
+
+    func testRequestCarriesThePairTheCurrentSourceAndTheSwitchSetting() {
+        var p = Preferences()
+        p.languagePair = LanguagePair(a: IDs.abc, b: IDs.russian)
+        p.convert.switchLanguageAfterConvert = false
+        make(p, withConvert: true)
+        switcher.current = IDs.russian
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
+                                                          pair: p.languagePair, currentSource: IDs.russian,
+                                                          switchAfterConvert: false)])
+    }
+
+    func testConvertOffForTheAppLeavesDoubleShiftAsAToggle() {
+        var p = Preferences()
+        p.apps[notes] = .init(convertEnabled: false)
+        make(p, withConvert: true)
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests.map(\.mode), [.toggleOnly])
+        XCTAssertTrue(watcher.finishes.isEmpty, "the convert controller finishes it")
+    }
+
+    func testSecureInputMakesDoubleShiftAToggle() {
+        make(withConvert: true)
+        var status = KeyWatcherStatus()
+        status.health.mode = .active
+        status.secureInputOn = true
+        sut.keyWatcherStatusDidChange(status)
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests.map(\.mode), [.toggleOnly])
+    }
+
+    func testOnlyTheBufferKeepingAfterConvertSwitchKeepsTheBuffer() {
+        make()
+        watcher.clear()
+        XCTAssertTrue(sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: true))
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+        XCTAssertEqual(switcher.selects.first?.1, .afterConvert)
+        XCTAssertEqual(conflicts.ourSwitches, 1)
+        sut.inputSourceDidChange(.ours(IDs.hebrew))          // its notification: keep
+        sut.inputSourceDidChange(.ours(IDs.hebrew))          // anything after it: reset
+        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: true)),
+                                       .perform(.inputSourceChanged(to: IDs.hebrew, isOurs: false))])
+    }
+
+    func testAToggleOrSelectionSwitchResetsTheBuffer() {
+        make()
+        watcher.clear()
+        XCTAssertTrue(sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: false))
+        sut.inputSourceDidChange(.ours(IDs.hebrew))
+        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: false))])
+    }
+
+    func testTheKeepExpiresAndNeverAppliesToAnotherSource() {
+        make()
+        watcher.clear()
+        sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: true)
+        clock.advance(byMilliseconds: 600)
+        sut.inputSourceDidChange(.ours(IDs.hebrew))         // too late
+        sut.switchAfterConvert(to: IDs.abc, keepsBuffer: true)
+        sut.inputSourceDidChange(.ours(IDs.russian))        // some other ours (a rule) in between
+        sut.inputSourceDidChange(.ours(IDs.abc))
+        XCTAssertEqual(watcher.calls.compactMap {
+            if case .perform(.inputSourceChanged(_, let ours)) = $0 { ours } else { nil }
+        }, [false, false, false])
+    }
+
+    func testAnExternalChangeCancelsTheKeep() {
+        make()
+        sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: true)
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))
+        watcher.clear()
+        sut.inputSourceDidChange(.ours(IDs.hebrew))
+        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: false))])
+    }
+
+    func testAfterConvertSwitchWhenAlreadyCurrentFailedOrPaused() {
+        make()
+        XCTAssertTrue(sut.switchAfterConvert(to: IDs.abc, keepsBuffer: true), "already current: nothing to do")
+        XCTAssertTrue(switcher.selects.isEmpty)
+
+        switcher.selectSucceeds = false
+        XCTAssertFalse(sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: true))
+        watcher.clear()
+        sut.inputSourceDidChange(.ours(IDs.hebrew))
+        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: false))])
+
+        switcher.selectSucceeds = true
+        sut.setPaused(true)
+        let before = switcher.selects.count
+        XCTAssertFalse(sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: false), "paused: no switch")
+        XCTAssertEqual(switcher.selects.count, before)
+
+        sut.setPaused(false)
+        sut.stop()
+        XCTAssertFalse(sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: false), "stopped: no switch")
     }
 }
