@@ -1,0 +1,220 @@
+// P2-23 / P2-52: the controller side of the Settings window.
+// Item 3: turning `general.enabled` back on re-applies the current app's rule like resuming from Pause (at once, or at
+//         the resign when Settings is in front); turning it off drops a learning candidate.
+// Item 1: when Kytkin resigns and the frontmost app still reads as Kytkin (or unknown), AppController looks again
+//         after 150 ms (up to 3 times, FakeClock-driven) and re-applies the rule if the previous app is in front.
+
+import XCTest
+
+@MainActor
+final class SettingsWiringTests: XCTestCase {
+    private var clock: FakeClock!
+    private var switcher: FakeSwitcher!
+    private var monitor: FakeContextMonitor!
+    private var permissions: FakePermissions!
+    private var conflicts: FakeConflicts!
+    private var watcher: FakeKeyWatcher!
+    private var oneShot: FakeOneShot!
+    private var store: PreferencesStore!
+    private var sut: AppController!
+    private var frontmost: Int32?
+    private let notes = "com.apple.Notes"
+    private let ownPID: Int32 = 4_242
+
+    private func make(withScheduler: Bool = true) {
+        clock = FakeClock(nowNanos: 1_000_000_000)
+        switcher = FakeSwitcher(current: IDs.abc)
+        monitor = FakeContextMonitor()
+        permissions = FakePermissions()
+        permissions.statusOnStart = PermissionStatus(grants: PermissionGrants(accessibility: .granted,
+                                                                             inputMonitoring: .notDetermined))
+        conflicts = FakeConflicts()
+        watcher = FakeKeyWatcher()
+        oneShot = FakeOneShot(clock: clock)
+        var p = Preferences()
+        p.rules = [.app(notes, IDs.hebrew)]
+        store = makeStore(p, clock: clock)
+        sut = AppController(switcher: switcher, context: monitor, store: store, permissions: permissions,
+                            conflicts: conflicts, keyWatcher: watcher, ticker: FakeTicker(), clock: clock,
+                            scheduler: withScheduler ? oneShot : nil, ownPID: ownPID,
+                            frontmostPID: { [unowned self] in self.frontmost })
+        switcher.onChange = { [unowned self] in self.sut.inputSourceDidChange($0) }
+        monitor.onChange = { [unowned self] in self.sut.contextDidChange($0) }
+        sut.start()
+    }
+
+    /// Notes is in front with its rule applied, then the user opens Settings and changes the language there.
+    private func openSettingsOverNotes() {
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+        sut.kytkinDidBecomeActive()
+        switcher.current = IDs.abc
+    }
+
+    private func setEnabled(_ on: Bool) {
+        store.update { $0.general.enabled = on }
+        sut.preferencesDidChange()      // what the Observation hook calls
+    }
+
+    // MARK: - Item 1: the second look after a resign
+
+    func testResignWhileFrontmostIsStillKytkinRechecksAndReapplies() {
+        make()
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew], "Kytkin itself is not the app in front")
+        XCTAssertTrue(oneShot.isScheduled)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 149)
+        XCTAssertEqual(switcher.selectedIDs.count, 1, "not before 150 ms")
+        oneShot.advance(byMilliseconds: 1)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew], "Notes' rule re-applied")
+        XCTAssertFalse(oneShot.isScheduled)
+    }
+
+    func testUnknownFrontmostAlsoRechecks() {
+        make()
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: nil)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew])
+    }
+
+    func testRecheckTriesThreeTimesThenGivesUp() {
+        make()
+        openSettingsOverNotes()
+        frontmost = ownPID
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        oneShot.advance(byMilliseconds: 150)
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertTrue(oneShot.isScheduled, "third look still to come")
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertFalse(oneShot.isScheduled, "gives up after 3")
+        XCTAssertEqual(oneShot.scheduleCount, 3)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 1_000)
+        XCTAssertEqual(switcher.selectedIDs.count, 1)
+    }
+
+    func testRecheckFindingAnotherAppDoesNotApplyTheOldRule() {
+        make()
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        frontmost = 77                    // ContextMonitor will report this app itself
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertEqual(switcher.selectedIDs.count, 1)
+        XCTAssertFalse(oneShot.isScheduled)
+    }
+
+    func testKnownFrontmostAtResignNeedsNoRecheck() {
+        make()
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: 10)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew], "applied at once, as before")
+        XCTAssertFalse(oneShot.isScheduled)
+    }
+
+    func testReactivationOrAContextChangeCancelsTheRecheck() {
+        make()
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        sut.kytkinDidBecomeActive()               // Settings clicked again
+        XCTAssertFalse(oneShot.isScheduled)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 500)
+        XCTAssertEqual(switcher.selectedIDs.count, 1)
+
+        sut.kytkinDidResignActive(frontmostPID: nil)
+        monitor.activate("com.apple.Terminal", pid: 20)
+        XCTAssertFalse(oneShot.isScheduled, "the new app got its own context change")
+    }
+
+    func testRecheckDoesNothingWhileKytkinIsActiveOrAfterStop() {
+        make()
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        sut.stop()
+        XCTAssertFalse(oneShot.isScheduled)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 500)
+        XCTAssertEqual(switcher.selectedIDs.count, 1)
+    }
+
+    func testWithoutASchedulerNothingIsScheduled() {
+        make(withScheduler: false)
+        openSettingsOverNotes()
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        XCTAssertEqual(oneShot.scheduleCount, 0)
+        XCTAssertEqual(switcher.selectedIDs.count, 1)
+    }
+
+    // MARK: - Item 3: Kytkin back on re-applies the rule
+
+    func testTurningKytkinBackOnReappliesTheCurrentRule() {
+        make()
+        monitor.activate(notes, pid: 10)
+        setEnabled(false)
+        switcher.current = IDs.abc
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew], "off: no switch")
+        setEnabled(true)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew], "like unpause")
+        setEnabled(true)
+        sut.preferencesDidChange()
+        XCTAssertEqual(switcher.selectedIDs.count, 2, "only on an off → on change")
+    }
+
+    func testTurningKytkinBackOnFromSettingsAppliesAtTheResign() {
+        make()
+        openSettingsOverNotes()
+        setEnabled(false)
+        setEnabled(true)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew], "Settings is in front: nothing yet")
+        frontmost = 10
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew])
+    }
+
+    func testTurningKytkinBackOnWhilePausedDoesNotSwitch() {
+        make()
+        monitor.activate(notes, pid: 10)
+        sut.setPaused(true)
+        setEnabled(false)
+        switcher.current = IDs.abc
+        setEnabled(true)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+        sut.setPaused(false)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew])
+    }
+
+    func testTurningKytkinOffDropsTheCandidateAndStopsLearning() {
+        make()
+        monitor.activate(notes, pid: 10)
+        clock.advance(byMilliseconds: 600)
+        switcher.current = IDs.russian
+        sut.inputSourceDidChange(.external(IDs.russian, atNanos: clock.nowNanos))
+        XCTAssertNotNil(sut.switching.learner.pending)
+        setEnabled(false)
+        XCTAssertNil(sut.switching.learner.pending)
+        XCTAssertFalse(sut.switching.learner.learningEnabled)
+        setEnabled(true)
+        XCTAssertTrue(sut.switching.learner.learningEnabled)
+    }
+
+    func testTurningKytkinOffAndOnTurnsTheTapOffAndOn() {
+        make()
+        XCTAssertEqual(watcher.starts, [.active])
+        setEnabled(false)
+        XCTAssertEqual(watcher.stops, 1)
+        setEnabled(true)
+        XCTAssertEqual(watcher.starts, [.active, .active])
+    }
+
+    func testTurningKytkinBackOnWithNoContextDoesNothing() {
+        make()
+        setEnabled(false)
+        setEnabled(true)
+        XCTAssertTrue(switcher.selects.isEmpty)
+    }
+}

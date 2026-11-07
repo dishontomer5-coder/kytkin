@@ -18,6 +18,8 @@ import AppKit
     let convert: ConvertDispatcher
     let controller: AppController
     let statusItem: StatusItemController
+    /// P2-23: built on first `openSettings`, then reused.
+    private var settingsWindow: SettingsWindowController?
 
     private var appObservers: [NSObjectProtocol] = []
 
@@ -53,7 +55,9 @@ import AppKit
 
         controller = AppController(switcher: switcher, context: contextMonitor, store: store,
                                    permissions: permissions, conflicts: conflicts, keyWatcher: keyWatcher,
-                                   ticker: MainRunLoopTicker(), convert: convert, clock: clock)
+                                   ticker: MainRunLoopTicker(), convert: convert, clock: clock,
+                                   scheduler: MainRunLoopOneShot(),          // P2-52 item 1
+                                   frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier })
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
         wire()
@@ -86,6 +90,23 @@ import AppKit
                 }
             },
         ]
+    }
+
+    /// P2-23: the menu's "Settings…" hook (P2-22 calls it). Opens the Settings window on `tab`, or brings the open
+    /// one to the front on that tab. User action only.
+    func openSettings(tab: SettingsTab = .general) {
+        let window = settingsWindow ?? makeSettingsWindow()
+        settingsWindow = window
+        window.show(tab: tab)
+    }
+
+    private func makeSettingsWindow() -> SettingsWindowController {
+        let switcher = self.switcher
+        // P2-23: SMAppServiceLoginItems only reads the status here; register/unregister run on the user's toggle.
+        let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
+                                           sources: { switcher.sources(includeDisabled: false) })
+        return SettingsWindowController(general: general,
+                                        about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:]))
     }
 
     func start() {
