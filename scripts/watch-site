@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# P3-10: Build and run the headless watch-site tool. While a known browser is frontmost it prints one line per
+# observation: registrable domain, page state, private flag (never a URL, host or title). Ctrl-C stops it.
+# Read-only: AX reads of the frontmost browser only; never prompts, never sets an AX attribute, never activates or
+# messages another app, no window. The terminal needs Accessibility (System Settings → Privacy & Security).
+# For the owner's P3-3 / P3-14 rounds; agents never run it against the owner's browsers.
+#   ./scripts/watch-site
+#   KYTKIN_BUILD_ONLY=1 ./scripts/watch-site   compile only (used by agents; nothing runs)
+# The tool is compiled from the app's own sources: all of Core (pure) + System/Browser.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+BIN="build/tools/watch-site"
+mkdir -p "$(dirname "$BIN")"
+
+SOURCES=(Tools/watch-site/main.swift Sources/System/Browser/*.swift)
+while IFS= read -r -d '' f; do SOURCES+=("$f"); done < <(find Sources/Core -name '*.swift' -type f -print0)
+
+xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -module-name WatchSite -o "$BIN" "${SOURCES[@]}"
+[[ "${KYTKIN_BUILD_ONLY:-}" == 1 ]] && exit 0
+exec "$BIN" "$@"
