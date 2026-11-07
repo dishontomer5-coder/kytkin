@@ -20,11 +20,12 @@ import SwiftUI
     private let selection = SettingsSelection()
     private let general: GeneralSettingsModel
     private let about: AboutInfo
-    private let tabs: TabModels   // P2-25
+    private let tabs: TabModels   // P2-24, P2-25
     private var window: NSWindow?
 
-    /// P2-25: the Rules, Convert and Apps tabs' models.
+    /// P2-24 Languages (via the environment) and P2-25 Rules, Convert and Apps.
     struct TabModels {
+        let languages: LanguagesSettingsModel
         let rules: RulesSettingsModel
         let convert: ConvertSettingsModel
         let apps: AppsSettingsModel
@@ -55,7 +56,8 @@ import SwiftUI
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about,
                                                                  rules: tabs.rules, convert: tabs.convert,
-                                                                 apps: tabs.apps))
+                                                                 apps: tabs.apps)
+            .environment(tabs.languages))   // P2-24: the Languages model goes through the environment
         hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
@@ -77,9 +79,10 @@ import SwiftUI
         refreshTabs()
     }
 
-    /// P2-25: layout names for Rules, and the running apps Apps can add (read only when Settings opens or comes
-    /// to the front).
+    /// P2-24/P2-25: layouts, layout names for Rules, and the running apps Apps can add (read only when Settings
+    /// opens or comes to the front, e.g. back from System Settings → Keyboard → Input Sources).
     private func refreshTabs() {
+        tabs.languages.refresh()
         tabs.rules.refresh()
         tabs.apps.refresh()
     }

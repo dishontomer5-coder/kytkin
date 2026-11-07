@@ -37,18 +37,17 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
     /// True while the tab is still a placeholder (the task that fills it isn't built yet).
     var isPlaceholder: Bool {
         switch self {
-        case .general, .about: false
+        case .general, .languages, .about: false   // P2-24: Languages
         case .rules, .convert, .apps: false   // P2-25
-        case .languages, .permissions: true
+        case .permissions: true
         }
     }
 
     /// The one line a placeholder tab shows.
     var comingSoonText: String {
         switch self {
-        case .languages: "Choosing your language pair and importing layouts is coming soon."
         case .permissions: "An overview of Kytkin's permissions is coming soon."
-        case .general, .about: ""
+        case .general, .languages, .about: ""
         case .rules, .convert, .apps: ""   // P2-25
         }
     }

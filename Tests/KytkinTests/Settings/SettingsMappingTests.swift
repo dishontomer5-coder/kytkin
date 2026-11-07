@@ -14,7 +14,8 @@ final class SettingsMappingTests: XCTestCase {
     func testTabOrderAndPlaceholders() {
         XCTAssertEqual(SettingsTab.allCases.map(\.title),
                        ["General", "Languages", "Rules", "Convert", "Apps", "Permissions", "About"])
-        XCTAssertEqual(SettingsTab.allCases.filter { !$0.isPlaceholder }, [.general, .rules, .convert, .apps, .about])
+        XCTAssertEqual(SettingsTab.allCases.filter { !$0.isPlaceholder },
+                       [.general, .languages, .rules, .convert, .apps, .about])
         for tab in SettingsTab.allCases {
             XCTAssertFalse(tab.symbolName.isEmpty)
             XCTAssertEqual(tab.comingSoonText.isEmpty, !tab.isPlaceholder, "\(tab)")

@@ -11,6 +11,9 @@ import AppKit
     let store: PreferencesStore
     let switcher: InputSourceSwitcher
     let layoutMaps: UCKeyTranslateLayoutMapProvider   // P2-21 (ConvertDispatcher), P2-24 read it
+    /// P2-24: the user's imported maps (`…/Kytkin[ Dev]/layouts/`), and system + imported maps together (P2-32).
+    let importedLayouts: ImportedLayoutStore
+    let layoutCatalog: LayoutMapCatalog
     let contextMonitor: ContextMonitor
     let permissions: PermissionsManager
     let conflicts: ConflictDetector
@@ -30,6 +33,9 @@ import AppKit
         store = PreferencesStore(fileURL: fileURL, clock: clock)
         switcher = InputSourceSwitcher.makeTIS(clock: clock)
         layoutMaps = UCKeyTranslateLayoutMapProvider()
+        importedLayouts = ImportedLayoutStore(directory: ImportedLayoutStore.directory(forPreferencesFile: fileURL),
+                                              fileSystem: LocalLayoutFileSystem())
+        layoutCatalog = LayoutMapCatalog(system: layoutMaps, imported: importedLayouts)
         contextMonitor = ContextMonitor(source: WorkspaceAppActivationSource(), clock: clock)
         permissions = PermissionsManager(probe: SystemPermissionProbe(), requester: SystemPermissionRequester(),
                                          clock: clock)
@@ -51,7 +57,7 @@ import AppKit
             switchLanguage: { target, keepsBuffer in
                 await MainActor.run { box.controller?.switchAfterConvert(to: target, keepsBuffer: keepsBuffer) ?? false }
             })
-        convert = ConvertDispatcher(controller: convertController, maps: layoutMaps)
+        convert = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
 
         controller = AppController(switcher: switcher, context: contextMonitor, store: store,
                                    permissions: permissions, conflicts: conflicts, keyWatcher: keyWatcher,
@@ -119,6 +125,10 @@ import AppKit
         // P2-23: SMAppServiceLoginItems only reads the status here; register/unregister run on the user's toggle.
         let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
                                            sources: { switcher.sources(includeDisabled: false) })
+        // P2-24: reads the layout lists only on refresh (when Settings opens); files only on the user's clicks.
+        let languages = LanguagesSettingsModel(store: store, imported: importedLayouts, catalog: layoutCatalog,
+                                               fileSystem: importedLayouts.fileSystem,
+                                               inputMethods: { switcher.sources(includeDisabled: false) })
         // P2-25: Rules, Convert and Apps. Names come from LaunchServices; running apps only when Settings opens.
         let rules = RulesSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                        sources: { switcher.sources(includeDisabled: true) })
@@ -127,8 +137,8 @@ import AppKit
                                      ownBundleID: Bundle.main.bundleIdentifier ?? "")
         return SettingsWindowController(general: general,
                                         about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:]),
-                                        tabs: .init(rules: rules, convert: ConvertSettingsModel(store: store),
-                                                    apps: apps))
+                                        tabs: .init(languages: languages, rules: rules,
+                                                    convert: ConvertSettingsModel(store: store), apps: apps))
     }
 
     /// P2-25: regular (Dock) apps that are running, for Settings → Apps "Add Running App".
