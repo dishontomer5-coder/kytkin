@@ -8,6 +8,9 @@ struct SettingsView: View {
     @Bindable var selection: SettingsSelection
     let general: GeneralSettingsModel
     let about: AboutInfo
+    let rules: RulesSettingsModel        // P2-25
+    let convert: ConvertSettingsModel    // P2-25
+    let apps: AppsSettingsModel          // P2-25
 
     /// A fixed size: grouped Forms scroll and have no natural height to size the window from.
     static let size = CGSize(width: 600, height: 460)
@@ -28,6 +31,9 @@ struct SettingsView: View {
         switch tab {
         case .general: GeneralSettingsView(model: general)
         case .about: AboutSettingsView(info: about)
+        case .rules: RulesSettingsView(model: rules)
+        case .convert: ConvertSettingsView(model: convert)
+        case .apps: AppsSettingsView(model: apps)
         default: PlaceholderSettingsView(tab: tab)
         }
     }

@@ -20,11 +20,20 @@ import SwiftUI
     private let selection = SettingsSelection()
     private let general: GeneralSettingsModel
     private let about: AboutInfo
+    private let tabs: TabModels   // P2-25
     private var window: NSWindow?
 
-    init(general: GeneralSettingsModel, about: AboutInfo) {
+    /// P2-25: the Rules, Convert and Apps tabs' models.
+    struct TabModels {
+        let rules: RulesSettingsModel
+        let convert: ConvertSettingsModel
+        let apps: AppsSettingsModel
+    }
+
+    init(general: GeneralSettingsModel, about: AboutInfo, tabs: TabModels) {
         self.general = general
         self.about = about
+        self.tabs = tabs
         super.init()
     }
 
@@ -34,6 +43,7 @@ import SwiftUI
     func show(tab: SettingsTab) {
         selection.tab = tab
         general.refresh()          // fresh login-item status and layout list (R8: don't cache the status)
+        refreshTabs()
         let window = self.window ?? makeWindow()
         if !window.isVisible { window.center() }
         NSApp.unhide(nil)          // closing hid the app; a hidden app's windows stay hidden even when ordered front
@@ -43,7 +53,9 @@ import SwiftUI
     }
 
     private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about))
+        let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about,
+                                                                 rules: tabs.rules, convert: tabs.convert,
+                                                                 apps: tabs.apps))
         hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
@@ -62,6 +74,14 @@ import SwiftUI
 
     func windowDidBecomeKey(_ notification: Notification) {
         general.refresh()          // e.g. back from System Settings → Login Items
+        refreshTabs()
+    }
+
+    /// P2-25: layout names for Rules, and the running apps Apps can add (read only when Settings opens or comes
+    /// to the front).
+    private func refreshTabs() {
+        tabs.rules.refresh()
+        tabs.apps.refresh()
     }
 
     func windowWillClose(_ notification: Notification) {

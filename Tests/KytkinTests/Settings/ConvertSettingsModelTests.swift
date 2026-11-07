@@ -1,0 +1,116 @@
+// P2-25: Settings → Convert logic: the four settings write `prefs.convert`, the window slider clamps to 200–500 ms,
+// the Shift-side options, the processor config AppController sends with `updateConfig`, and read-only mode.
+
+import XCTest
+
+@MainActor
+final class ConvertSettingsModelTests: XCTestCase {
+    private var store: PreferencesStore!
+    private var sut: ConvertSettingsModel!
+
+    private func make(_ convert: Preferences.Convert = .init(), readOnly: Bool = false) {
+        var prefs = Preferences()
+        prefs.convert = convert
+        store = readOnly ? makeReadOnlyStore(prefs) : makeStore(prefs, clock: FakeClock())
+        sut = ConvertSettingsModel(store: store)
+    }
+
+    func testDefaultsAreShown() {
+        make()
+        XCTAssertTrue(sut.doubleShiftEnabled)
+        XCTAssertEqual(sut.sidesID, "sameSide")
+        XCTAssertEqual(sut.windowMs, 300)
+        XCTAssertEqual(sut.windowText, "300 ms")
+        XCTAssertTrue(sut.switchLanguageAfterConvert)
+        XCTAssertTrue(sut.isEditable)
+    }
+
+    func testTogglesWriteTheStore() {
+        make()
+        sut.doubleShiftEnabled = false
+        XCTAssertFalse(store.prefs.convert.doubleShiftEnabled)
+        XCTAssertFalse(PreferencesMapping.processorConfig(store.prefs).doubleShiftEnabled, "what updateConfig sends")
+        sut.switchLanguageAfterConvert = false
+        XCTAssertFalse(store.prefs.convert.switchLanguageAfterConvert)
+    }
+
+    func testSides() {
+        make()
+        XCTAssertEqual(sut.sidesOptions.map(\.id), ["sameSide", "either"])
+        sut.sidesID = "either"
+        XCTAssertEqual(store.prefs.convert.doubleShiftSides, .either)
+        XCTAssertEqual(PreferencesMapping.processorConfig(store.prefs).doubleShift.sides, .either)
+        sut.sidesID = "leftOnly"
+        XCTAssertEqual(store.prefs.convert.doubleShiftSides, .either, "not offered, so ignored")
+        sut.sidesID = "nonsense"
+        XCTAssertEqual(store.prefs.convert.doubleShiftSides, .either)
+    }
+
+    func testAHandEditedSideIsStillListed() {
+        var c = Preferences.Convert()
+        c.doubleShiftSides = .rightOnly
+        make(c)
+        XCTAssertEqual(sut.sidesOptions.map(\.id), ["sameSide", "either", "rightOnly"])
+        XCTAssertEqual(sut.sidesID, "rightOnly")
+        sut.sidesID = "sameSide"
+        XCTAssertEqual(sut.sidesOptions.map(\.id), ["sameSide", "either"])
+    }
+
+    func testWindowClampsAndRounds() {
+        make()
+        sut.windowMs = 420
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 420)
+        XCTAssertEqual(sut.windowText, "420 ms")
+        XCTAssertEqual(PreferencesMapping.processorConfig(store.prefs).doubleShift.windowNanos, 420_000_000)
+        sut.windowMs = 50
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 200)
+        sut.windowMs = 9_000
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 500)
+        sut.windowMs = 333.6
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 334)
+        sut.windowMs = -.infinity
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 334, "not finite: ignored")
+        sut.windowMs = .nan
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 334)
+        sut.windowMs = 1e300
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 500)
+    }
+
+    func testSliderRangeIs200To500() {
+        XCTAssertEqual(ConvertSettingsModel.sliderRange, 200...500)
+        XCTAssertEqual(ConvertSettingsModel.windowStepMs, 10)
+    }
+
+    func testExplanationDescribesTheRunConvertSelectionAndUndo() {
+        let text = ConvertSettingsModel.explanation.joined(separator: " ")
+        XCTAssertTrue(text.contains("before the cursor"))
+        XCTAssertTrue(text.contains("other language starts"))
+        XCTAssertTrue(text.contains("converts only the selection"))
+        XCTAssertTrue(text.contains("again"))
+        XCTAssertTrue(text.contains("undo"))
+        XCTAssertTrue(ConvertSettingsModel.autoFixNote.contains("later version"))
+    }
+
+    func testReadOnlyBlocksEveryWrite() {
+        make(readOnly: true)
+        XCTAssertFalse(sut.isEditable)
+        XCTAssertEqual(sut.notices.first?.kind, .readOnly)
+        sut.doubleShiftEnabled = false
+        sut.sidesID = "either"
+        sut.windowMs = 450
+        sut.switchLanguageAfterConvert = false
+        XCTAssertEqual(store.prefs.convert, Preferences.Convert())
+    }
+
+    func testAChangeReachesTheObservingController() {
+        // AppController re-reads preferences through withObservationTracking on `store.prefs` (P2-50); a write from
+        // this tab must trigger that observation.
+        make()
+        let fired = Fired()
+        withObservationTracking { _ = store.prefs } onChange: { fired.value = true }
+        sut.windowMs = 250
+        XCTAssertTrue(fired.value)
+    }
+}
+
+private final class Fired: @unchecked Sendable { var value = false }

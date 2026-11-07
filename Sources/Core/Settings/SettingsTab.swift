@@ -38,7 +38,8 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
     var isPlaceholder: Bool {
         switch self {
         case .general, .about: false
-        case .languages, .rules, .convert, .apps, .permissions: true
+        case .rules, .convert, .apps: false   // P2-25
+        case .languages, .permissions: true
         }
     }
 
@@ -46,11 +47,9 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
     var comingSoonText: String {
         switch self {
         case .languages: "Choosing your language pair and importing layouts is coming soon."
-        case .rules: "A list of your rules is coming soon. For now, use Pin and Forget in the menu."
-        case .convert: "Double-Shift settings are coming soon."
-        case .apps: "Per-app settings are coming soon."
         case .permissions: "An overview of Kytkin's permissions is coming soon."
         case .general, .about: ""
+        case .rules, .convert, .apps: ""   // P2-25
         }
     }
 }
