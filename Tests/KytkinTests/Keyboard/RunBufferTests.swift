@@ -436,9 +436,98 @@ final class RunBufferTests: XCTestCase {
         guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
         XCTAssertEqual(p.handle(F.key(d)).0, .hold)
         let held = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
-        XCTAssertEqual(p.lastConvertGen, gen)
+        // QA (P2-59a): a held keyDown types after the convert, so the finish never marks it untouched, even before
+        // the replay comes back through the tap (a double-Shift handled in between must not see it).
+        XCTAssertNil(p.lastConvertGen, "a keyDown held behind the convert")
+        guard let (snap, _) = doubleShift(&p, at: 2_000) else { return }
+        XCTAssertNil(snap.untouchedSinceConvert)
         for h in held { _ = p.handle(KeyEvent(kind: h.event.kind, keyCode: h.event.keyCode, origin: .replay)) }
         XCTAssertNil(p.lastConvertGen, "the replayed key typed after the convert")
+    }
+
+    // MARK: - QA (P2-59a) additions
+
+    func testOnlyKeyUpsHeldStillSetIt() {
+        var p = processor()
+        type(&p, [a])
+        _ = p.handle(F.key(d))  // down before the convert, released during it
+        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
+        XCTAssertEqual(p.handle(F.keyUp(d)).0, .hold)
+        let held = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
+        XCTAssertEqual(held.count, 1)
+        XCTAssertEqual(p.lastConvertGen, gen, "a keyUp types nothing")
+    }
+
+    func testOptionAndShiftLayerLettersInvalidateAKeptBufferInAnotherLayout() {
+        for flags in [KeyEvent.optionMask, KeyEvent.shiftMask, KeyEvent.optionMask | KeyEvent.shiftMask] {
+            var p = processor()
+            type(&p, [a, KeyCode.space, s])
+            guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
+            _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
+            XCTAssertEqual(p.handle(F.key(d, flags: flags)).1, .bufferInvalidated, "flags \(flags)")
+            XCTAssertNil(p.bufferRendering)
+            guard let (snap, _) = doubleShift(&p, at: 2_000) else { return }
+            XCTAssertEqual(snap.strokes, [Stroke(keyCode: d, layer: F.key(d, flags: flags).layer)], "flags \(flags)")
+            XCTAssertEqual(snap.previousWords, [])
+            XCTAssertEqual(snap.renderedIn, abc)
+        }
+    }
+
+    func testOptionBackspaceForgetsAKeptBufferAndTheConvert() {
+        var p = processor()
+        type(&p, [a, KeyCode.space, s])
+        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
+        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
+        XCTAssertEqual(p.handle(F.key(KeyCode.delete, flags: KeyEvent.optionMask)).1, .bufferInvalidated)
+        XCTAssertNil(p.bufferRendering)
+        XCTAssertNil(p.lastConvertGen)
+        XCTAssertTrue(p.buffer.isEmpty)
+    }
+
+    func testBackspaceToEmptyThenLetterStartsCleanInTheInputSource() {
+        var p = processor()
+        type(&p, [a])
+        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
+        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
+        _ = p.handle(F.key(KeyCode.delete))
+        XCTAssertTrue(p.buffer.isEmpty)
+        XCTAssertNil(p.handle(F.key(s)).1, "nothing left to invalidate")
+        XCTAssertNil(p.bufferRendering)
+        guard let (snap, _) = doubleShift(&p, at: 2_000) else { return }
+        XCTAssertEqual(snap.strokes, [st(s)])
+        XCTAssertEqual(snap.renderedIn, abc)
+    }
+
+    func testBufferRenderedInOnAnEmptyBufferIsDropped() {
+        var p = processor()
+        guard let (snap, gen) = doubleShift(&p, at: 1_000) else { return }
+        XCTAssertFalse(snap.hasRun)
+        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
+        XCTAssertNil(p.bufferRendering)
+    }
+
+    func testSettingsChangeKeepsTheKeptBufferAndTheConvert() {
+        var p = processor()
+        type(&p, [a])
+        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
+        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
+        var c = p.config
+        c.autoFixEnabled.toggle()
+        p.updateConfig(c)
+        XCTAssertEqual(p.bufferRendering, hebrew, "a settings change doesn't touch the field")
+        XCTAssertEqual(p.lastConvertGen, gen)
+    }
+
+    func testAutoFixSnapshotUsesTheKeptRendering() {
+        var p = processor(autoFix: true)
+        type(&p, [a])
+        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
+        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
+        guard case let .wordEnded(snap, _)? = p.handle(F.key(KeyCode.space)).1 else {
+            return XCTFail("Space after a word starts an auto-fix")
+        }
+        XCTAssertEqual(snap.renderedIn, hebrew, "P4 sees the word as it shows, not as the input source would type it")
+        XCTAssertNil(snap.untouchedSinceConvert, "the trigger is a keyDown")
     }
 
     func testClickResetAndForeignSwitchClearIt() {

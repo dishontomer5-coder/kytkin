@@ -59,9 +59,9 @@ struct KeyStreamProcessor: Sendable {
     /// `bufferRendering ?? inputSource`. The next letter typed while it differs from `inputSource` first invalidates
     /// the buffer (that stroke is in another layout); Space and Backspace keep it.
     private(set) var bufferRendering: InputSourceID?
-    /// P2-59 (X6): the last convert generation finished (not aborted). Cleared by any keyDown (user or replay), a
-    /// click, a reset, a buffer invalidation and the start of the next replacement. Snapshots carry it as
-    /// `untouchedSinceConvert`.
+    /// P2-59 (X6): the last convert generation finished (not aborted, no keyDown held behind it). Cleared by any
+    /// keyDown (user or replay), a click, a reset, a buffer invalidation and the start of the next replacement.
+    /// Snapshots carry it as `untouchedSinceConvert`.
     private(set) var lastConvertGen: UInt64?
 
     private var detector: DoubleShiftDetector
@@ -211,7 +211,12 @@ struct KeyStreamProcessor: Sendable {
             }
         }
         // P2-59 (X6): set last, after any buffer change above, so this finish's own bookkeeping doesn't clear it.
-        if r.kind == .convert, !r.aborted { lastConvertGen = gen }
+        // QA (P2-59a): not when a held keyDown is about to be replayed: it types after the convert, so the field is
+        // already "touched". Its replay would clear it anyway, but a double-Shift handled before the replay comes back
+        // through the tap must not see this generation as untouched. ≤ 32 compares, on a finish only (not per key).
+        if r.kind == .convert, !r.aborted, !held.contains(where: { $0.event.kind == .keyDown }) {
+            lastConvertGen = gen
+        }
         return held
     }
 
