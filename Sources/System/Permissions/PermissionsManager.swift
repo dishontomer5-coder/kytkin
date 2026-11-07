@@ -143,13 +143,29 @@ import Observation
         }
     }
 
-    /// User click only (the Automation toggle turned on, or the row's "Ask").
+    /// User click only (the Automation switch turned on, or the dropdown's "Ask"). P3-26: one question at a time;
+    /// a request made while another is on screen waits for its answer (the tracker's queue).
     func requestAutomation(for bundleID: String) {
+        guard automationRequester != nil else { return }
+        guard automationTracker.beginRequest(bundleID, now: clock.nowNanos) else { return }
+        ask(bundleID, token: automationTracker.requestToken)
+    }
+
+    private func ask(_ bundleID: String, token: UInt64) {
         guard let automationRequester else { return }
-        automationTracker.beginRequest(bundleID, now: clock.nowNanos)
         background({ automationRequester.ask(bundleID: bundleID) }) { [weak self] result in
-            self?.automationAnswered(bundleID, result)
+            guard let self else { return }
+            self.automationAnswered(bundleID, result)
+            // P3-26 QA: only the request still in flight (same token) moves the queue on; an abandoned one doesn't.
+            if let next = self.automationTracker.finishRequest(bundleID, token: token, now: self.clock.nowNanos) {
+                self.ask(next, token: self.automationTracker.requestToken)
+            }
         }
+    }
+
+    /// P3-26 QA: the switch turned off; the waiting questions are never shown.
+    func cancelQueuedAutomationRequests() {
+        automationTracker.cancelQueuedRequests()
     }
 
     /// User click only.

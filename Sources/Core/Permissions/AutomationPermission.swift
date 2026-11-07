@@ -12,6 +12,8 @@
 // turned on, and when an opted-in browser comes to the front. The prompt is shown ONLY from a click: turning the
 // toggle on, or the row's "Ask" button, while that browser runs. If it isn't running, the choice is stored and the
 // row says to open the browser and click Ask; Kytkin never asks later on its own.
+// P3-26: the toggle is one global switch now (Settings → Browsers & Sites); turning it on may ask for several running
+// browsers, so click requests are queued here and macOS shows one question at a time.
 
 import Foundation
 
@@ -61,9 +63,56 @@ struct AutomationPermissionTracker: Sendable, Equatable {
         return true
     }
 
-    /// A click's request: always allowed. It also counts as a check for the throttle.
-    mutating func beginRequest(_ bundleID: String, now: UInt64) {
+    /// P3-26: the click request whose macOS question may be on screen now; others wait in `requestQueue`.
+    private(set) var requestInFlight: String?
+    private(set) var requestQueue: [String] = []
+    /// P3-26 QA: identifies the request in flight, so a late answer from an abandoned one can't move the queue on.
+    private(set) var requestToken: UInt64 = 0
+    private var requestStartedAt: UInt64 = 0
+    /// P3-26 QA: a request still unanswered after this long (the box left open, or the call stuck on a hung browser)
+    /// no longer blocks a NEW click: without it every later Ask would wait forever this session. Its late answer is
+    /// still taken as a state; it just doesn't start the next question.
+    static let maxRequestWaitNanos: UInt64 = 60_000_000_000
+
+    /// A click's request: always accepted. It also counts as a check for the throttle. P3-26: requests run one at a
+    /// time, so macOS never shows two Automation questions at once (turning the global switch on may ask for several
+    /// running browsers). Returns true when the caller should ask now (with `requestToken`); false = queued (or
+    /// already pending).
+    mutating func beginRequest(_ bundleID: String, now: UInt64) -> Bool {
         lastCheckAt[bundleID] = now
+        if requestInFlight != nil, now >= requestStartedAt, now - requestStartedAt >= Self.maxRequestWaitNanos {
+            requestInFlight = nil   // abandoned (P3-26 QA); the queue goes on behind this click
+        }
+        guard requestInFlight != bundleID, !requestQueue.contains(bundleID) else { return false }
+        guard requestInFlight == nil else {
+            requestQueue.append(bundleID)
+            return false
+        }
+        start(bundleID, now: now)
+        return true
+    }
+
+    /// P3-26: the in-flight request `token` got its answer. Returns the next queued browser to ask (now in flight,
+    /// with the new `requestToken`), if any. A stale token (an abandoned request) changes nothing.
+    mutating func finishRequest(_ bundleID: String, token: UInt64, now: UInt64) -> String? {
+        guard requestInFlight == bundleID, requestToken == token else { return nil }
+        requestInFlight = nil
+        guard !requestQueue.isEmpty else { return nil }
+        let next = requestQueue.removeFirst()
+        start(next, now: now)
+        return next
+    }
+
+    /// P3-26 QA: "Use Automation" turned off: the questions still waiting are dropped (the one on screen stays; its
+    /// answer is still taken as a state).
+    mutating func cancelQueuedRequests() {
+        requestQueue = []
+    }
+
+    private mutating func start(_ bundleID: String, now: UInt64) {
+        requestInFlight = bundleID
+        requestToken &+= 1
+        requestStartedAt = now
     }
 
     /// Takes a result. Returns true when `states` changed.

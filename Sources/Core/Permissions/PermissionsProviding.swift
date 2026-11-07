@@ -28,6 +28,9 @@ import Foundation
     func refreshAutomation(for bundleIDs: Set<String>)
     /// User click only: shows the macOS Automation prompt for `bundleID` if it was never answered.
     func requestAutomation(for bundleID: String)
+    /// P3-26 QA: "Use Automation" turned off: drop the questions still waiting their turn (the one already on
+    /// screen can't be taken back). Never shows anything.
+    func cancelQueuedAutomationRequests()
     /// User click only: System Settings → Privacy & Security → Automation.
     func openAutomationSettings()
 }

@@ -1,7 +1,8 @@
 // P3-9: rules and learning on sites (001 §14.6): a site or host rule beats the browser's app rule (pinned or not),
 // `pinScope` vs `learnableScope` (private windows, owner Q1), the learner's page-state guards (D2, D3), Punycode keys
 // on write (D13) with old Unicode keys still matching and healing, duplicates collapsing (S3), and
-// `browsers.siteRulesEnabled` in preferences.json (§4.2) and SitePolicy.
+// `browsers.siteRulesOn` / `useAutomation` in preferences.json (§4.2), the P3-26 migration from the old
+// per-browser keys, and SitePolicy.
 
 import XCTest
 
@@ -238,45 +239,122 @@ final class SiteRulesTests: XCTestCase {
         XCTAssertTrue(hosts.first?.hasPrefix("xn--") == true)
     }
 
-    // MARK: - browsers.siteRulesEnabled (§4.2)
+    // MARK: - browsers.siteRulesOn / useAutomation and the pre-P3-26 per-browser keys (§4.2)
 
     private func decode(_ json: String) throws -> PreferencesCodec.Decoded {
         try PreferencesCodec.decodeDetailed(Data(json.utf8))
     }
 
-    func testSiteRulesEnabledDecodesAndRoundTrips() throws {
-        let d = try decode(#"{"browsers":{"siteRulesEnabled":{"com.apple.Safari":false,"app.zen-browser.zen":true}}}"#)
-        XCTAssertEqual(d.prefs.browsers.siteRulesEnabled, ["com.apple.Safari": false, "app.zen-browser.zen": true])
+    private func encodedBrowsers(_ prefs: Preferences) throws -> [String: Any] {
+        let object = try JSONSerialization.jsonObject(with: PreferencesCodec.encode(prefs)) as? [String: Any]
+        return try XCTUnwrap(object?["browsers"] as? [String: Any])
+    }
+
+    func testGlobalSwitchesDecodeAndRoundTrip() throws {
+        let d = try decode(#"{"browsers":{"siteRulesOn":false,"useAutomation":true}}"#)
+        XCTAssertFalse(d.prefs.browsers.siteRulesOn)
+        XCTAssertTrue(d.prefs.browsers.useAutomation)
         XCTAssertFalse(d.isLossy)
         let again = try PreferencesCodec.decode(PreferencesCodec.encode(d.prefs)).0
-        XCTAssertEqual(again.browsers.siteRulesEnabled, d.prefs.browsers.siteRulesEnabled)
+        XCTAssertEqual(again.browsers, d.prefs.browsers)
     }
 
-    func testSiteRulesEnabledAbsentMeansEmpty() throws {
-        XCTAssertEqual(try decode("{}").prefs.browsers.siteRulesEnabled, [:])
-        XCTAssertEqual(try decode(#"{"browsers":{}}"#).prefs.browsers.siteRulesEnabled, [:])
+    func testDefaults() throws {
+        for json in ["{}", #"{"browsers":{}}"#] {
+            let b = try decode(json).prefs.browsers
+            XCTAssertTrue(b.siteRulesOn, json)
+            XCTAssertFalse(b.useAutomation, json)
+            XCTAssertEqual(b.legacySiteRulesOff, [], json)
+        }
     }
 
-    func testSiteRulesEnabledIsLenientPerEntry() throws {
+    func testNewKeysAreWrittenAndOldKeysAreNot() throws {
+        var prefs = Preferences()
+        prefs.browsers.siteRulesOn = false
+        prefs.browsers.useAutomation = true
+        let b = try encodedBrowsers(prefs)
+        XCTAssertEqual(b["siteRulesOn"] as? Bool, false)
+        XCTAssertEqual(b["useAutomation"] as? Bool, true)
+        XCTAssertNil(b["siteRulesEnabled"])
+        XCTAssertNil(b["appleEventsOptIn"])
+    }
+
+    // P3-26 migration: Automation is on if any browser had it on.
+
+    func testOldAutomationOptInsBecomeTheGlobalSwitch() throws {
+        XCTAssertTrue(try decode(#"{"browsers":{"appleEventsOptIn":{"com.google.Chrome":true,"com.apple.Safari":false}}}"#)
+            .prefs.browsers.useAutomation, "any browser on → on")
+        XCTAssertFalse(try decode(#"{"browsers":{"appleEventsOptIn":{"com.google.Chrome":false}}}"#)
+            .prefs.browsers.useAutomation)
+        XCTAssertFalse(try decode(#"{"browsers":{"appleEventsOptIn":{}}}"#).prefs.browsers.useAutomation)
+        XCTAssertFalse(try decode(#"{"browsers":{"useAutomation":false,"appleEventsOptIn":{"com.google.Chrome":true}}}"#)
+            .prefs.browsers.useAutomation, "the new key wins: the old one is read only once")
+    }
+
+    // P3-26 migration: website rules stay on unless every browser had them off.
+
+    func testOldSiteRulesSwitchesAreKeptUntilResolved() throws {
+        let d = try decode(#"{"browsers":{"siteRulesEnabled":{"com.apple.Safari":false,"app.zen-browser.zen":true}}}"#)
+        XCTAssertEqual(d.prefs.browsers.legacySiteRulesOff, ["com.apple.Safari"], "only the browsers turned off")
+        XCTAssertFalse(d.isLossy)
+        let b = try encodedBrowsers(d.prefs)
+        XCTAssertEqual(b["siteRulesEnabled"] as? [String: Bool], ["com.apple.Safari": false],
+                       "a save before AppController.start() resolves it loses nothing")
+        XCTAssertNil(b["siteRulesOn"])
+        XCTAssertEqual(try PreferencesCodec.decode(PreferencesCodec.encode(d.prefs)).0.browsers, d.prefs.browsers)
+        XCTAssertFalse(try decode(#"{"browsers":{"siteRulesOn":false,"siteRulesEnabled":{"com.apple.Safari":false}}}"#)
+            .prefs.browsers.legacySiteRulesOff.contains("com.apple.Safari"), "the new key wins")
+    }
+
+    func testResolvingTheOldSwitches() {
+        var b = Preferences.Browsers()
+        b.legacySiteRulesOff = ["com.apple.Safari"]
+        XCTAssertTrue(b.siteRulesOn(among: ["com.apple.Safari", zen]), "Zen still had them on")
+        XCTAssertFalse(b.siteRulesOn(among: ["com.apple.Safari"]), "every browser off")
+        XCTAssertTrue(b.siteRulesOn(among: []), "no list: on")
+
+        var none = b
+        none.resolveLegacySiteRules(among: [])
+        XCTAssertEqual(none, b, "an empty browser list leaves it unresolved")
+
+        var some = b
+        some.resolveLegacySiteRules(among: ["com.apple.Safari", zen])
+        XCTAssertTrue(some.siteRulesOn)
+        XCTAssertEqual(some.legacySiteRulesOff, [])
+
+        var all = b
+        all.legacySiteRulesOff = ["com.apple.Safari", zen]
+        all.resolveLegacySiteRules(among: ["com.apple.Safari", zen])
+        XCTAssertFalse(all.siteRulesOn, "every browser had them off")
+        XCTAssertEqual(all.legacySiteRulesOff, [])
+        XCTAssertEqual(all.siteRulesOn(among: ["anything"]), false, "resolved: the stored value")
+    }
+
+    func testOldSiteRulesIsLenientPerEntry() throws {
         let d = try decode(#"{"browsers":{"siteRulesEnabled":{"com.apple.Safari":false,"com.google.Chrome":"no"},"#
                            + #""ignorePrivateWindowsCompletely":true}}"#)
-        XCTAssertEqual(d.prefs.browsers.siteRulesEnabled, ["com.apple.Safari": false], "the bad entry only (= on)")
+        XCTAssertEqual(d.prefs.browsers.legacySiteRulesOff, ["com.apple.Safari"], "the bad entry only (= on)")
         XCTAssertTrue(d.prefs.browsers.ignorePrivateWindowsCompletely, "siblings survive")
         XCTAssertTrue(d.isLossy)
 
         let mistyped = try decode(#"{"browsers":{"siteRulesEnabled":[1,2],"ignorePrivateWindowsCompletely":true}}"#)
-        XCTAssertEqual(mistyped.prefs.browsers.siteRulesEnabled, [:])
+        XCTAssertEqual(mistyped.prefs.browsers.legacySiteRulesOff, [])
+        XCTAssertTrue(mistyped.prefs.browsers.siteRulesOn)
         XCTAssertTrue(mistyped.prefs.browsers.ignorePrivateWindowsCompletely)
         XCTAssertTrue(mistyped.isLossy)
     }
 
-    func testSitePolicyReadsSiteRulesEnabledFromPreferences() {
+    func testSitePolicyReadsTheGlobalSwitch() {
         var browsers = Preferences.Browsers()
-        browsers.siteRulesEnabled = ["com.apple.Safari": false, zen: true]
-        let p = SitePolicy(availability: browserAvailability(), browsers: browsers, suffixListLoaded: true,
-                           webLinkHandlers: [], ownBundleIDPrefix: "io.github.kytkin.")
-        XCTAssertNil(p.request(for: "com.apple.Safari"), "off → app-only")
-        XCTAssertNotNil(p.request(for: zen))
-        XCTAssertNotNil(p.request(for: "com.google.Chrome"), "absent = on")
+        browsers.siteRulesOn = false
+        let off = SitePolicy(availability: browserAvailability(), browsers: browsers, suffixListLoaded: true,
+                             webLinkHandlers: [], ownBundleIDPrefix: "io.github.kytkin.")
+        XCTAssertNil(off.request(for: "com.apple.Safari"), "off → app-only, every browser")
+        XCTAssertNil(off.request(for: zen))
+        browsers.siteRulesOn = true
+        let on = SitePolicy(availability: browserAvailability(), browsers: browsers, suffixListLoaded: true,
+                            webLinkHandlers: [], ownBundleIDPrefix: "io.github.kytkin.")
+        XCTAssertNotNil(on.request(for: "com.apple.Safari"))
+        XCTAssertNotNil(on.request(for: zen))
     }
 }

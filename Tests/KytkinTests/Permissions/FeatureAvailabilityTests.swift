@@ -80,12 +80,16 @@ final class FeatureAvailabilityTests: XCTestCase {
         XCTAssertTrue(compute(im: .granted, tap: .listenOnly, secure: true).learningByDwell)
     }
 
-    func testAutomationNeedsOptInAndGrant() {
-        let settings = FeatureSettings(appleEventsOptIn: ["com.google.Chrome", "com.brave.Browser"])
-        let f = compute(ax: .granted, tap: .active, settings: settings,
-                        automation: ["com.google.Chrome": .granted, "com.brave.Browser": .denied,
-                                     "com.microsoft.edgemac": .granted])
-        XCTAssertEqual(f.appleEventsBrowsers, ["com.google.Chrome"])
+    func testAutomationNeedsTheGlobalSwitchAndAGrant() {
+        // P3-26: one switch for every browser; SitePolicy then keeps only browsers with a dictionary.
+        let automation: [String: PermissionState] = ["com.google.Chrome": .granted, "com.brave.Browser": .denied,
+                                                     "com.microsoft.edgemac": .granted]
+        let on = compute(ax: .granted, tap: .active, settings: FeatureSettings(useAutomation: true),
+                         automation: automation)
+        XCTAssertEqual(on.appleEventsBrowsers, ["com.google.Chrome", "com.microsoft.edgemac"])
+        let off = compute(ax: .granted, tap: .active, settings: FeatureSettings(useAutomation: false),
+                          automation: automation)
+        XCTAssertEqual(off.appleEventsBrowsers, [])
     }
 
     func testSettingsSwitchesTurnFeaturesOff() {
@@ -102,7 +106,7 @@ final class FeatureAvailabilityTests: XCTestCase {
 
     func testKytkinDisabledTurnsEverythingOff() {
         let f = compute(ax: .granted, tap: .active, settings: FeatureSettings(enabled: false,
-                        appleEventsOptIn: ["com.google.Chrome"]), automation: ["com.google.Chrome": .granted])
+                        useAutomation: true), automation: ["com.google.Chrome": .granted])
         XCTAssertEqual(f, FeatureAvailability(appSwitching: false, doubleShiftConvert: false,
                                               doubleShiftToggleOnly: false, wordBuffer: false,
                                               learningWithWords: false, learningByDwell: false, siteRules: false,

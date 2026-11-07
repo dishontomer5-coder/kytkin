@@ -13,10 +13,11 @@ func browserAvailability(on: Bool = true, siteRules: Bool = true,
 final class SitePolicyTests: XCTestCase {
     private func policy(availability: FeatureAvailability = browserAvailability(), ignorePrivate: Bool = false,
                         suffixListLoaded: Bool = true, handlers: Set<String> = [],
-                        siteRulesEnabled: [String: Bool] = [:]) -> SitePolicy {
+                        siteRulesOn: Bool = true, legacyOff: Set<String> = []) -> SitePolicy {
         var browsers = Preferences.Browsers()
         browsers.ignorePrivateWindowsCompletely = ignorePrivate
-        browsers.siteRulesEnabled = siteRulesEnabled   // P3-9: folded into Preferences.Browsers
+        browsers.siteRulesOn = siteRulesOn   // P3-26: one global switch
+        browsers.legacySiteRulesOff = legacyOff
         return SitePolicy(availability: availability, browsers: browsers, suffixListLoaded: suffixListLoaded,
                           webLinkHandlers: handlers, ownBundleIDPrefix: "io.github.kytkin.")
     }
@@ -48,11 +49,23 @@ final class SitePolicyTests: XCTestCase {
                      "case-insensitive, like the assembler (QA)")
     }
 
-    func testBrowserTurnedOffInSettings() {
-        let p = policy(siteRulesEnabled: ["com.google.Chrome": false, "com.apple.Safari": true])
-        XCTAssertNil(p.request(for: "com.google.Chrome"))
-        XCTAssertNotNil(p.request(for: "com.apple.Safari"))
-        XCTAssertNotNil(p.request(for: "company.thebrowser.Browser"), "absent = on")
+    func testWebsiteRulesTurnedOffInSettings() {
+        // P3-26: one switch for every browser.
+        let p = policy(handlers: ["com.example.NewBrowser"], siteRulesOn: false)
+        for id in ["com.google.Chrome", "com.apple.Safari", "app.zen-browser.zen", "com.example.NewBrowser"] {
+            XCTAssertNil(p.request(for: id), id)
+        }
+    }
+
+    func testAnUnresolvedOldFileIsDecidedAgainstTheWebLinkHandlers() {
+        // P3-26: on unless every browser here (Kytkin excluded) had website rules off.
+        let handlers: Set<String> = ["com.google.Chrome", "com.apple.Safari", "io.github.kytkin.Kytkin"]
+        XCTAssertNotNil(policy(handlers: handlers, legacyOff: ["com.google.Chrome"]).request(for: "com.google.Chrome"),
+                        "Safari still had them on: on for every browser")
+        XCTAssertNil(policy(handlers: handlers, legacyOff: ["com.google.Chrome", "com.apple.Safari"])
+            .request(for: "com.apple.Safari"), "every browser had them off")
+        XCTAssertNotNil(policy(handlers: [], legacyOff: ["com.google.Chrome"]).request(for: "com.google.Chrome"),
+                        "no browser list: on")
     }
 
     func testOtherAppsOnlyAsWebLinkHandlers() {
@@ -60,7 +73,7 @@ final class SitePolicyTests: XCTestCase {
         XCTAssertEqual(p.request(for: "com.example.NewBrowser")?.engine, .unknown)
         XCTAssertNil(p.request(for: "com.apple.TextEdit"))
         XCTAssertNil(p.request(for: ""))
-        XCTAssertNil(policy(handlers: ["com.example.NewBrowser"], siteRulesEnabled: ["com.example.NewBrowser": false])
+        XCTAssertNil(policy(handlers: ["com.example.NewBrowser"], siteRulesOn: false)
             .request(for: "com.example.NewBrowser"))
     }
 
