@@ -299,4 +299,110 @@ final class BrowserWatchEngineTests: XCTestCase {
         XCTAssertEqual(engine.readCount, 2)
         XCTAssertEqual(delivered.items.count, 1)
     }
+
+    /// QA P3-10: the engine really arms the 0.5 s wall-clock budget (not only the first-timeout rule): a strategy
+    /// that spends 0.6 s without a single timeout finds its next AX call refused without asking the browser.
+    func testEngineReadStopsOnceTheWallClockBudgetIsSpent() {
+        let probe = ProbeStrategy()
+        let clock = clock!
+        let tree = zen.tree
+        nonisolated(unsafe) var refused: AXReadError?
+        nonisolated(unsafe) var armed = false
+        nonisolated(unsafe) var reachedTree = false
+        probe.extra = { latched in
+            guard armed else { return }
+            clock.advance(byMilliseconds: 600)   // a slow browser: no timeout, just slow answers
+            let before = tree.calls.count
+            do throws(AXReadError) { _ = try latched.mainWindow() } catch { refused = error }
+            reachedTree = tree.calls.count != before
+        }
+        strategy = probe
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(), attachID: 1)
+        XCTAssertNil(refused)
+        armed = true
+        engine.trigger(.titleChanged)
+        fire(engine)
+        XCTAssertEqual(engine.readCount, 2)
+        XCTAssertEqual(refused, .timedOut, "over budget: the call is refused")
+        XCTAssertFalse(reachedTree, "the refused call never reached the browser")
+    }
+
+    // MARK: - QA P3-10: observer lifetime and retry edges
+
+    func testDetachDuringObserverRetryStopsRetryingAndLeavesNoTimer() {
+        pendingAttachAnswers = Array(repeating: false, count: 100)
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(), attachID: 1)
+        XCTAssertNotNil(timer.deadline)
+        engine.detach()
+        XCTAssertNil(timer.deadline, "no retry timer once detached (B15)")
+        clock.advance(bySeconds: 10)
+        engine.service()
+        engine.wake()
+        XCTAssertEqual(observers[0].attachPids, [7], "no registration attempt after detach")
+        XCTAssertEqual(observers[0].detachCalls, 1)
+    }
+
+    func testRetryForTheOldPidNeverRegistersOnTheNewOne() {
+        pendingAttachAnswers = Array(repeating: false, count: 100)   // the first observer only
+        trees[9] = BrowserFixtures.arc().tree
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(), attachID: 1)
+        clock.advance(byMilliseconds: 50)
+        engine.attach(pid: 9, request: request(.chromium), attachID: 2)
+        for _ in 0..<10 where timer.deadline != nil && clock.nowNanos < t0 + 6_000_000_000 { fire(engine) }
+        XCTAssertEqual(observers[0].attachPids, [7], "pid 7's retry died with its attach")
+        XCTAssertEqual(observers[0].detachCalls, 1)
+        XCTAssertEqual(observers[1].attachPids, [9])
+        XCTAssertTrue(engine.isObserverReady)
+    }
+
+    func testWakeRetriesAnObserverThatGaveUp() {
+        pendingAttachAnswers = Array(repeating: false, count: 9) + [true]
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(), attachID: 1)
+        for _ in 0..<40 where timer.deadline != nil && clock.nowNanos < t0 + 8_000_000_000 { fire(engine) }
+        XCTAssertFalse(engine.isObserverReady)
+        let triesBeforeWake = observers[0].attachPids.count
+        XCTAssertEqual(triesBeforeWake, 8, "0, 100, 300, 700, 1500, 2500, 3500, 4500 ms, then gave up")
+        engine.wake()
+        XCTAssertEqual(observers[0].attachPids.count, 9, "wake tries again at once")
+        engine.wake()
+        XCTAssertEqual(observers[0].attachPids.count, 9, "a retry is already pending: no extra try")
+        fire(engine)
+        for _ in 0..<5 where !engine.isObserverReady { fire(engine) }
+        XCTAssertTrue(engine.isObserverReady, "the restarted schedule gets there")
+    }
+
+    func testGeckoBarIsWatchedOnceAnObserverRegistersLate() {
+        pendingAttachAnswers = [false, true]
+        let probe = ProbeStrategy()
+        let urlbar = zen.urlbar
+        probe.touchWindow = { $0.addressBar = urlbar }
+        strategy = probe
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(.gecko), attachID: 1)
+        XCTAssertTrue(observers[0].valueWatches.isEmpty, "no observer yet, nothing registered")
+        for _ in 0..<5 where !engine.isObserverReady { fire(engine) }
+        XCTAssertTrue(engine.isObserverReady)
+        XCTAssertEqual(observers[0].valueWatches, [urlbar], "the cached bar is registered as soon as the observer is")
+    }
+
+    func testGeckoBarWatchIsClearedWhenTheBarGoesAway() {
+        let probe = ProbeStrategy()
+        let urlbar = zen.urlbar
+        nonisolated(unsafe) var bar: Int? = urlbar
+        probe.touchWindow = { $0.addressBar = bar }
+        strategy = probe
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(.gecko), attachID: 1)
+        bar = nil
+        engine.trigger(.focusedWindowChanged)
+        fire(engine)
+        XCTAssertEqual(observers[0].valueWatches, [urlbar, nil], "the old bar's AXValueChanged is removed")
+        zen.tree.resetCalls()
+        observers[0].post(.addressValueChanged)   // a late one from the old bar
+        XCTAssertTrue(zen.tree.calls.isEmpty, "dropped without an AX call")
+    }
 }

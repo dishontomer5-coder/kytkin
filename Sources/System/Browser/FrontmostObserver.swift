@@ -29,6 +29,10 @@ final class FrontmostObserver: BrowserNotificationObserving {
     private var app: AXUIElement?
     private var registered: [String] = []
     private var valueElement: AXUIElement?
+    /// The run loop the source was added to (the AX thread's). Kept so `detach()` removes it from that run loop even
+    /// if it ever ran elsewhere (e.g. a deinit off the AX thread): a source left behind would call back with a
+    /// dangling `refcon`.
+    private var runLoop: CFRunLoop?
 
     init() {}
 
@@ -56,7 +60,9 @@ final class FrontmostObserver: BrowserNotificationObserving {
                 return false
             }
         }
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        let loop = CFRunLoopGetCurrent()!
+        CFRunLoopAddSource(loop, AXObserverGetRunLoopSource(observer), .defaultMode)
+        runLoop = loop
         self.observer = observer
         self.app = app
         registered = names
@@ -82,7 +88,8 @@ final class FrontmostObserver: BrowserNotificationObserving {
         if let app {
             for n in registered { AXObserverRemoveNotification(observer, app, n as CFString) }
         }
-        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        if let runLoop { CFRunLoopRemoveSource(runLoop, AXObserverGetRunLoopSource(observer), .defaultMode) }
+        runLoop = nil
         self.observer = nil
         app = nil
         registered = []

@@ -204,4 +204,98 @@ final class BrowserWatcherTests: XCTestCase {
         mainQueue.drain()
         XCTAssertTrue(received.isEmpty)
     }
+
+    // MARK: - QA P3-10
+
+    /// A → B → A quickly: A's first attach and its late result never win over the newest attach of the same pid.
+    func testRapidSwitchBackDropsTheOldAttachOfTheSamePid() throws {
+        let w = makeWatcher()
+        let a1 = w.attach(pid: 1, bundleID: "app.zen-browser.zen", request: gecko)
+        let b = w.attach(pid: 2, bundleID: "com.google.Chrome", request: gecko)
+        let a2 = w.attach(pid: 1, bundleID: "app.zen-browser.zen", request: gecko)
+        XCTAssertEqual([a1, b, a2], [1, 2, 3], "coming back to A is a fresh attach, not a reread of the old one")
+        executor.drain()
+        XCTAssertEqual(engine.calls, [.attach(1, gecko, 1), .attach(2, gecko, 2), .attach(1, gecko, 3)])
+        let deliver = try XCTUnwrap(engine.deliver)
+        let other = BrowserObservation(site: nil, pageState: .notWebPage, isPrivate: nil, via: .axURL)
+        deliver(1, 1, other)   // read for A's first attach, arriving after the switch back
+        deliver(2, 2, other)   // B's
+        deliver(1, 3, site)
+        mainQueue.drain()
+        XCTAssertEqual(received.count, 1)
+        XCTAssertEqual(received.first?.1, 3)
+        XCTAssertEqual(received.first?.2, site)
+    }
+
+    /// The real AX thread and engine: the watcher is released while the engine is in the middle of a read. The read
+    /// finishes, its result is dropped on main, and the queued detach then leaves nothing attached.
+    func testReleasingTheWatcherMidReadIsSafe() {
+        final class Box: @unchecked Sendable { // @unchecked: written on the AX thread, read after a hop back
+            var engine: BrowserWatchEngine<FakeAXTree, FakeBrowserObserver>?
+            var observer: FakeBrowserObserver?
+            var reads = 0
+        }
+        let box = Box()
+        let gate = DispatchSemaphore(value: 0)
+        let inRead = expectation(description: "the engine is mid-read")
+        let zen = BrowserFixtures.zen(focus: .page)
+        let probe = ProbeStrategy()
+        probe.extra = { _ in
+            box.reads += 1
+            guard box.reads == 1 else { return }
+            inRead.fulfill()
+            gate.wait()   // test only: holds the AX thread inside the first read
+        }
+        let thread = AXThread()
+        let siteReader = SiteReader(extractor: DomainExtractor.bundled!)
+        var w: BrowserWatcher? = BrowserWatcher(
+            makeThread: {
+                thread.start()
+                return thread
+            },
+            makeEngine: { deliver in
+                let clock = SystemClock()
+                let engine = BrowserWatchEngine<FakeAXTree, FakeBrowserObserver>(
+                    clock: clock, siteReader: siteReader,
+                    makeTree: { _ in zen.tree },
+                    makeObserver: {
+                        let o = FakeBrowserObserver()
+                        box.observer = o
+                        return o
+                    },
+                    timer: RunLoopDeadlineTimer(clock: clock), deliver: deliver,
+                    makeReader: { request in
+                        BrowserAddressReader(request: request, siteReader: siteReader, strategy: probe,
+                                             privateProbe: { (_: LatchedAXTree<FakeAXTree>, _: Int) throws(AXReadError) -> Bool? in nil })
+                    })
+                box.engine = engine
+                return engine
+            })
+        nonisolated(unsafe) var got = 0
+        w?.onObservation = { _, _, _ in got += 1 }
+        w?.attach(pid: 7, bundleID: "app.zen-browser.zen", request: gecko)
+        wait(for: [inRead], timeout: 2)
+        w = nil   // isolated deinit queues engine.detach() behind the read in flight
+        gate.signal()
+        let checked = expectation(description: "checked on the AX thread")
+        nonisolated(unsafe) var attachedAfter = true
+        nonisolated(unsafe) var observerDetaches = 0
+        thread.async {
+            attachedAfter = box.engine?.isAttached ?? true
+            observerDetaches = box.observer?.detachCalls ?? 0
+            DispatchQueue.main.async { checked.fulfill() }   // after the read's own post to main
+        }
+        wait(for: [checked], timeout: 2)
+        XCTAssertFalse(attachedAfter, "the released watcher's engine detached")
+        XCTAssertEqual(observerDetaches, 1)
+        XCTAssertEqual(got, 0, "the read's result went nowhere: its watcher is gone")
+        let stopped = expectation(description: "released")
+        thread.async {
+            box.engine = nil
+            box.observer = nil
+            stopped.fulfill()
+        }
+        wait(for: [stopped], timeout: 2)
+        thread.stopRunLoop()
+    }
 }
