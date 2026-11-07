@@ -25,4 +25,13 @@ enum IPAddress {
         if allDigits { return true }
         return lastLabelLength > 2 && firstByte == UInt8(ascii: "0") && secondByte == UInt8(ascii: "x") && hexTail
     }
+
+    /// Exactly four decimal parts, each 0–255 ("192.168.1.1"). Used for scheme-less address-bar text, where the
+    /// broad rule above would also take a typed number like "3.5".
+    static func isDottedQuadIPv4(_ host: String) -> Bool {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { p in
+            !p.isEmpty && p.utf8.count <= 3 && p.utf8.allSatisfy { $0 >= 48 && $0 <= 57 } && Int(p).map { $0 <= 255 } == true
+        }
+    }
 }

@@ -36,10 +36,28 @@ enum HostNormalizer {
         }.joined(separator: ".")
     }
 
+    /// QA P3-2: a label that can't be a real IDN label is left in Unicode, so every host check (all ASCII) rejects it
+    /// instead of it becoming a plausible-looking "xn--…" host: more than 63 code points (its Punycode would be
+    /// longer than the 63-byte label limit anyway, and this bounds Punycode's quadratic encoder), or a character no
+    /// browser allows in a host (controls, bidi and other format characters, spaces, private-use, unassigned, and
+    /// U+FFFD, which is what invalid UTF-16 turns into). ZWNJ/ZWJ stay allowed (IDNA2008 permits them in context).
     private static func asciiLabel(_ label: String) -> String {
         let lower = label.precomposedStringWithCanonicalMapping.lowercased()
         guard !lower.utf8.allSatisfy({ $0 < 0x80 }) else { return lower }
-        guard let encoded = Punycode.encode(lower) else { return lower }
+        guard lower.unicodeScalars.count <= 63, lower.unicodeScalars.allSatisfy(isAllowedInIDNLabel),
+              let encoded = Punycode.encode(lower) else { return lower }
         return "xn--" + encoded
+    }
+
+    private static func isAllowedInIDNLabel(_ s: Unicode.Scalar) -> Bool {
+        if s.value == 0x200C || s.value == 0x200D { return true }
+        if s.value == 0xFFFD { return false }
+        switch s.properties.generalCategory {
+        case .control, .format, .surrogate, .privateUse, .unassigned,
+             .spaceSeparator, .lineSeparator, .paragraphSeparator:
+            return false
+        default:
+            return true
+        }
     }
 }

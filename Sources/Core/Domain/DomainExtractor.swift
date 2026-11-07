@@ -6,8 +6,10 @@
 // Rules:
 // - Only http and https are web pages. Any other scheme (about:, file:, chrome:, zen:, moz-extension:,
 //   chrome-extension:, safari-web-extension:, view-source:, data:, javascript:, mailto:, blob: …) → not a web page.
-// - No scheme: treated as an address only if the host has a dot, is `localhost`, or is an IP literal. A bare word
-//   ("hello") is more likely a search term being typed into the address bar → not a web page.
+// - No scheme: Firefox-family address bars hide "https://", but they can also show a search query while unfocused,
+//   so scheme-less text is accepted only when it can't plausibly be a search (QA P3-2): no user info ("a@b.com"),
+//   and the host is `localhost`, a full dotted-quad IPv4, a bracketed IPv6, or dotted with a last label that is a
+//   real top-level domain in the PSL. So "ynet.co.il/news" is a site, but "node.js", "3.5", "hello" are not.
 // - User info ("user:pass@") and the port are dropped; the path, query and fragment are never looked at.
 // - The host goes through HostNormalizer, exactly like RuleEngine's keys, so a context host and a saved rule
 //   always compare equal. IPv6 hosts lose their brackets ("[::1]" → "::1").
@@ -29,7 +31,7 @@ struct DomainExtractor: Sendable {
         let s = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty, let (authority, hasScheme) = Self.authority(of: s) else { return .notWebPage }
         guard let host = Self.host(fromAuthority: authority) else { return .notWebPage }
-        if !hasScheme, !host.contains("."), host != "localhost", !IPAddress.isIPLiteral(host) { return .notWebPage }
+        if !hasScheme, !looksLikeTypedAddress(host: host, authority: authority) { return .notWebPage }
         return site(forNormalizedHost: host)
     }
 
@@ -45,6 +47,14 @@ struct DomainExtractor: Sendable {
     private func site(forNormalizedHost host: String) -> SiteAddress {
         let domain = IPAddress.isIPLiteral(host) ? nil : suffixList.registrableDomain(forHost: host)
         return SiteAddress(host: host, registrableDomain: domain, isWebPage: true)
+    }
+
+    /// Scheme-less text: see the header. `host` is already normalized and valid.
+    private func looksLikeTypedAddress(host: String, authority: Substring) -> Bool {
+        guard !authority.contains("@") else { return false }
+        if host == "localhost" || host.contains(":") || IPAddress.isDottedQuadIPv4(host) { return true }
+        guard let dot = host.lastIndex(of: "."), !IPAddress.isIPLiteral(host) else { return false }
+        return suffixList.isKnownTopLevelDomain(host[host.index(after: dot)...])
     }
 
     // MARK: - Parsing

@@ -62,6 +62,48 @@ final class DomainExtractorTests: XCTestCase {
         try check("what is ynet.co.il", host: nil, domain: nil, web: false)
     }
 
+    func testSchemeLessSearchTextIsNotASite() throws {
+        // QA P3-2: Firefox can show search terms in an unfocused address bar. Text with a dot must not become a
+        // site unless its last label is a real TLD (or it's a full IPv4 / localhost / bracketed IPv6).
+        for text in ["node.js", "node.js tutorial", "what is 3.5", "3.5", "1.2.3", "readme.txt", "index.html",
+                     "e.g", "a@b.com", "me@ynet.co.il", "user:pw@ynet.co.il", "256.1.1.1", "10.0.0", "0x7f.0x1",
+                     "v1.2.10", "file.swift:12"] {
+            XCTAssertEqual(try extractor().extract(fromURL: text), .notWebPage, text)
+        }
+        // Still sites: real TLDs (ASCII and IDN), dotted-quad IPv4, bracketed IPv6.
+        try check("claude.ai", host: "claude.ai", domain: "claude.ai")
+        try check("example.com:8080", host: "example.com", domain: "example.com")
+        try check("דוגמה.ישראל/x", host: "xn--6dbbec0c.xn--4dbrk0ce", domain: "xn--6dbbec0c.xn--4dbrk0ce")
+        try check("192.168.1.1:8080/admin", host: "192.168.1.1", domain: nil)
+        try check("[::1]:3000/", host: "::1", domain: nil)
+        // With a scheme the strict check doesn't apply: the browser told us it's a URL.
+        try check("http://node.js/", host: "node.js", domain: "node.js")
+        try check("http://10.1/", host: "10.1", domain: nil)
+    }
+
+    func testAdversarialHostsAreRejectedQuickly() throws {
+        let e = try extractor()
+        let longLabel = String(repeating: "a", count: 100_000)
+        var distinctCJK = ""
+        for v in 0x4E00..<(0x4E00 + 20_000) { distinctCJK.unicodeScalars.append(Unicode.Scalar(v)!) }
+        let manyLabels = Array(repeating: "ש", count: 50_000).joined(separator: ".")
+        let start = DispatchTime.now().uptimeNanoseconds
+        for host in [longLabel + ".com", distinctCJK + ".com", manyLabels + ".com",
+                     String(repeating: "a.", count: 200) + "com"] {
+            XCTAssertEqual(e.extract(fromURL: "https://" + host + "/"), .notWebPage)
+            XCTAssertEqual(e.site(forHost: host), .notWebPage)
+        }
+        let ms = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        XCTAssertLessThan(ms, 2_000, "adversarial hosts took \(ms) ms")
+        // Bidi/format controls and U+FFFD (what invalid UTF-16 becomes) make a host invalid, not "xn--…".
+        for host in ["\u{202E}lmth.com", "ab\u{200B}c.com", "a\u{FFFD}.com", "a\u{0007}.com", "a\u{E000}.com"] {
+            XCTAssertEqual(e.extract(fromURL: "https://" + host + "/"), .notWebPage, host.debugDescription)
+        }
+        // Lone surrogates from an NSString bridge into U+FFFD; still rejected, no crash.
+        let bad = NSString(characters: [0x0061, 0xD800, 0x002E, 0x0063, 0x006F, 0x006D], length: 6) as String
+        XCTAssertEqual(e.extract(fromURL: "https://" + bad), .notWebPage)
+    }
+
     func testNonWebSchemesHaveNoSite() throws {
         for url in ["about:blank", "about:preferences", "file:///Users/me/a.html", "chrome://settings",
                     "zen://settings", "moz-extension://abc/page.html", "chrome-extension://abc/x.html",

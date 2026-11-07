@@ -41,6 +41,25 @@ final class PunycodeTests: XCTestCase {
         XCTAssertNil(Punycode.decode("-ä"))
     }
 
+    func testOverlongInputIsRejectedNotSlow() {
+        var distinct = ""
+        for v in 0x4E00..<(0x4E00 + 20_000) { distinct.unicodeScalars.append(Unicode.Scalar(v)!) }
+        XCTAssertNil(Punycode.encode(distinct))
+        XCTAssertNil(Punycode.decode(String(repeating: "a", count: 100_000) + "-ba"))
+        XCTAssertNotNil(Punycode.encode(String(distinct.prefix(63))))
+    }
+
+    func testNormalizeLeavesImpossibleLabelsInUnicode() {
+        // Not Punycoded, so every ASCII-only host check rejects them (QA P3-2).
+        XCTAssertEqual(HostNormalizer.normalize("\u{202E}abc.com"), "\u{202E}abc.com")
+        XCTAssertEqual(HostNormalizer.normalize("a\u{FFFD}.com"), "a\u{FFFD}.com")
+        let long = String(repeating: "ש", count: 64)
+        XCTAssertEqual(HostNormalizer.normalize(long + ".co.il"), long + ".co.il")
+        XCTAssertTrue(HostNormalizer.normalize(String(repeating: "ש", count: 63) + ".co.il").hasPrefix("xn--"))
+        // ZWNJ is allowed in IDN labels (Persian).
+        XCTAssertTrue(HostNormalizer.normalize("می\u{200C}خواهم.ir").hasPrefix("xn--"))
+    }
+
     // MARK: - HostNormalizer
 
     func testNormalizeLowercasesAndDropsOneTrailingDot() {

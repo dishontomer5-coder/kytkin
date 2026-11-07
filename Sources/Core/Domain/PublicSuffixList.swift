@@ -108,6 +108,12 @@ struct PublicSuffixList: Sendable {
         return String(parsed.host[parsed.starts[parsed.starts.count - publicSuffixLabelCount(parsed)]...])
     }
 
+    /// Whether `label` (normalized: lowercase ASCII/Punycode) is a top-level domain some rule ends with ("il",
+    /// "com", "xn--4dbrk0ce"). "js" or "txt" aren't. Lets DomainExtractor tell "node.js" (a search) from an address.
+    func isKnownTopLevelDomain(_ label: Substring) -> Bool {
+        !label.isEmpty && !label.contains(".") && table[label] != nil
+    }
+
     /// A normalized host and the start index of each label, so every suffix is a slice.
     private struct ParsedHost {
         let host: Substring

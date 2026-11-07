@@ -6,10 +6,14 @@
 enum Punycode {
     private static let base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700
     private static let initialBias = 72, initialN = 0x80
+    /// Generous: a DNS label is at most 63 bytes. Longer input → nil (no real host needs it).
+    static let maxLabelLength = 1_024
 
-    /// Encodes one label's code points (no "xn--" prefix). nil on overflow (absurdly long labels).
+    /// Encodes one label's code points (no "xn--" prefix). nil on overflow or input over `maxLabelLength`.
     static func encode(_ label: String) -> String? {
         let input = label.unicodeScalars.map { Int($0.value) }
+        // QA P3-2: the loop below is quadratic in the label length; real labels are ≤ 63 code points.
+        guard input.count <= maxLabelLength else { return nil }
         var output = input.filter { $0 < 0x80 }.map { Character(Unicode.Scalar(UInt8($0))) }
         let basicCount = output.count
         var handled = basicCount
@@ -55,6 +59,7 @@ enum Punycode {
     /// Decodes one label's Punycode (no "xn--" prefix). nil when it isn't valid Punycode.
     static func decode(_ encoded: String) -> String? {
         let scalars = Array(encoded.unicodeScalars)
+        guard scalars.count <= maxLabelLength else { return nil }   // QA P3-2: bounds the quadratic insert loop
         var output: [Int] = []
         var start = 0
         if let dash = scalars.lastIndex(of: "-") {

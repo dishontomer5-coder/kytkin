@@ -172,6 +172,36 @@ final class PublicSuffixListTests: XCTestCase {
         XCTAssertEqual(list.registrableDomain(forHost: "a.1a"), "a.1a")
     }
 
+    func testKnownTopLevelDomains() throws {
+        let list = try psl()
+        for tld in ["com", "il", "ai", "uk", "ck", "io", "xn--4dbrk0ce"] { XCTAssertTrue(list.isKnownTopLevelDomain(Substring(tld)), tld) }
+        for tld in ["js", "txt", "html", "local", "", "co.il", "5"] { XCTAssertFalse(list.isKnownTopLevelDomain(Substring(tld)), tld) }
+    }
+
+    func testIPv4EndsInANumberHasNoFalsePositivesOnRealSuffixes() throws {
+        // No PSL rule's last label is numeric or 0x-hex, so "ends in a number" never hides a real host.
+        let text = try String(contentsOf: XCTUnwrap(PublicSuffixList.bundledURL), encoding: .utf8)
+        text.enumerateLines { line, _ in
+            guard !line.hasPrefix("//"), let rule = line.split(separator: " ").first, !rule.isEmpty else { return }
+            let host = "a." + String(rule.drop(while: { $0 == "!" || $0 == "*" || $0 == "." }))
+            XCTAssertFalse(IPAddress.isIPLiteral(HostNormalizer.normalize(host)), host)
+        }
+        XCTAssertFalse(IPAddress.isIPLiteral("123.example.com"))
+        XCTAssertFalse(IPAddress.isIPLiteral("1password.com"))
+        XCTAssertTrue(IPAddress.isDottedQuadIPv4("255.255.255.255"))
+        XCTAssertFalse(IPAddress.isDottedQuadIPv4("256.0.0.1"))
+        XCTAssertFalse(IPAddress.isDottedQuadIPv4("1.2.3"))
+        XCTAssertFalse(IPAddress.isDottedQuadIPv4("1.2.3.4.5"))
+    }
+
+    func testEmptyListStillWorksWithImplicitRule() {
+        // What a broken bundle would give if it loaded empty text: every TLD is the public suffix.
+        let list = PublicSuffixList(datContents: "")
+        XCTAssertEqual(list.ruleCount, 0)
+        XCTAssertEqual(list.registrableDomain(forHost: "www.ynet.co.il"), "co.il")
+        XCTAssertNil(list.registrableDomain(forHost: "com"))
+    }
+
     // MARK: - Speed
 
     func testLoadTimeIsSmall() throws {
