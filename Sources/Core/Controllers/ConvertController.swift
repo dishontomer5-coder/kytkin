@@ -341,6 +341,12 @@ import Foundation
         case .exhausted where outcome.attempts.allSatisfy({ Self.isRead($0.step) }):
             // The read found no run (or couldn't run and there was no key step).
             if scan == .tooLong { return .failed(.runTooLong, beeps: true, textMayHaveChanged: false) }
+            // QA (P2-59c): the read itself failed while the buffer holds words Kytkin couldn't count or type (a dead
+            // key, `noUnicode`): "couldn't convert", a beep, as on the key path. Only "read fine, nothing there", or
+            // a failed read with nothing remembered (P2-54(a)), just switches.
+            if snap.hasRun, outcome.attempts.contains(where: { $0.verdict != .done }) {
+                return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: false)
+            }
             return .nothingToConvert
         default:
             return Self.failure(outcome)

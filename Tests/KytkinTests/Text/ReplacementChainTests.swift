@@ -252,6 +252,27 @@ final class ReplacementChainTests: XCTestCase {
         XCTAssertEqual(f.selection, sel(12, 0))
     }
 
+    /// P2-59b QA: the AX run is canonically equal to the buffer's text but in another normalization (`e` + U+0301
+    /// on screen, `é` in the buffer). Swift's `==` says equal; the key fallback must not trust it: some apps delete
+    /// a decomposed character one scalar per Backspace, so the count would be wrong.
+    @TextActor func testKeyFallbackIsSkippedWhenTheAXRunIsOnlyCanonicallyEqualToTheBuffer() async {
+        let f = FakeTextField("cafe\u{301}")
+        f.writeBehavior = .silentNoop
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "caf\u{e9}", convert: { _ in "xxxx" },
+                                       locateRun: { w in RunLocation(offset: 0, length: w.text.utf16.count) },
+                                       capabilities: &caps)
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(out.attempts.map(\.step),
+                       [.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)])
+        XCTAssertTrue(poster.events.isEmpty, "no Backspace on a merely canonically-equal run")
+        XCTAssertEqual(f.text, "cafe\u{301}")
+    }
+
     /// The run read can't run (no AXStringForRange here): the AX write that depends on it is skipped, not run and
     /// not recorded, and the key step runs on the caller's buffer text.
     @TextActor func testUnavailableReadSkipsTheAXWriteAndRunsTheKeyStep() async {

@@ -142,4 +142,49 @@ final class RunBeforeCaretTests: XCTestCase {
         XCTAssertEqual(side, .a)
         XCTAssertEqual(loc, RunLocation(offset: 2 + 2 + 1 + 4 + 1 + 4 + 1, length: 7))
     }
+
+    // MARK: - QA (P2-59b/c): adversarial mixes
+
+    func testNoBreakSpaceAndBidiMarksNeverWidenTheRunPastTheOtherLanguage() {
+        XCTAssertEqual(run("שלום\u{00A0}akuo\u{00A0}vh"), "A:akuo\u{00A0}vh", "NBSP is a space, not a stop")
+        XCTAssertEqual(run("שלום\u{200F} akuo"), "A:akuo", "an RLM after Hebrew stays with the Hebrew")
+        XCTAssertEqual(run("שלום \u{200F}akuo"), "A:\u{200F}akuo", "a mark that starts the token goes with it")
+        XCTAssertEqual(run("akuo\u{200E}"), "A:akuo\u{200E}", "a trailing LRM passes through")
+        XCTAssertEqual(run("שלום\u{2028}akuo"), "A:akuo", "U+2028 is a line break")
+    }
+
+    func testDigitsAndPunctuationBetweenLanguagesAreTrimmed() {
+        XCTAssertEqual(run("שלום 2024 akuo"), "A:akuo")
+        XCTAssertEqual(run("שלום 2024"), "B:שלום 2024", "trailing weak tokens are crossed to find the side")
+        XCTAssertEqual(run("hello 2024 שלום"), "B:שלום")
+        XCTAssertEqual(run("(akuo)"), "A:(akuo)")
+    }
+
+    /// The owner double-Shifts on text that is already right: the whole line's run converts, never past the line.
+    func testCorrectTextConvertsOnlyItsLine() {
+        XCTAssertEqual(run("hello\nשלום עולם"), "B:שלום עולם")
+        XCTAssertEqual(run("akuo\nhello world"), "A:hello world")
+    }
+
+    /// The window can start inside a character the AX read cut: a lone low surrogate (U+FFFD once decoded) or a
+    /// combining mark without its letter. That first token is never converted.
+    func testAWindowStartingMidCharacterNeverConvertsTheCutToken() {
+        let loneLow = String(decoding: [0xDE00] + Array("akuo vh".utf16), as: UTF16.self)
+        XCTAssertEqual(run(loneLow, atStart: false), "A:vh")
+        // A lone niqqud mark is alphabetic, so it classes as a foreign letter: a mid-token stop. That is right, since
+        // in the field it sits on a Hebrew letter just before the window, so `akuo` starts after the other language.
+        XCTAssertEqual(run("\u{05B8}akuo vh", atStart: false), "A:akuo vh")
+        XCTAssertEqual(run("e\u{0301}akuo vh".unicodeScalars.dropFirst().map(String.init).joined(), atStart: false),
+                       "A:vh", "a lone Latin accent is not a letter: the cut token is dropped")
+        XCTAssertEqual(run("\u{05B8} akuo", atStart: false), "A:akuo", "a lone mark then a space: the run is whole")
+    }
+
+    func testEmojiSequencesInsideTheRunKeepTheirUnits() {
+        let w = BeforeCaretWindow(text: "שלום akuo 👨‍👩‍👧 vh", location: 0, reachesFieldStart: true)
+        guard case let .run(loc, .a) = RunBeforeCaret.scan(w, classify: he.runClass) else {
+            return XCTFail("expected a Latin run")
+        }
+        XCTAssertEqual(loc.offset, 5)
+        XCTAssertEqual(loc.length, "akuo 👨‍👩‍👧 vh".utf16.count)
+    }
 }

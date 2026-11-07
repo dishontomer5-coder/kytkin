@@ -7,8 +7,9 @@
 //     `readRunBeforeCaret` and the caller's `locateRun`). Found a run → it is the text to replace. Read fine but
 //     nothing there → `.exhausted`, nothing written. Unavailable → the AX steps after it are skipped (not run, not
 //     recorded) and the key step, if any, runs on the caller's `old`.
-//   - P2-59 key-step rule: `backspaceAndType` runs only if `old != nil && current == old`: after a run read it
-//     deletes exactly what AX and the buffer agree is before the caret. Otherwise it is skipped as untouched.
+//   - P2-59 key-step rule: `backspaceAndType` runs only if `old != nil` and `current` has exactly `old`'s scalars:
+//     after a run read it deletes exactly what AX and the buffer agree is before the caret. Otherwise it is skipped
+//     as untouched.
 //   - Before the first step that writes to the field, `mayWrite` is asked once (ConvertController takes the
 //     hold-back commit there, 001 §7 B3). false = abandon silently, nothing written.
 //     P2-51 (001 §12.2 W8): "writes" covers AX writes as well as key posts. The AX step's own writes include the
@@ -57,8 +58,10 @@ enum ReplacementChain {
         for step in steps {
             let isKeyStep = if case .backspaceAndType = step { true } else { false }
             if skipAXSteps && !isKeyStep { continue }
-            // P2-59 (X4): delete only what is known to be before the caret.
-            if isKeyStep, old == nil || current != old { continue }
+            // P2-59 (X4): delete only what is known to be before the caret. QA (P2-59b): compared scalar by scalar,
+            // not with `==` (canonical equivalence): an AX run in another normalization (`e` + U+0301 for `é`) is
+            // the same grapheme count but some apps delete it a scalar at a time, so Backspace × N would be wrong.
+            if isKeyStep, !Self.sameScalars(current, old) { continue }
             if clock.nowNanos &- start > budgetNanos {
                 return ReplacementOutcome(result: .timedOut, attempts: attempts)
             }
@@ -106,6 +109,12 @@ enum ReplacementChain {
             }
         }
         return ReplacementOutcome(result: .exhausted, attempts: attempts)
+    }
+
+    /// P2-59b QA: exactly the same text (same scalars), both non-nil. `String ==` is canonical equivalence.
+    private static func sameScalars(_ a: String?, _ b: String?) -> Bool {
+        guard let a, let b else { return false }
+        return a.unicodeScalars.elementsEqual(b.unicodeScalars)
     }
 
     /// The only step that writes nothing (not even a selection range). P2-51: every other step, including any

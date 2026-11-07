@@ -168,6 +168,31 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(field.text, "123")
     }
 
+    /// QA (P2-59c): a readable field whose run read then fails, with words in the buffer that can't be counted (a
+    /// dead key: no key step is planned). That is "couldn't convert", a beep, not a silent switch.
+    @TextActor func testAFailedReadWithAnUncountableBufferBeeps() async {
+        let (sut, r) = scripted(readable: true)
+        r.results[.read] = .unavailable
+        let dead = WordSnapshot(strokes: [Stroke(keyCode: 14, layer: .option)] + ConvertFixtures.strokes("akuo"),
+                                previousWords: [], renderedIn: IDs.abc, isValid: true)
+        let out = await sut.handle(request(dead, gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .noop(.replacement(.exhausted)))
+        XCTAssertEqual(log.beeps, 1)
+        XCTAssertTrue(log.switches.isEmpty)
+        XCTAssertTrue(log.claims.isEmpty)
+        XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: nil, bufferAfter: nil)])
+    }
+
+    /// The same failed read with nothing remembered: just switch (P2-54(a)).
+    @TextActor func testAFailedReadWithAnEmptyBufferSwitchesSilently() async {
+        let (sut, r) = scripted(readable: true)
+        r.results[.read] = .unavailable
+        let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
+        XCTAssertEqual(log.beeps, 0)
+        XCTAssertTrue(log.claims.isEmpty)
+    }
+
     @TextActor func testTheRunStopsAtALineBreak() async {
         let field = FakeTextField("akuo\nvh")
         let (sut, _, _) = real(field)
