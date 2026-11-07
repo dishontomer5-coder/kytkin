@@ -28,6 +28,14 @@ enum KeyCode {
         code == space || code == returnKey || code == tab || code == keypadEnter
     }
 
+    /// P2-59 (001 §12.3 X3): ends the word buffer after the word boundary. Return and keypad Enter (in a chat the
+    /// message is gone, in a terminal the command ran), Tab (often moves focus) and Option-Space (may type a no-break
+    /// space, which the key path would retype as U+0020). So the buffer only ever spans plain spaces.
+    static func endsBuffer(_ code: UInt16, deviceFlags: UInt64) -> Bool {
+        if code == returnKey || code == keypadEnter || code == tab { return true }
+        return code == space && deviceFlags & KeyEvent.optionMask != 0
+    }
+
     /// Moves the caret or deletes text we never saw, so the buffer no longer matches what is before the caret.
     static func invalidatesBuffer(_ code: UInt16) -> Bool {
         switch code {

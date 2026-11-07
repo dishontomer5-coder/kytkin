@@ -9,6 +9,8 @@
 // - While a replacement runs (active tap only), user keyDown/keyUp are held in a FIFO (≤ 32). A deadline
 //   (400 ms convert, 150 ms auto-fix), an overflow, a shortcut, a click or a reset flushes them unchanged.
 // - O(1) per event, no allocation except a snapshot on a trigger, no logging (lint-enforced).
+// - P2-59 (001 §12.3 X3/X5/X6): Return, keypad Enter, Tab and Option-Space end the buffer; a convert can keep the
+//   buffer re-rendered (`bufferRendering`); the last finished convert is remembered until anything touches the field.
 // Time for deadlines comes from the injected Clock (same uptime base as event timestamps).
 //
 // Adapter protocol (B3, QA): after every `handle`, every main/worker hop, and on the deadline timer:
@@ -52,6 +54,15 @@ struct KeyStreamProcessor: Sendable {
     /// The layout the buffer's strokes are typed in, as told by main.
     private(set) var inputSource: InputSourceID?
     private(set) var buffer = WordBuffer()
+    /// P2-59 (001 §12.3 X5): the layout the kept buffer is rendered in after a convert that kept it without switching
+    /// (`finishReplacement(bufferRenderedIn:)`). Nil = the buffer is in `inputSource`. Snapshots use
+    /// `bufferRendering ?? inputSource`. The next letter typed while it differs from `inputSource` first invalidates
+    /// the buffer (that stroke is in another layout); Space and Backspace keep it.
+    private(set) var bufferRendering: InputSourceID?
+    /// P2-59 (X6): the last convert generation finished (not aborted, no keyDown held behind it). Cleared by any
+    /// keyDown (user or replay), a click, a reset, a buffer invalidation and the start of the next replacement.
+    /// Snapshots carry it as `untouchedSinceConvert`.
+    private(set) var lastConvertGen: UInt64?
 
     private var detector: DoubleShiftDetector
     private var queue: HoldBackQueue
@@ -113,12 +124,15 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, handleFlags(e))
 
         case .pointerDown:
+            lastConvertGen = nil // P2-59 (X6): the caret may have moved
             _ = detector.handle(.pointerDown)
             // R5: a click during a replacement finishes it: flush, and the buffer is stale.
             abortReplacement()
             return (.pass, invalidateBuffer())
 
         case .keyDown, .keyUp:
+            // P2-59 (X6): any user or replayed key (held or not) touches the field after the last convert.
+            if e.kind == .keyDown { lastConvertGen = nil }
             if holdsKeys { return hold(e) }
             guard e.kind == .keyDown else { return (.pass, nil) }
             _ = detector.handle(.otherKeyDown)
@@ -144,7 +158,7 @@ struct KeyStreamProcessor: Sendable {
         }
         // QA: flushing under a posting worker means it may have posted part of its text: the buffer can't be trusted.
         if postingStarted {
-            buffer.invalidate()
+            forgetBuffer()
             // P2-35: its worker may still be posting: block new replacements until its finish or the cap.
             stalePosting = (r.gen, now + config.postingHardCapNanos)
         }
@@ -160,7 +174,12 @@ struct KeyStreamProcessor: Sendable {
     /// `bufferAfter`: nil = the text is unchanged, keep the buffer; non-empty = the current word is now these
     /// strokes; empty = the text changed and no strokes describe it: forget the whole buffer (P2-21 QA: keeping the
     /// earlier words would let a Backspace make one of them "current" again, over text that is no longer there).
-    mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) -> [HeldEvent] {
+    /// P2-59 (001 §12.3 X5): `newRendering` keeps its meaning ("the input source is now this"; a kept buffer is in it).
+    /// `bufferRenderedIn`: the kept buffer was re-rendered into this layout while the input source stayed the same
+    /// (convert with "switch after converting" off), so a second double-Shift converts it back. A finished convert
+    /// that wasn't aborted becomes `lastConvertGen` (X6).
+    mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
+                                    bufferRenderedIn: InputSourceID? = nil) -> [HeldEvent] {
         // P2-35: the force-flushed worker is done posting, so new replacements may start again.
         if stalePosting?.gen == gen { stalePosting = nil }
         guard case let .replacing(r) = phase, r.gen == gen else { return [] }
@@ -170,7 +189,13 @@ struct KeyStreamProcessor: Sendable {
         if !r.aborted {
             if let newRendering { inputSource = newRendering }
             if let bufferAfter {
-                if bufferAfter.isEmpty { buffer.invalidate() } else { buffer.replaceCurrentWord(with: bufferAfter) }
+                if bufferAfter.isEmpty { forgetBuffer() } else { buffer.replaceCurrentWord(with: bufferAfter) }
+            }
+            // P2-59: the buffer's rendering after this finish. Neither given: unchanged (nothing was written).
+            if let bufferRenderedIn {
+                bufferRendering = buffer.isEmpty || bufferRenderedIn == inputSource ? nil : bufferRenderedIn
+            } else if newRendering != nil {
+                bufferRendering = nil
             }
         }
         var held = queue.drain()
@@ -178,8 +203,19 @@ struct KeyStreamProcessor: Sendable {
             // §3d: on a fix, the worker posted the trigger itself (marked `ours`), so don't replay it, and
             // end the word here because our own Space never reaches the buffer. The trigger is always the
             // first held event: an auto-fix only starts from idle with an empty FIFO.
-            held.removeFirst()
-            if !r.aborted { buffer.boundary() }
+            let trigger = held.removeFirst().event
+            if !r.aborted {
+                buffer.boundary()
+                // P2-59 (X3): a Return / Tab / Option-Space trigger ends the buffer here too (→ P4-7).
+                if KeyCode.endsBuffer(trigger.keyCode, deviceFlags: trigger.deviceFlags) { forgetBuffer() }
+            }
+        }
+        // P2-59 (X6): set last, after any buffer change above, so this finish's own bookkeeping doesn't clear it.
+        // QA (P2-59a): not when a held keyDown is about to be replayed: it types after the convert, so the field is
+        // already "touched". Its replay would clear it anyway, but a double-Shift handled before the replay comes back
+        // through the tap must not see this generation as untouched. ≤ 32 compares, on a finish only (not per key).
+        if r.kind == .convert, !r.aborted, !held.contains(where: { $0.event.kind == .keyDown }) {
+            lastConvertGen = gen
         }
         return held
     }
@@ -193,7 +229,7 @@ struct KeyStreamProcessor: Sendable {
         _ = detector.handle(.reset)
         leftShiftHeld = false
         rightShiftHeld = false
-        buffer.invalidate()
+        forgetBuffer()
         if let deviceFlags { reseedShifts(deviceFlags) }
     }
 
@@ -222,9 +258,12 @@ struct KeyStreamProcessor: Sendable {
 
     /// Main saw the input source change. Our own after-convert switch keeps the buffer (it was re-rendered);
     /// any other change invalidates it (001 §2.2).
+    /// P2-59 (X5): our switch keeps the whole buffer; once the source is the layout the buffer was re-rendered into,
+    /// `bufferRendering` has nothing left to say.
     mutating func inputSourceChanged(to id: InputSourceID?, isOurs: Bool) {
         if !isOurs { reset(.inputSourceChanged) }
         inputSource = id
+        if bufferRendering == id { bufferRendering = nil }
     }
 
     // MARK: - Private
@@ -277,7 +316,9 @@ struct KeyStreamProcessor: Sendable {
         guard !staleWorkerMayPost() else { return nil } // P2-35: passes, no signal, no hold
         generation &+= 1
         let gen = generation
-        let snapshot = buffer.snapshot(renderedIn: inputSource)
+        let snapshot = currentSnapshot()
+        // P2-59 (X6): the snapshot carries the last convert; this new generation replaces it (set again at its finish).
+        lastConvertGen = nil
         // §3c: the second release passes; from now on user keys are held. Listen-only can't hold, so main
         // only toggles the language (§3c step 10).
         if mode == .active { startReplacement(.convert, gen: gen) }
@@ -291,7 +332,11 @@ struct KeyStreamProcessor: Sendable {
         }
         if KeyCode.isWordBoundary(code) {
             if let trigger = autoFixTrigger(e) { return trigger }
-            return (.pass, buffer.boundary() ? .wordBoundary : nil)
+            let ended = buffer.boundary()
+            // P2-59 (001 §12.3 X3): Return, keypad Enter, Tab and Option-Space end the buffer, after the boundary
+            // (the learner's `wordBoundary` is unchanged), so the buffer only ever spans plain spaces.
+            if KeyCode.endsBuffer(code, deviceFlags: e.deviceFlags) { forgetBuffer() }
+            return (.pass, ended ? .wordBoundary : nil)
         }
         if code == KeyCode.delete {
             if e.deviceFlags & KeyEvent.optionMask != 0 {
@@ -301,8 +346,15 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, nil)
         }
         if KeyCode.typesNothing(code) { return (.pass, nil) }
+        // P2-59 (X5): a letter typed while the kept buffer shows another layout would mix two renderings: forget the
+        // kept words first. One optional compare, no allocation (B1).
+        var signal: KeySignal?
+        if let rendering = bufferRendering {
+            if rendering != inputSource { signal = invalidateBuffer() }
+            bufferRendering = nil
+        }
         buffer.append(Stroke(keyCode: code, layer: e.layer))
-        return (.pass, nil)
+        return (.pass, signal)
     }
 
     /// §3d (P4): Space / Return / Tab after a word is held for auto-fix. The trigger is the first held event,
@@ -312,7 +364,7 @@ struct KeyStreamProcessor: Sendable {
         // QA: never start over held events (a full, aborted FIFO the adapter hasn't flushed yet).
         guard case .idle = phase, queue.isEmpty else { return nil }
         guard !staleWorkerMayPost() else { return nil } // P2-35: the trigger passes like any boundary
-        let snapshot = buffer.snapshot(renderedIn: inputSource)
+        let snapshot = currentSnapshot()
         guard snapshot.isValid else { return nil }
         generation &+= 1
         let gen = generation
@@ -344,9 +396,24 @@ struct KeyStreamProcessor: Sendable {
     }
 
     private mutating func invalidateBuffer() -> KeySignal? {
-        guard !buffer.isEmpty else { return nil }
-        buffer.invalidate()
+        guard !buffer.isEmpty else {
+            forgetBuffer()
+            return nil
+        }
+        forgetBuffer()
         return .bufferInvalidated
+    }
+
+    /// P2-59: every buffer invalidation also forgets the kept rendering and the last convert (X5/X6).
+    private mutating func forgetBuffer() {
+        buffer.invalidate()
+        bufferRendering = nil
+        lastConvertGen = nil
+    }
+
+    /// P2-59 (X5/X6): the buffer as a worker sees it. Allocates: call it only on a trigger.
+    private func currentSnapshot() -> WordSnapshot {
+        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, untouchedSinceConvert: lastConvertGen)
     }
 
     /// A Shift already down at reset joins the detector as held and spoiled, so it can't start a tap,

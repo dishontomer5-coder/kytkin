@@ -20,5 +20,15 @@ protocol KeyWatching: AnyObject, Sendable {
     /// Every generation a `.doubleShift` / `.wordEnded` signal armed must end here, whatever happened, so held keys
     /// replay at once instead of waiting for the deadline (or the 1 s hard cap). `bufferAfter`: nil = keep the
     /// buffer, [] = forget it (the text changed, no strokes describe it), else the current word's new strokes.
-    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?)
+    /// P2-59 (001 §12.3 X5): `bufferRenderedIn` = the kept buffer now shows in this layout while the input source is
+    /// unchanged (convert without switching), so the next double-Shift converts it back. Nil = no change.
+    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
+                           bufferRenderedIn: InputSourceID?)
+}
+
+extension KeyWatching {
+    /// P2-59: the finish without a re-rendered buffer (`bufferRenderedIn: nil`), as before.
+    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) {
+        finishReplacement(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter, bufferRenderedIn: nil)
+    }
 }

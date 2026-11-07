@@ -144,9 +144,14 @@ final class KeyWatcher: @unchecked Sendable { // @unchecked: mutable state is gu
 
     /// Worker, when done (contract step 3), from any thread. The tap thread replays the held keys, then finishes the
     /// commit.
-    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) {
+    /// P2-59: `bufferRenderedIn` passes through to the processor (001 §12.3 X5).
+    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
+                           bufferRenderedIn: InputSourceID?) {
         guard let (thread, engine) = running() else { return }
-        thread.async { engine.finishReplacement(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter) }
+        thread.async {
+            engine.finishReplacement(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter,
+                                     bufferRenderedIn: bufferRenderedIn)
+        }
     }
 
     /// Check Secure Input now (main calls this on every app change; the tap thread also polls every 1 s). Main only.

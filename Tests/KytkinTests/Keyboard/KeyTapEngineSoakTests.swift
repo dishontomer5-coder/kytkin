@@ -9,6 +9,9 @@
 //     that worker's own finish, a full FIFO, or a tap replacement (no tap can hold keys behind it then).
 // P2-50 QA: runtime `updateConfig` (001 §12 W6) is mixed in: double-Shift on/off, window and side policy, auto-fix
 // on/off and both deadlines change at random, mid-word and mid-replacement. The invariants above must still hold.
+// P2-59a QA: Return, keypad Enter, Tab and Option-Space (which end the buffer, and can be auto-fix triggers) are typed,
+// and convert finishes randomly keep the buffer re-rendered (`bufferRenderedIn`), forget it, or switch. Also checked:
+// after any user keyDown reaches the processor, no "untouched since convert" generation is left (001 §12.3 X6).
 // Nothing is installed or posted: events are built in memory and handed to the fake.
 
 import CoreGraphics
@@ -70,7 +73,8 @@ final class KeyTapEngineSoakTests: XCTestCase {
         var workers: [UInt64: (kind: Kind, claimed: Bool)] = [:]
         var seenSignals = 0
         var down: [UInt16] = []
-        let letters: [UInt16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, KeyCode.space]
+        let letters: [UInt16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, KeyCode.space, KeyCode.space,
+                                 KeyCode.returnKey, KeyCode.keypadEnter, KeyCode.tab]
         let fail = { (what: String) in XCTFail("seed \(seed): \(what)") }
 
         func tick(_ ms: UInt64) {
@@ -88,6 +92,10 @@ final class KeyTapEngineSoakTests: XCTestCase {
             fifoMayOverflow = engine.processor.heldCount >= config.holdBackCapacity - 1
             defer { fifoMayOverflow = false }
             let passed = backend.deliver(isDown ? .keyDown : .keyUp, e) ?? true // no tap: straight to the app
+            // P2-59a: a user keyDown (passed or held) always ends "untouched since the last convert".
+            if isDown, engine.mode != .off, engine.processor.lastConvertGen != nil {
+                fail("a keyDown left lastConvertGen set")
+            }
             if passed {
                 if postsInCallback > 0 { fail("a key passed in a callback that also re-posted held keys") }
                 output.append(e.timestamp)
@@ -117,7 +125,9 @@ final class KeyTapEngineSoakTests: XCTestCase {
                 } else if down.count < 3 {
                     let code = letters[rng.below(letters.count)]
                     down.append(code)
-                    key(code, down: true)
+                    // P2-59a: Option-Space now and then (ends the buffer, like Return).
+                    let flags = code == KeyCode.space && rng.below(4) == 0 ? CGEventFlags.maskAlternate.rawValue : 0
+                    key(code, down: true, flags: flags)
                 }
             case 50..<58:
                 tick(1)
@@ -139,9 +149,14 @@ final class KeyTapEngineSoakTests: XCTestCase {
                     postsInCallback = 0
                     finishing = gen // QA: only the posting worker's own finish may replay under its claim
                     defer { finishing = nil }
+                    // P2-59a: the §12.3 X5 buffer-after rows, at random: switched + kept, kept re-rendered without a
+                    // switch, forgotten, nothing written.
+                    let he = InputSourceID("com.apple.keylayout.Hebrew"), abc = InputSourceID("com.apple.keylayout.ABC")
+                    let row = w.kind == .convert ? rng.below(4) : 0
                     engine.finishReplacement(gen: gen,
-                                             newRendering: w.kind == .convert ? InputSourceID("com.apple.keylayout.Hebrew") : nil,
-                                             bufferAfter: nil)
+                                             newRendering: w.kind == .convert && row == 0 ? he : nil,
+                                             bufferAfter: row == 2 ? [] : nil,
+                                             bufferRenderedIn: row == 1 ? (rng.below(2) == 0 ? he : abc) : nil)
                 }
             case 81..<84:
                 key(8, down: true, flags: CGEventFlags.maskCommand.rawValue)
