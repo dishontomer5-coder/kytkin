@@ -15,6 +15,11 @@
 //     resign the settle restarts, and the previous app's rule is re-applied if that app is frontmost again.
 // Pause (001 §5.1): session state, not persisted. Stops switching and learning; AppController also turns the tap
 //     off. Resuming re-applies the current app's rule.
+// Kytkin on/off (`general.enabled`, Settings → General, P2-23): turning it off drops any candidate like Pause; P2-52
+//     item 3: turning it back on re-applies the current app's rule, like resuming. While Settings is in front that
+//     waits for the resign (Kytkin's own window is not a context), exactly as for Pause.
+// P2-52 item 1: at resign the frontmost app may still read as Kytkin (or unknown). AppController then asks again a
+//     moment later and calls `recheckAfterResign(frontmostPID:)`.
 
 import Foundation
 
@@ -44,6 +49,8 @@ import Foundation
     private var lastRuleSelect: (target: InputSourceID, atNanos: UInt64, generation: UInt64)?
     private var reassertedGeneration: UInt64?
     private var keyboardTapAvailable = false
+    /// `general.enabled` as last seen, so `preferencesDidChange` can tell an off → on change (P2-52 item 3).
+    private var wasEnabled: Bool
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init) {
@@ -55,6 +62,7 @@ import Foundation
         self.now = now
         let engine = Self.makeEngine(store.prefs)
         self.engine = engine
+        wasEnabled = store.prefs.general.enabled
         learner = RuleLearner(engine: engine, learningEnabled: false, keyboardTapAvailable: false,
                               currentSource: switcher.current)
         refreshLearning()
@@ -127,6 +135,18 @@ import Foundation
         engine = Self.makeEngine(store.prefs)
         learner.engine = engine
         refreshLearning()
+        enabledMayHaveChanged()
+    }
+
+    /// P2-52 item 3: Kytkin turned off → drop any candidate; turned back on → also re-apply the current app's rule
+    /// (unless Kytkin's own window is in front: then the resign does it).
+    private func enabledMayHaveChanged() {
+        let enabled = store.prefs.general.enabled
+        guard enabled != wasEnabled else { return }
+        wasEnabled = enabled
+        guard let c = context.current else { return }
+        handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
+        if enabled, !paused, !isOwnAppActive { applyRule(for: c) }
     }
 
     /// FeatureAvailability changed: `learningWithWords` decides words vs dwell (001 §6.2).
@@ -156,6 +176,14 @@ import Foundation
         guard let c = context.current else { return }
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
         if frontmostPID == c.pid { applyRule(for: c) }
+    }
+
+    /// P2-52 item 1: the second look after a resign whose frontmost app was still Kytkin or unknown. Same rule as
+    /// the resign: re-apply only if the app in front is the one Kytkin was acting for (another app gets its own
+    /// context change from ContextMonitor).
+    func recheckAfterResign(frontmostPID: Int32) {
+        guard !isOwnAppActive, let c = context.current, frontmostPID == c.pid else { return }
+        applyRule(for: c)
     }
 
     // MARK: - Menu actions
