@@ -8,6 +8,7 @@ import Foundation
         case start, stop, refresh, setInteractive(Bool)
         case requestAccessibility, requestInputMonitoring, openSystemSettings(PermissionPane)
         case refreshAutomation(Set<String>), requestAutomation(String), openAutomationSettings
+        case cancelQueuedAutomationRequests
     }
 
     var status = PermissionStatus()
@@ -24,6 +25,7 @@ import Foundation
     func refreshAutomation(for bundleIDs: Set<String>) { calls.append(.refreshAutomation(bundleIDs)) }
     func requestAutomation(for bundleID: String) { calls.append(.requestAutomation(bundleID)) }
     func openAutomationSettings() { calls.append(.openAutomationSettings) }
+    func cancelQueuedAutomationRequests() { calls.append(.cancelQueuedAutomationRequests) }
 
     /// Calls that show system UI (a permission dialog or System Settings).
     var promptingCalls: [Call] {

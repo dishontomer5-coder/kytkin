@@ -81,12 +81,50 @@ final class AutomationPermissionTrackerTests: XCTestCase {
         XCTAssertFalse(t.beginRequest("chrome", now: t0), "already on screen: not twice")
         XCTAssertEqual(t.requestInFlight, "chrome")
         XCTAssertEqual(t.requestQueue, ["arc", "safari"])
-        XCTAssertNil(t.finishRequest("arc"), "only the one on screen finishes")
-        XCTAssertEqual(t.finishRequest("chrome"), "arc")
-        XCTAssertEqual(t.finishRequest("arc"), "safari")
-        XCTAssertNil(t.finishRequest("safari"))
+        XCTAssertNil(t.finishRequest("arc", token: t.requestToken, now: t0), "only the one on screen finishes")
+        XCTAssertEqual(t.finishRequest("chrome", token: t.requestToken, now: t0), "arc")
+        XCTAssertEqual(t.finishRequest("arc", token: t.requestToken, now: t0), "safari")
+        XCTAssertNil(t.finishRequest("safari", token: t.requestToken, now: t0))
         XCTAssertNil(t.requestInFlight)
         XCTAssertTrue(t.beginRequest("chrome", now: t0), "free again")
+    }
+
+    func testAnUnansweredRequestDoesNotBlockLaterClicksForever() {
+        // P3-26 QA: a question left open (or a call stuck on a hung browser) must not dead-end every later Ask.
+        var t = AutomationPermissionTracker()
+        XCTAssertTrue(t.beginRequest("chrome", now: t0))
+        let stuck = t.requestToken
+        let wait = AutomationPermissionTracker.maxRequestWaitNanos
+        XCTAssertFalse(t.beginRequest("arc", now: t0 + wait - 1), "still waiting: queued")
+        XCTAssertTrue(t.beginRequest("safari", now: t0 + wait), "the stuck one is abandoned: this click asks now")
+        XCTAssertEqual(t.requestInFlight, "safari")
+        XCTAssertEqual(t.requestQueue, ["arc"], "the queue goes on behind it")
+        XCTAssertNil(t.finishRequest("chrome", token: stuck, now: t0 + wait), "a late answer moves nothing on")
+        XCTAssertEqual(t.requestInFlight, "safari")
+        XCTAssertEqual(t.finishRequest("safari", token: t.requestToken, now: t0 + wait), "arc")
+    }
+
+    func testCancelDropsOnlyTheWaitingRequests() {
+        var t = AutomationPermissionTracker()
+        XCTAssertTrue(t.beginRequest("chrome", now: t0))
+        XCTAssertFalse(t.beginRequest("arc", now: t0))
+        t.cancelQueuedRequests()
+        XCTAssertEqual(t.requestQueue, [])
+        XCTAssertEqual(t.requestInFlight, "chrome", "the one on screen stays")
+        XCTAssertNil(t.finishRequest("chrome", token: t.requestToken, now: t0), "nothing next")
+    }
+
+    func testALateAnswerForTheSameBrowserDoesNotFinishTheNewQuestion() {
+        // P3-26 QA: Chrome stuck, then Ask on Chrome again after the wait: the old answer has a stale token.
+        var t = AutomationPermissionTracker()
+        XCTAssertTrue(t.beginRequest("chrome", now: t0))
+        let stuck = t.requestToken
+        let later = t0 + AutomationPermissionTracker.maxRequestWaitNanos
+        XCTAssertTrue(t.beginRequest("chrome", now: later))
+        XCTAssertFalse(t.beginRequest("arc", now: later), "queued behind the new question")
+        XCTAssertNil(t.finishRequest("chrome", token: stuck, now: later))
+        XCTAssertEqual(t.requestInFlight, "chrome", "the new question is still on screen")
+        XCTAssertEqual(t.finishRequest("chrome", token: t.requestToken, now: later), "arc")
     }
 
     func testAutomationSettingsURL() {
@@ -178,6 +216,58 @@ final class PermissionsManagerAutomationTests: XCTestCase {
         }
         XCTAssertEqual(requester.asks, [chrome, arc], "then the next, in order")
         XCTAssertEqual(m.automation[arc], .granted)
+    }
+
+    func testANeverAnsweredQuestionDoesNotBlockAskForever() {
+        // P3-26 QA: the first answer doesn't come back in time; after the wait a new click still asks, and the stuck
+        // answer arriving late records its state but starts nothing.
+        var pending: [(@Sendable () -> AutomationCheckResult, @MainActor @Sendable (AutomationCheckResult) -> Void)] = []
+        let m = PermissionsManager(probe: NoProbe(), requester: plain, clock: clock,
+                                   workspaceCenter: NotificationCenter(), appCenter: NotificationCenter(),
+                                   automationProbe: probe, automationRequester: requester,
+                                   background: { work, done in pending.append((work, done)) })
+        let arc = "company.thebrowser.Browser"
+        let safari = "com.apple.Safari"
+        m.requestAutomation(for: chrome)
+        m.requestAutomation(for: arc)
+        XCTAssertEqual(pending.count, 1)
+        clock.advance(byNanos: AutomationPermissionTracker.maxRequestWaitNanos)
+        m.requestAutomation(for: safari)
+        XCTAssertEqual(pending.count, 2, "the new click asks")
+        let (stuckWork, stuckDone) = pending.removeFirst()
+        requester.answer = .denied
+        stuckDone(stuckWork())   // Chrome's late answer
+        XCTAssertEqual(m.automation[chrome], .denied, "its state is still taken")
+        XCTAssertEqual(pending.count, 1, "but it starts nothing: Safari's question is on screen")
+        requester.answer = .granted
+        var rounds = 0
+        while !pending.isEmpty && rounds < 5 {   // bounded
+            rounds += 1
+            let (work, done) = pending.removeFirst()
+            done(work())
+            XCTAssertLessThanOrEqual(pending.count, 1, "never two at once")
+        }
+        XCTAssertEqual(requester.asks, [chrome, safari, arc])
+    }
+
+    func testTurningTheSwitchOffDropsTheQuestionsStillWaiting() {
+        // P3-26 QA: on (Chrome's question on screen, Arc waiting), then off: Arc must never be asked.
+        var pending: [(@Sendable () -> AutomationCheckResult, @MainActor @Sendable (AutomationCheckResult) -> Void)] = []
+        let m = PermissionsManager(probe: NoProbe(), requester: plain, clock: clock,
+                                   workspaceCenter: NotificationCenter(), appCenter: NotificationCenter(),
+                                   automationProbe: probe, automationRequester: requester,
+                                   background: { work, done in pending.append((work, done)) })
+        m.requestAutomation(for: chrome)
+        m.requestAutomation(for: "company.thebrowser.Browser")
+        m.cancelQueuedAutomationRequests()
+        XCTAssertEqual(pending.count, 1)
+        let (work, done) = pending.removeFirst()
+        done(work())
+        XCTAssertTrue(pending.isEmpty, "nothing more is asked")
+        XCTAssertEqual(requester.asks, [chrome])
+        XCTAssertEqual(m.automation[chrome], .granted, "the answer on screen still counts")
+        m.requestAutomation(for: "company.thebrowser.Browser")
+        XCTAssertEqual(pending.count, 1, "a later click asks normally")
     }
 
     func testOpenAutomationSettings() {
@@ -300,10 +390,11 @@ final class BrowserAutomationControllerTests: XCTestCase {
         sut.setUseAutomation(true)
         sut.setUseAutomation(false)
         XCTAssertFalse(store.prefs.browsers.useAutomation)
-        XCTAssertEqual(permissions.calls, [.requestAutomation(chrome)], "turning off asks nothing")
+        XCTAssertEqual(permissions.calls, [.requestAutomation(chrome), .cancelQueuedAutomationRequests],
+                       "turning off asks nothing; it drops questions still waiting (P3-26 QA)")
         XCTAssertEqual(sut.automationState(for: chrome).status, .off)
         sut.setUseAutomation(false)
-        XCTAssertEqual(permissions.calls.count, 1, "a repeated set does nothing")
+        XCTAssertEqual(permissions.calls.count, 2, "a repeated set does nothing")
     }
 
     func testAskWhenNotOptedInDoesNothing() {

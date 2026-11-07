@@ -250,6 +250,8 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         _ = makeReal(prefs, running: [chrome, safari], permissions: permissions)
         sut.setUseAutomation(false)
         XCTAssertFalse(store.prefs.browsers.useAutomation)
-        XCTAssertTrue(permissions.calls.isEmpty, "off asks nothing and checks nothing")
+        XCTAssertEqual(permissions.calls, [.cancelQueuedAutomationRequests],
+                       "off asks nothing and checks nothing; it only drops questions still waiting (P3-26 QA)")
+        XCTAssertTrue(permissions.promptingCalls.isEmpty)
     }
 }

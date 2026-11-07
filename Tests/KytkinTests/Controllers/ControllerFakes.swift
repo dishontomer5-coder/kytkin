@@ -107,6 +107,7 @@ enum IDs {
     private(set) var automationRefreshes: [Set<String>] = []
     func refreshAutomation(for bundleIDs: Set<String>) { automationRefreshes.append(bundleIDs) }
     func requestAutomation(for bundleID: String) { XCTFailNoPrompt() }
+    func cancelQueuedAutomationRequests() {}
     func openAutomationSettings() { XCTFailNoPrompt() }
 
     func grant(accessibility: PermissionState, inputMonitoring: PermissionState = .notDetermined,

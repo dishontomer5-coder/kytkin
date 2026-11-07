@@ -148,7 +148,11 @@ struct BrowserAutomationState: Sendable, Equatable {
         store.update { $0.browsers.useAutomation = on }
         // The prompt only on this click, and only for browsers running now (asking a quit browser can't prompt
         // anyway); PermissionsManager shows the questions one at a time.
-        guard on else { return }
+        guard on else {
+            // P3-26 QA: browsers still waiting for their question from the earlier "on" click are not asked.
+            permissions.cancelQueuedAutomationRequests()
+            return
+        }
         for id in Self.automationBrowserIDs where isRunning(id) {
             if permissions.status.grants.automation[id] == .granted { continue }
             permissions.requestAutomation(for: id)

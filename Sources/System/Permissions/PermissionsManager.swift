@@ -148,16 +148,24 @@ import Observation
     func requestAutomation(for bundleID: String) {
         guard automationRequester != nil else { return }
         guard automationTracker.beginRequest(bundleID, now: clock.nowNanos) else { return }
-        ask(bundleID)
+        ask(bundleID, token: automationTracker.requestToken)
     }
 
-    private func ask(_ bundleID: String) {
+    private func ask(_ bundleID: String, token: UInt64) {
         guard let automationRequester else { return }
         background({ automationRequester.ask(bundleID: bundleID) }) { [weak self] result in
             guard let self else { return }
             self.automationAnswered(bundleID, result)
-            if let next = self.automationTracker.finishRequest(bundleID) { self.ask(next) }
+            // P3-26 QA: only the request still in flight (same token) moves the queue on; an abandoned one doesn't.
+            if let next = self.automationTracker.finishRequest(bundleID, token: token, now: self.clock.nowNanos) {
+                self.ask(next, token: self.automationTracker.requestToken)
+            }
         }
+    }
+
+    /// P3-26 QA: the switch turned off; the waiting questions are never shown.
+    func cancelQueuedAutomationRequests() {
+        automationTracker.cancelQueuedRequests()
     }
 
     /// User click only.
