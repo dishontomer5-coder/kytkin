@@ -16,9 +16,9 @@ final class SitePolicyTests: XCTestCase {
                         siteRulesEnabled: [String: Bool] = [:]) -> SitePolicy {
         var browsers = Preferences.Browsers()
         browsers.ignorePrivateWindowsCompletely = ignorePrivate
+        browsers.siteRulesEnabled = siteRulesEnabled   // P3-9: folded into Preferences.Browsers
         return SitePolicy(availability: availability, browsers: browsers, suffixListLoaded: suffixListLoaded,
-                          webLinkHandlers: handlers, ownBundleIDPrefix: "io.github.kytkin.",
-                          siteRulesEnabled: siteRulesEnabled)
+                          webLinkHandlers: handlers, ownBundleIDPrefix: "io.github.kytkin.")
     }
 
     func testKnownBrowsersGetARequest() {

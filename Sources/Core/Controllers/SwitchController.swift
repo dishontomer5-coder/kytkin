@@ -5,6 +5,9 @@
 //     RuleEngine.resolve → `select(target, .rule)` when there is a target that isn't current (keepCurrent → nothing).
 //     A successful select of ours → `conflicts.noteOurSwitch()`. An external change within 300 ms of that select,
 //     to another source, in the same context → re-assert once (design.md: "re-assert at most once"), never again.
+//     P3-9 (D5): a Context that differs from the last one only in `pageState` reaches the learner but re-applies
+//     nothing. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
+//     only on a site or siteHost rule (D6).
 // (b) `.external` change → `conflicts.noteExternalSwitch()` and, unless Kytkin's own window is active, paused or
 //     the app disabled, learner `externalSwitch`; `.ours` → learner `ourSwitch`. Word boundaries and dwell ticks feed
 //     the learner too; a `.learn` outcome is written through `RuleWriter` (001 §12 S3).
@@ -37,8 +40,25 @@ import Foundation
     struct CurrentRule: Equatable {
         let context: Context
         let resolution: Resolution
-        /// The scope a Pin would write (the most specific one for this context).
+        /// The scope a Pin would write (the most specific one for this context). P3-9: `RuleEngine.pinScope`, so a
+        /// private window pins the site too (owner Q1).
         let pinScope: RuleScope
+
+        /// P3-9 (001 §14.9): the menu speaks about the site: a watched browser showing a known site (kept or read).
+        var isSite: Bool {
+            context.pageState != nil && HostNormalizer.normalized(context.siteDomain) != nil
+        }
+
+        /// The scope the menu's Forget removes; nil = nothing to forget. P3-9 (D6): on a site only a matched site or
+        /// siteHost rule; the browser's own rule is forgotten in Settings or from the menu on a non-web page.
+        var forgetScope: RuleScope? {
+            guard let matched = resolution.matched else { return nil }
+            guard isSite else { return matched.scope }
+            switch matched.scope {
+            case .site, .siteHost: return matched.scope
+            case .app, .chat: return nil
+            }
+        }
     }
 
     private let switcher: any InputSourceSwitching
@@ -60,6 +80,8 @@ import Foundation
     private var wasEnabled: Bool
     /// P2-55: the learner's last decision or the last switch the gates dropped, for the DEBUG menu (IDs only).
     private var lastLearnerNote: String?
+    /// P3-9 (D5): the last Context delivered to `contextDidChange`, to spot a page-state-only change.
+    private var lastDelivered: Context?
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init) {
@@ -81,8 +103,30 @@ import Foundation
 
     func contextDidChange(_ c: Context) {
         isOwnAppActive = false   // P2-55: another app is frontmost, so Kytkin's own window can't be
+        let pageStateOnly = lastDelivered.map { Self.differsOnlyInPageState($0, c, engine: engine) } ?? false
+        lastDelivered = c
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
+        // P3-9 (D5, 001 §14.6): a change of page state alone (e.g. a click into the address bar and back) cancels a
+        // candidate and restarts the settle, like a window focus change, but doesn't re-apply the rule: that would
+        // undo the user's manual switch.
+        guard !pageStateOnly else { return }
         applyRule(for: c)
+    }
+
+    /// P3-9: same app, pid, site, private flag and chat; only `pageState` (and the generation) differs.
+    /// QA (P3-9): the host counts only as ContextAssembler counts it: when the two differ (after HostNormalizer) and
+    /// either has a siteHost rule. The assembler drops a host-only change inside one site, so the host it emits with
+    /// the next page-state change can be newer than the last one delivered (www.google.com → mail.google.com, then a
+    /// click into the address bar); that must not re-apply the site rule over a manual switch.
+    static func differsOnlyInPageState(_ a: Context, _ b: Context, engine: RuleEngine) -> Bool {
+        guard a.pageState != b.pageState, a.bundleID == b.bundleID, a.pid == b.pid,
+              a.siteDomain == b.siteDomain, a.isPrivateWindow == b.isPrivateWindow, a.chatKey == b.chatKey else {
+            return false
+        }
+        let oldHost = HostNormalizer.normalized(a.host), newHost = HostNormalizer.normalized(b.host)
+        guard oldHost != newHost else { return true }
+        let hasOverride = { (h: String?) in h.map { engine.rule(for: .siteHost(host: $0)) != nil } ?? false }
+        return !hasOverride(oldHost) && !hasOverride(newHost)
     }
 
     private func applyRule(for c: Context) {
@@ -290,7 +334,7 @@ import Foundation
 
     var currentRule: CurrentRule? {
         guard let c = context.current else { return nil }
-        return CurrentRule(context: c, resolution: engine.resolve(c), pinScope: engine.learnableScope(for: c))
+        return CurrentRule(context: c, resolution: engine.resolve(c), pinScope: engine.pinScope(for: c))
     }
 
     /// Pins the current input source for the current (non-Kytkin) app's most specific scope. nil = no context.
@@ -305,9 +349,10 @@ import Foundation
     }
 
     /// Removes the rule that applies to the current app (the one `resolve` matched). False = there was none.
+    /// P3-9 (D6): on a site, only a matched site or siteHost rule; a matched browser rule is left alone (false).
     @discardableResult func forgetCurrent() -> Bool {
-        guard let matched = currentRule?.resolution.matched else { return false }
-        store.update { $0.rules = RuleWriter.forget(matched.scope, in: $0.rules) }
+        guard let scope = currentRule?.forgetScope else { return false }
+        store.update { $0.rules = RuleWriter.forget(scope, in: $0.rules) }
         preferencesDidChange()
         return true
     }

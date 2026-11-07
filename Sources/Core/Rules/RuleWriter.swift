@@ -10,16 +10,21 @@
 //   unpin  → (P2-25, Settings → Rules) the winning rule for the scope becomes learned (same id, source and label), so
 //            learning may update it again; a scope with no rule or a learned one is left alone.
 //   forgetAllLearned → (P2-25) every learned rule is removed; each scope keeps only its pinned winner (pins stay).
+// P3-9 (D13, 001 §14.6): learn and pin store the normalized scope (`RuleEngine.normalized`: site/siteHost through
+// HostNormalizer, i.e. lowercase, no trailing dot, Punycode) for a new rule, and rewrite an updated rule's scope to
+// that form, so a hand-edited Unicode key heals on its next write. No migration, no schema bump.
 // Pure; the caller writes the result with `PreferencesStore.update`.
 
 import Foundation
 
 enum RuleWriter {
     static func learn(_ outcome: LearnOutcome, into rules: [Rule], now: Date, newID: UUID = UUID()) -> [Rule] {
-        guard case .learn(let scope, let source) = outcome else { return rules }
+        // P3-9: an empty key can never match, so nothing is written for it (the learner never asks for one).
+        guard case .learn(let raw, let source) = outcome, let scope = RuleEngine.normalized(raw) else { return rules }
         if let existing = RuleEngine(rules: rules).rule(for: scope) {
             guard existing.origin == .learned else { return rules }   // pins stay fixed (001 §11 Q2)
             var updated = existing
+            updated.scope = scope    // P3-9: heal a Unicode / mixed-case key (D13)
             updated.inputSource = source
             updated.updatedAt = now
             return replacingScope(of: existing.scope, in: rules, with: updated)
@@ -29,9 +34,10 @@ enum RuleWriter {
 
     static func pin(_ scope: RuleScope, to source: InputSourceID, in rules: [Rule], now: Date,
                     newID: UUID = UUID()) -> [Rule] {
-        guard RuleEngine.normalized(scope) != nil else { return rules }   // an empty key can never match
+        guard let scope = RuleEngine.normalized(scope) else { return rules }   // an empty key can never match
         if let existing = RuleEngine(rules: rules).rule(for: scope) {
             var updated = existing
+            updated.scope = scope    // P3-9: heal a Unicode / mixed-case key (D13)
             updated.inputSource = source
             updated.origin = .pinned
             updated.updatedAt = now
