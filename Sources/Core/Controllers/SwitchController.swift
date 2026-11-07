@@ -83,6 +83,8 @@ import Foundation
     private var lastLearnerNote: String?
     /// P3-9 (D5): the last Context delivered to `contextDidChange`, to spot a page-state-only change.
     private var lastDelivered: Context?
+    /// QA (P3-14): a Resume / turn-on re-apply is waiting for the browser's first site read (`reapply`).
+    private var reapplyOnNextContext = false
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init) {
@@ -116,10 +118,14 @@ import Foundation
         let pageStateOnly = previous.map { Self.differsOnlyInPageState($0, c, engine: engine) } ?? false
         lastDelivered = c
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
+        // QA (P3-14): a Resume or turn-on re-apply that waited for the browser's site read applies with this Context,
+        // whatever changed (the read may add no site: a new tab, or the grace ran out).
+        let deferred = reapplyOnNextContext
+        reapplyOnNextContext = false
         // P3-9 (D5, 001 §14.6): a change of page state alone (e.g. a click into the address bar and back) cancels a
         // candidate and restarts the settle, like a window focus change, but doesn't re-apply the rule: that would
         // undo the user's manual switch.
-        guard pageStateOnly, let previous else {
+        guard pageStateOnly, !deferred, let previous else {
             applyRule(for: c)
             return .full
         }
@@ -291,7 +297,18 @@ import Foundation
         wasEnabled = enabled
         guard let c = context.current else { return }
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
-        if enabled, !paused, !isOwnAppActive { applyRule(for: c) }
+        if enabled, !paused, !isOwnAppActive { reapply(c) } else { reapplyOnNextContext = false }
+    }
+
+    /// QA (P3-14): the Resume / turn-on re-apply. While ContextMonitor holds the browser in front for its first site
+    /// read (it was just re-attached), the switch waits for that Context: one switch, not the browser's rule now and
+    /// the site's a few ms later.
+    private func reapply(_ c: Context) {
+        if context.isAwaitingSite {
+            reapplyOnNextContext = true
+        } else {
+            applyRule(for: c)
+        }
     }
 
     /// FeatureAvailability changed: `learningWithWords` decides words vs dwell (001 §6.2).
@@ -354,7 +371,7 @@ import Foundation
         refreshLearning()
         if let c = context.current {
             handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))   // drop any candidate
-            if !on, !isOwnAppActive { applyRule(for: c) }
+            if !on, !isOwnAppActive { reapply(c) } else { reapplyOnNextContext = false }
         }
     }
 

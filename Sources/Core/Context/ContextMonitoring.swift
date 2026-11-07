@@ -22,6 +22,10 @@ import Foundation
     func setHostsWithOverrides(_ hosts: Set<String>)
     /// P3-14: which browsers to watch, and how (001 §14.5). Re-attaches or detaches the browser in front at once.
     func setSitePolicy(_ policy: SitePolicy)
+    /// QA (P3-14): a browser in front that Kytkin just started watching again (Resume, turned on, Accessibility
+    /// granted, site rules on) is held for its first site read (≤ 150 ms, the D4 site grace); the next Context brings
+    /// it. SwitchController's Resume / turn-on re-apply waits for that Context instead of switching twice.
+    var isAwaitingSite: Bool { get }
     /// P3-14: what the reads so far say about each browser (session only, D15).
     var browserSupport: BrowserSupportTracker { get }
     /// P3-14: one DEBUG line about the browser watch (engine, attach, update count, last page state and source).

@@ -101,6 +101,26 @@ final class WorkspaceAppActivationSourceTests: XCTestCase {
         source.stop()
     }
 
+    /// QA (P3-14): the Mac can wake while another user's session is in front; nothing is reported (no re-attach, no
+    /// AX read) until this session becomes active again.
+    func testWakeWhileAnotherSessionIsInFrontReportsNothing() {
+        let center = NotificationCenter()
+        let source = WorkspaceAppActivationSource(center: center, frontmost: { self.me })
+        var events: [String] = []
+        source.onActivate = { _, _ in events.append("activate") }
+        source.onWake = { events.append("wake") }
+        source.onSessionResign = { events.append("resign") }
+        source.start()
+        events = []
+        post(NSWorkspace.sessionDidResignActiveNotification, on: center, app: nil)
+        post(NSWorkspace.didWakeNotification, on: center, app: nil)
+        XCTAssertEqual(events, ["resign"])
+        post(NSWorkspace.sessionDidBecomeActiveNotification, on: center, app: nil)
+        post(NSWorkspace.didWakeNotification, on: center, app: nil)
+        XCTAssertEqual(events, ["resign", "activate", "wake", "activate", "wake"])
+        source.stop()
+    }
+
     /// Counts the observers the source leaves registered.
     private final class CountingCenter: NotificationCenter, @unchecked Sendable {
         private(set) var live = 0

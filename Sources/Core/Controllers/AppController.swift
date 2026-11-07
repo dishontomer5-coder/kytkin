@@ -337,6 +337,11 @@ import Observation
 
     /// Any writer changed the preferences (Settings, our own learn/pin/forget). Idempotent.
     func preferencesDidChange() {
+        // QA (P3-14): Kytkin turned back on → the policy goes first, so a browser in front is held for its site read
+        // and the turn-on re-apply waits for it (one switch, not the browser's rule and then the site's).
+        if isStarted, store.prefs.general.enabled, lastPrefs?.general.enabled == false {
+            updateSitePolicy(availabilityFor(paused: switching.paused))
+        }
         applyPreferences(force: false)
         recompute(grantsChanged: false)
     }
@@ -388,6 +393,9 @@ import Observation
     }
 
     func setPaused(_ on: Bool) {
+        // QA (P3-14): on Resume the policy goes first (see `preferencesDidChange`); on Pause it follows, so the
+        // browser's dropped site never reaches an unpaused SwitchController.
+        if isStarted, !on, switching.paused { updateSitePolicy(availabilityFor(paused: false)) }
         switching.setPaused(on)
         recompute(grantsChanged: false)   // Pause turns the tap off; resume turns it back on
         onDisplayChange?()
@@ -503,13 +511,21 @@ import Observation
     /// P3-14 (001 §14.5): Kytkin on/paused and Accessibility (`availability.siteRules`), the Automation opt-ins, the
     /// browser preferences (`siteRulesEnabled`, `ignorePrivateWindowsCompletely`), the PSL (D11) and the web-link
     /// handlers → one `SitePolicy`, pushed only when it changed (the monitor re-attaches or detaches at once).
-    private func updateSitePolicy() {
-        let policy = SitePolicy(availability: availability, browsers: store.prefs.browsers,
+    private func updateSitePolicy(_ availability: FeatureAvailability? = nil) {
+        let policy = SitePolicy(availability: availability ?? self.availability, browsers: store.prefs.browsers,
                                 suffixListLoaded: suffixListLoaded, webLinkHandlers: webLinkHandlerIDs,
                                 ownBundleIDPrefix: KnownSwitchers.ownBundleIDPrefix)
         guard policy != sitePolicy else { return }
         sitePolicy = policy
         context.setSitePolicy(policy)
+    }
+
+    /// QA (P3-14): the availability `recompute` is about to compute, for pushing the policy ahead of it. Site rules
+    /// and the Automation opt-ins depend only on Kytkin on/paused and the grants, not on the tap.
+    private func availabilityFor(paused: Bool) -> FeatureAvailability {
+        FeatureAvailability.compute(grants: permissions.status.grants, tapMode: policy.achieved,
+                                    secureInput: keyWatcherStatus.secureInputOn,
+                                    settings: PreferencesMapping.featureSettings(store.prefs, paused: paused))
     }
 
     /// P3-14, for Settings → Browsers & Sites (P3-15): what Kytkin knows about reading `bundleID` this session.

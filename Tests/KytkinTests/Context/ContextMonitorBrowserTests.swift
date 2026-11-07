@@ -231,6 +231,81 @@ final class ContextMonitorBrowserTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(seen.last).siteDomain, "ynet.co.il")
     }
 
+    /// QA (P3-14): Resume / turned on / a grant with the browser in front: the next Context waits for the first read
+    /// (one switch with the site, not the browser's rule first).
+    func testPolicyTurningSitesOnHoldsTheBrowserForItsFirstRead() throws {
+        make()
+        monitor.setSitePolicy(policy(siteRules: false))
+        source.onActivate?(zen, 20)
+        XCTAssertEqual(seen.count, 1)
+        XCTAssertFalse(monitor.isAwaitingSite)
+        clock.advance(byMilliseconds: 500)
+        monitor.setSitePolicy(policy())
+        XCTAssertTrue(monitor.isAwaitingSite)
+        XCTAssertEqual(seen.count, 1)
+        browsers.post(page(), pid: 20)
+        XCTAssertFalse(monitor.isAwaitingSite)
+        XCTAssertEqual(seen.count, 2)
+        XCTAssertEqual(try XCTUnwrap(seen.last).siteDomain, "ynet.co.il")
+        XCTAssertEqual(try XCTUnwrap(seen.last).pageState, .page)
+    }
+
+    func testHoldAfterAPolicyChangeRunsOutAppOnly() throws {
+        make()
+        monitor.setSitePolicy(policy(siteRules: false))
+        source.onActivate?(zen, 20)
+        clock.advance(byMilliseconds: 500)
+        monitor.setSitePolicy(policy())
+        clock.advance(byMilliseconds: 200)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertFalse(monitor.isAwaitingSite)
+        XCTAssertEqual(seen.count, 2)
+        let c = try XCTUnwrap(seen.last)
+        XCTAssertEqual(c.pageState, .unknown, "app-only: SwitchController applies the browser's rule")
+        XCTAssertNil(c.siteDomain)
+    }
+
+    func testANewRequestForTheWatchedBrowserDoesNotHold() {
+        make()
+        monitor.setSitePolicy(policy())
+        source.onActivate?(zen, 20)
+        browsers.post(page(), pid: 20)
+        monitor.setSitePolicy(policy(ignorePrivate: true))
+        XCTAssertFalse(monitor.isAwaitingSite, "already watched: the site is known, nothing to wait for")
+    }
+
+    func testPolicyTurningSitesOnWhileKytkinIsInFrontAttachesNothing() {
+        make()
+        monitor.setSitePolicy(policy(siteRules: false))
+        source.onActivate?(zen, 20)
+        source.onActivate?(own, 999)                                // Settings in front (W2)
+        monitor.setSitePolicy(policy())
+        XCTAssertEqual(browsers.calls, [])
+        XCTAssertFalse(monitor.isAwaitingSite)
+        source.onActivate?(zen, 20)                                 // back to Zen: attached now
+        XCTAssertEqual(browsers.calls, [.attach(20, zen, zenRequest)])
+    }
+
+    /// QA (P3-14): the watched browser quits or crashes: detach at once (no observer or poll on a dead pid).
+    func testWatchedBrowserQuittingDetaches() {
+        make()
+        monitor.setSitePolicy(policy())
+        source.onActivate?(zen, 20)
+        let id = browsers.attachID
+        browsers.post(page(), pid: 20)
+        browsers.clear()
+        source.onTerminate?(31)                                      // another app quit
+        XCTAssertEqual(browsers.calls, [])
+        source.onTerminate?(20)
+        XCTAssertEqual(browsers.calls, [.detach])
+        let count = seen.count
+        let other = SiteAddress(host: "haaretz.co.il", registrableDomain: "haaretz.co.il", isWebPage: true)
+        browsers.post(page(other), pid: 20, attachID: id)           // a read that was in flight
+        XCTAssertEqual(seen.count, count, "dropped")
+        monitor.setSitePolicy(policy(ignorePrivate: true))
+        XCTAssertEqual(browsers.calls, [.detach], "a dead browser is not re-attached by a policy change")
+    }
+
     func testSiteRulesTurnedOffWhileKytkinIsInFrontDropTheSiteOnReturn() throws {
         make()
         monitor.setSitePolicy(policy())

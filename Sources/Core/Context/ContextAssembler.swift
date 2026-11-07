@@ -184,6 +184,18 @@ struct ContextAssembler {
         return apply(next)
     }
 
+    /// QA (P3-14): Kytkin started watching browser `pid` while it was already in front (Resume, turned back on,
+    /// Accessibility granted, site rules turned on for it). Like an activation of a watched browser (D4), the next
+    /// Context waits for the first read, or `siteGraceNanos` (then app-only with `pageState = .unknown`). Only for
+    /// the newest app with no page state (an unwatched browser); a grace already running is kept.
+    mutating func awaitSite(pid: Int32) {
+        guard let latest, latest.pid == pid, latest.pageState == nil, siteGrace == nil else { return }
+        siteGrace = (pid, clock.nowNanos + Self.siteGraceNanos)
+    }
+
+    /// QA (P3-14): a browser activation (or `awaitSite`) is waiting for its first read.
+    var isAwaitingSite: Bool { siteGrace != nil }
+
     /// P3-5: the hosts of all siteHost rules changed (AppController, on every preferences change). If the newest
     /// observed host differs from the one in the newest state and either is now an override, the host change
     /// counts after all, so an override the user just added for the page they're on applies at once.

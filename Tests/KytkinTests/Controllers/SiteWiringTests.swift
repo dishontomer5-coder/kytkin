@@ -194,6 +194,124 @@ final class SiteWiringTests: XCTestCase {
         XCTAssertEqual(l.handle(.externalSwitch(IDs.russian, atNanos: 15 * sec)), .discard(.siteFromAddressBar))
     }
 
+    /// QA (P3-14): the flag can't be laundered. A switch made on an AXURL site, then a bar read of another site
+    /// (half-typed text), learns nothing for either; a switch on the bar site, then AXURL of a different site, neither.
+    func testABarReadOfAnotherSiteIsNeverLearned() {
+        make()
+        show()                                                     // ynet from AXURL
+        userSwitch(to: IDs.hebrew)                                 // candidate for ynet
+        show(domain: "ynet.co", bar: true)                         // the bar holds half-typed text
+        twoWords()
+        XCTAssertTrue(store.prefs.rules.isEmpty, "the candidate died with the context change")
+        userSwitch(to: IDs.abc)                                    // a switch while the bar site is shown
+        show(domain: "haaretz.co.il")                              // AXURL lands on another site
+        twoWords()
+        XCTAssertTrue(store.prefs.rules.isEmpty, "\(store.prefs.rules)")
+        userSwitch(to: IDs.hebrew)                                 // now a real AXURL site: learnable
+        twoWords()
+        XCTAssertEqual(store.prefs.rules.map(\.scope), [.site(domain: "haaretz.co.il")])
+    }
+
+    func testABarReadMidCandidateCancelsIt() {
+        make()
+        show()
+        userSwitch(to: IDs.hebrew)
+        sut.keySignal(.wordBoundary)
+        show(bar: true)                                            // same site, now only from the bar
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
+    // MARK: - QA (P3-14): Resume / turn-on in a browser switches once
+
+    private func siteAndAppRules() -> Preferences {
+        var p = Preferences()
+        p.rules = [.app(zen, IDs.russian), site("ynet.co.il", IDs.hebrew)]
+        return p
+    }
+
+    func testResumeInABrowserWaitsForTheSiteAndSwitchesOnce() {
+        make(siteAndAppRules())
+        monitor.awaitSiteOnPolicy = zen
+        show()
+        sut.setPaused(true)
+        show(domain: nil, page: nil)                               // not watched while paused: site dropped
+        switcher.current = IDs.abc
+        let before = switcher.selectedIDs
+        sut.setPaused(false)
+        XCTAssertTrue(monitor.isAwaitingSite, "the policy went out before the re-apply")
+        XCTAssertEqual(switcher.selectedIDs, before, "not the browser's rule while the read is pending")
+        monitor.isAwaitingSite = false
+        show()
+        XCTAssertEqual(switcher.selectedIDs, before + [IDs.hebrew])
+    }
+
+    func testResumeHoldRunningOutAppliesTheBrowsersRule() {
+        make(siteAndAppRules())
+        monitor.awaitSiteOnPolicy = zen
+        show()
+        sut.setPaused(true)
+        show(domain: nil, page: nil)
+        switcher.current = IDs.abc
+        let before = switcher.selectedIDs
+        sut.setPaused(false)
+        monitor.isAwaitingSite = false
+        show(domain: nil, page: .unknown)                          // grace ran out: nil → .unknown, page state only
+        XCTAssertEqual(switcher.selectedIDs, before + [IDs.russian], "the deferred re-apply still happens")
+    }
+
+    func testResumeWithoutAHoldAppliesAtOnce() {
+        make(siteAndAppRules())
+        show()
+        sut.setPaused(true)
+        switcher.current = IDs.abc
+        let before = switcher.selectedIDs
+        sut.setPaused(false)
+        XCTAssertEqual(switcher.selectedIDs, before + [IDs.hebrew])
+    }
+
+    func testPausingAgainDropsTheDeferredReapply() {
+        make(siteAndAppRules())
+        monitor.awaitSiteOnPolicy = zen
+        show()
+        sut.setPaused(true)
+        show(domain: nil, page: nil)
+        switcher.current = IDs.abc
+        let before = switcher.selectedIDs
+        sut.setPaused(false)
+        sut.setPaused(true)
+        monitor.isAwaitingSite = false
+        show()
+        XCTAssertEqual(switcher.selectedIDs, before, "paused: nothing")
+    }
+
+    func testTurningKytkinOnInABrowserWaitsForTheSite() {
+        make(siteAndAppRules())
+        monitor.awaitSiteOnPolicy = zen
+        show()
+        store.update { $0.general.enabled = false }
+        sut.preferencesDidChange()
+        show(domain: nil, page: nil)
+        switcher.current = IDs.abc
+        let before = switcher.selectedIDs
+        store.update { $0.general.enabled = true }
+        sut.preferencesDidChange()
+        XCTAssertTrue(monitor.isAwaitingSite)
+        XCTAssertEqual(switcher.selectedIDs, before)
+        monitor.isAwaitingSite = false
+        show()
+        XCTAssertEqual(switcher.selectedIDs, before + [IDs.hebrew])
+    }
+
+    func testResumePushesThePolicyOnce() {
+        make()
+        sut.setPaused(true)
+        let before = monitor.sitePolicyCalls.count
+        sut.setPaused(false)
+        XCTAssertEqual(monitor.sitePolicyCalls.count, before + 1, "pushed early, not again by recompute")
+    }
+
     // MARK: - P3-19: KeyWatcher reset and the fight re-assert
 
     func testPageUnknownFlipsKeepTheWordBuffer() {
@@ -288,6 +406,24 @@ final class SiteWiringTests: XCTestCase {
         XCTAssertEqual(c.bundleID, zen)
         XCTAssertNil(c.pageState, "not watched: no page state (not `.unknown`)")
         XCTAssertNil(a.pendingDeadlineNanos)
+    }
+
+    /// QA (P3-14): `awaitSite` holds only the newest app, only while it has no page state (not watched yet).
+    func testAwaitSiteGuards() throws {
+        let clock = FakeClock(nowNanos: 1_000_000_000)
+        var a = ContextAssembler(clock: clock, ownPID: 999, ownBundleID: nil)
+        let ynet = SiteAddress(host: "www.ynet.co.il", registrableDomain: "ynet.co.il", isWebPage: true)
+        XCTAssertNotNil(a.appActivated(bundleID: zen, pid: 7))
+        a.awaitSite(pid: 8)
+        XCTAssertFalse(a.isAwaitingSite, "stale pid")
+        a.awaitSite(pid: 7)
+        XCTAssertTrue(a.isAwaitingSite)
+        let c = try XCTUnwrap(a.browserObserved(BrowserObservation(site: ynet, pageState: .page, isPrivate: nil,
+                                                                   via: .axURL), pid: 7), "released by the read")
+        XCTAssertEqual(c.siteDomain, "ynet.co.il")
+        XCTAssertFalse(a.isAwaitingSite)
+        a.awaitSite(pid: 7)
+        XCTAssertFalse(a.isAwaitingSite, "already has a page state: nothing to wait for")
     }
 
     func testSameFactsIncludeTheBarFlag() {

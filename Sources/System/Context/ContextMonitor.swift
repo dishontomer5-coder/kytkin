@@ -14,6 +14,8 @@
 //   - Session resign (fast user switching away) → detach. Wake / session back → the source re-reports the frontmost
 //     app (re-attach or re-read), then `browsers.wake()`.
 //   - stop() and the isolated deinit detach.
+//   - QA (P3-14): a policy change that starts watching the browser in front (Resume, turned on, a grant) holds it for
+//     its first read like an activation (`isAwaitingSite`); the watched browser quitting or crashing detaches at once.
 // Never logs (titles and URLs never reach this type: an observation carries a reduced site only; bundle IDs only).
 
 import Foundation
@@ -75,6 +77,10 @@ import Foundation
         }
         source.onTerminate = { [weak self] pid in
             guard let self else { return }
+            // QA (P3-14): the watched browser quit or crashed: stop now (no observer or poll left on a dead pid until
+            // the next activation; a read still in flight is dropped as stale).
+            if self.watch?.pid == pid { self.stopWatching() }
+            if self.frontmost?.pid == pid { self.frontmost = nil }
             self.assembler.appTerminated(pid: pid)
             self.armFlushTimer()
         }
@@ -130,10 +136,20 @@ import Foundation
         sitePolicy = policy
         // While another user's session is in front nothing is watched; the next activation or wake applies it.
         guard sessionActive, let frontmost else { return }
-        if !updateWatch(bundleID: frontmost.bundleID, pid: frontmost.pid, rereadIfSame: false) {
+        let wasWatching = watch?.pid == frontmost.pid
+        if updateWatch(bundleID: frontmost.bundleID, pid: frontmost.pid, rereadIfSame: false) {
+            // QA (P3-14): newly watched while in front (Resume, turned on, a grant): hold for the first read, like
+            // an activation (D4), so the rule applies once with the site.
+            if !wasWatching {
+                assembler.awaitSite(pid: frontmost.pid)
+                armFlushTimer()
+            }
+        } else {
             deliver(assembler.browserUnwatched(pid: frontmost.pid))
         }
     }
+
+    var isAwaitingSite: Bool { assembler.isAwaitingSite }
 
     var siteDebug: String {
         guard let watch else { return "Sites: not watching" }
