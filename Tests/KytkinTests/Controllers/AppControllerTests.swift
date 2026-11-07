@@ -684,4 +684,87 @@ final class AppControllerTests: XCTestCase {
         XCTAssertGreaterThan(displayChanges, 0, "the failed save refreshed the label")
         XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
     }
+
+    // MARK: - P2-55: learning from manual switches in the live app (status-bar menu activations)
+
+    private var textEdit: String { "com.apple.TextEdit" }
+
+    /// The owner's repro: TextEdit in front, open the Kytkin menu (AppKit posts didBecomeActive, but TextEdit stays
+    /// frontmost and no resign follows), close it, ⌃Space, wait, type two words. Before P2-55 the own-window gate stayed
+    /// on, so the switch and both words were dropped and nothing was learned.
+    func testMenuOpenThatIsNotARealActivationDoesNotBlockLearning() {
+        make()
+        monitor.activate(textEdit, pid: 20)
+        clock.advance(byMilliseconds: 5_000)
+        sut.kytkinDidBecomeActive(isFrontmost: false)       // status-bar menu opened; no resign comes
+        clock.advance(byMilliseconds: 2_000)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))   // ⌃Space
+        clock.advance(byMilliseconds: 1_000)
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(store.prefs.rules.map(\.scope), [.app(bundleID: textEdit)])
+        XCTAssertEqual(store.prefs.rules.first?.inputSource, IDs.hebrew)
+        XCTAssertEqual(store.prefs.rules.first?.origin, .learned)
+        XCTAssertEqual(sut.menuState.learnerDebug,
+                       "Learner: idle (words); last: learned \(textEdit)→\(IDs.hebrew.rawValue)")
+    }
+
+    /// QA lead: opening and closing the menu between the switch and the words must not erase the candidate.
+    func testMenuOpenAndCloseBetweenTheSwitchAndTheWordsKeepsTheCandidate() {
+        make()
+        monitor.activate(textEdit, pid: 20)
+        clock.advance(byMilliseconds: 1_000)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        watcher.clear()
+        sut.kytkinDidBecomeActive(isFrontmost: false)
+        sut.kytkinDidResignActive(frontmostPID: 20)        // unpaired: the "activation" above didn't count
+        XCTAssertTrue(watcher.calls.isEmpty, "a menu is not Kytkin's window: no buffer reset")
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(store.prefs.rules.map(\.scope), [.app(bundleID: textEdit)])
+    }
+
+    /// A real activation whose resign never arrives can't block learning for good: the next Context clears it.
+    func testANewContextClearsAStuckOwnWindowFlag() {
+        make()
+        monitor.activate(notes, pid: 10)
+        sut.kytkinDidBecomeActive()                        // really frontmost; resign lost
+        XCTAssertTrue(sut.switching.isOwnAppActive)
+        monitor.activate(textEdit, pid: 20)
+        XCTAssertFalse(sut.switching.isOwnAppActive)
+        clock.advance(byMilliseconds: 1_000)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(store.prefs.rules.map(\.scope), [.app(bundleID: textEdit)])
+    }
+
+    /// The real Settings window still cancels and ignores (P2-39), and the DEBUG line says why.
+    func testRealOwnWindowStillBlocksLearningAndTheDebugLineSaysSo() {
+        make()
+        monitor.activate(textEdit, pid: 20)
+        clock.advance(byMilliseconds: 1_000)
+        sut.kytkinDidBecomeActive(isFrontmost: true)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+        XCTAssertEqual(sut.menuState.learnerDebug, "Learner: off while Kytkin is active; "
+                       + "last: switch to \(IDs.hebrew.rawValue) ignored (Kytkin active)")
+    }
+
+    func testLearnerDebugLineShowsTheCandidateAndWhyLearningIsOff() {
+        make()
+        monitor.activate(textEdit, pid: 20)
+        XCTAssertEqual(sut.menuState.learnerDebug, "Learner: idle (words)")
+        clock.advance(byMilliseconds: 1_000)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(sut.menuState.learnerDebug, "Learner: candidate \(textEdit)→\(IDs.hebrew.rawValue), 1/2 words")
+        conflicts.setPerDocument(true)
+        XCTAssertEqual(sut.menuState.learnerDebug, "Learner: off (per-document input)")
+        conflicts.setPerDocument(false)
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))       // straight back
+        XCTAssertEqual(sut.menuState.learnerDebug, "Learner: idle (words); last: discarded (switchedBack)")
+    }
 }

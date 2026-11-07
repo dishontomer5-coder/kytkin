@@ -103,6 +103,9 @@ struct RuleLearner {
         candidate.map { ($0.scope, $0.source) }
     }
 
+    /// P2-55: word boundaries the pending candidate has seen (nil = no candidate). For the DEBUG menu line.
+    var pendingWords: Int? { candidate?.words }
+
     /// nil = nothing decided yet (no candidate, or a candidate still waiting for confirmation).
     mutating func handle(_ input: LearnerInput) -> LearnOutcome? {
         switch input {

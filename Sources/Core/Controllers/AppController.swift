@@ -7,6 +7,10 @@
 //   Kytkin active/resign → SwitchController (P2-39), KeyWatcher `.reset(.contextChange)` (+ Secure Input check on resign)
 //                         P2-52 item 1: a resign whose frontmost app still reads as Kytkin (or unknown) is looked at
 //                         again after 150 ms (up to 3 times) → SwitchController.recheckAfterResign
+//                         P2-55: an activation while another app is frontmost (the status-bar menu) is not Kytkin's
+//                         window; looked at again the same way in case frontmost lagged (Settings). A resign with no
+//                         real activation does nothing. An external switch or word while the flag is on but another
+//                         app is frontmost ends the stale flag.
 //   input-source change → SwitchController (learner / fights / re-assert), KeyWatcher `.inputSourceChanged`
 //                         (P2-52 item 7: `isOurs: true`, "keep the buffer", only for our own after-convert switch
 //                         that re-rendered the buffer; rule, menu and toggle switches reset it like any change)
@@ -59,7 +63,11 @@ import Observation
     private let ownPID: Int32
     private let frontmostPID: @MainActor () -> Int32?
     private let scheduler: (any OneShotScheduling)?
-    private var resignRechecksLeft = 0
+    private var looksLeft = 0
+    /// What the pending look is for: a resign whose frontmost app read as Kytkin/unknown (P2-52 item 1), and/or an
+    /// activation whose frontmost app didn't read as Kytkin yet (P2-55 QA).
+    private var resignLookPending = false
+    private var activationLookPending = false
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          permissions: any PermissionsProviding, conflicts: any ConflictDetecting, keyWatcher: any KeyWatching,
@@ -115,7 +123,7 @@ import Observation
     func stop() {
         guard isStarted else { return }
         isStarted = false
-        cancelResignRecheck()
+        cancelLooks()
         ticker.stop()
         context.stop()
         keyWatcher.stop()
@@ -128,7 +136,7 @@ import Observation
     // MARK: - Events (one per callback the root owns)
 
     func contextDidChange(_ c: Context) {
-        cancelResignRecheck()                 // the new app got its own rule
+        cancelLooks()                 // the new app got its own rule
         switching.contextDidChange(c)
         keyWatcher.perform(.reset(.contextChange))
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
@@ -136,6 +144,7 @@ import Observation
     }
 
     func inputSourceDidChange(_ change: InputSourceChange) {
+        if case .external = change { healStaleOwnWindow() }   // P2-55 QA
         switching.inputSourceDidChange(change)
         // P2-52 item 7: `isOurs` tells the processor "keep the buffer, it is already rendered in `id`". That is true
         // only for the after-convert switch that re-rendered it. A rule, menu or toggle switch is ours for the
@@ -172,6 +181,7 @@ import Observation
     func keySignal(_ signal: KeySignal) {
         switch signal {
         case .wordBoundary:
+            healStaleOwnWindow()              // P2-55 QA
             switching.wordBoundary()
         case .bufferInvalidated:
             break
@@ -188,48 +198,96 @@ import Observation
     /// to the front or goes away. Without these resets the word buffer would carry the previous app's word into
     /// Settings, and (worse) words typed in Settings back into that app when the user returns with ⌘Tab (a
     /// duplicate activation, so no new Context): a later double-Shift there would backspace over the wrong text.
-    func kytkinDidBecomeActive() {
-        cancelResignRecheck()
-        switching.kytkinDidBecomeActive()
+    /// P2-55: `isFrontmost` is false when only the status-bar menu opened (another app stays frontmost): that is not
+    /// Kytkin's own window, so nothing is reset or cancelled. The root reads it from NSWorkspace.
+    /// P2-55 QA: `frontmostApplication` can lag behind didBecomeActive (Settings comes forward with
+    /// `NSApp.activate()`), so a not-frontmost activation is looked at again like a resign (150 ms × 3). If Kytkin is
+    /// in front by then, it was Settings after all: otherwise a switch typed there would be learned for the previous app.
+    func kytkinDidBecomeActive(isFrontmost: Bool = true) {
+        guard isFrontmost else {
+            guard !switching.isOwnAppActive else { return }
+            activationLookPending = true
+            startLooking()
+            return
+        }
+        ownWindowBecameActive()
+    }
+
+    private func ownWindowBecameActive() {
+        cancelLooks()
+        switching.kytkinDidBecomeActive(isFrontmost: true)
         keyWatcher.perform(.reset(.contextChange))
         afterEvent()
     }
 
     func kytkinDidResignActive(frontmostPID: Int32?) {
+        activationLookPending = false          // whatever that activation was, it is over
         let known = frontmostPID.flatMap { $0 == ownPID ? nil : $0 }
-        switching.kytkinDidResignActive(frontmostPID: known)
+        // P2-55: a resign with no real activation before it (the status-bar menu closed) changes nothing. A look still
+        // pending from an earlier real resign keeps going.
+        guard switching.kytkinDidResignActive(frontmostPID: known) else {
+            if !resignLookPending { cancelLooks() }
+            return
+        }
         keyWatcher.perform(.reset(.contextChange))
         keyWatcher.checkSecureInputNow()      // P2-45: like any other app change
         if known == nil {
-            resignRechecksLeft = Self.resignRecheckAttempts
-            scheduleResignRecheck()
+            resignLookPending = true
+            startLooking()
         } else {
-            cancelResignRecheck()
+            cancelLooks()
         }
         afterEvent()
     }
 
-    // MARK: - P2-52 item 1: the second look after a resign
-
-    private func scheduleResignRecheck() {
-        guard isStarted, let scheduler, resignRechecksLeft > 0 else { return }
-        resignRechecksLeft -= 1
-        scheduler.schedule(afterNanos: Self.resignRecheckDelayNanos) { [weak self] in self?.resignRecheck() }
+    /// P2-55 QA: the own-window flag can only be stale (a resign AppKit never posted). Before an external switch or a
+    /// word reaches the gate, a frontmost app that is known and not Kytkin ends it, without re-applying a rule (the
+    /// user is switching right now). The next Context would clear it too, but the owner stays in one app.
+    private func healStaleOwnWindow() {
+        guard switching.isOwnAppActive, let pid = frontmostPID(), pid != ownPID else { return }
+        cancelLooks()
+        switching.ownWindowFlagWasStale()
+        keyWatcher.checkSecureInputNow()      // P2-45: we are back in another app
     }
 
-    private func resignRecheck() {
-        guard isStarted, !switching.isOwnAppActive else { return }
-        if let pid = frontmostPID(), pid != ownPID {
-            resignRechecksLeft = 0
-            switching.recheckAfterResign(frontmostPID: pid)
-            afterEvent()
+    // MARK: - P2-52 item 1 + P2-55 QA: second looks at the frontmost app
+
+    private func startLooking() {
+        looksLeft = Self.resignRecheckAttempts
+        scheduleLook()
+    }
+
+    private func scheduleLook() {
+        guard isStarted, let scheduler, looksLeft > 0 else {
+            resignLookPending = false
+            activationLookPending = false
+            return
+        }
+        looksLeft -= 1
+        scheduler.schedule(afterNanos: Self.resignRecheckDelayNanos) { [weak self] in self?.look() }
+    }
+
+    private func look() {
+        guard isStarted else { return }
+        let pid = frontmostPID()
+        if pid == ownPID, activationLookPending {
+            ownWindowBecameActive()           // Settings after all (frontmost lagged behind didBecomeActive)
+        } else if let pid, pid != ownPID {
+            let wasResign = resignLookPending
+            cancelLooks()
+            if wasResign, !switching.isOwnAppActive {
+                switching.recheckAfterResign(frontmostPID: pid)
+                afterEvent()
+            }
         } else {
-            scheduleResignRecheck()
+            scheduleLook()
         }
     }
 
-    private func cancelResignRecheck() {
-        resignRechecksLeft = 0
+    private func cancelLooks() {
+        looksLeft = 0
+        resignLookPending = false
+        activationLookPending = false
         scheduler?.cancel()
     }
 
@@ -250,7 +308,7 @@ import Observation
             canRestartKeyboard: keyWatcherStatus.degradedByWatchdog && isStarted
                 && policy.restartAction(desired: desiredTapMode()) != nil,
             tapReEnableCount: keyWatcherStatus.health.reEnableCount, doubleShiftCount: doubleShiftCount,
-            conflicts: conflicts.conflicts,
+            conflicts: conflicts.conflicts, learnerDebug: switching.learnerDebug,
             showsQuitAndReopen: policy.showsQuitAndReopen(needsRelaunch: status.inputMonitoringNeedsRelaunch),
             accessibility: status.grants.accessibility, inputMonitoring: status.grants.inputMonitoring,
             store: MenuState.StoreFlags(loadIssue: store.loadIssue, isReadOnly: store.isReadOnly,

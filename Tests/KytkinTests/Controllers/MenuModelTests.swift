@@ -106,6 +106,15 @@ final class MenuModelTests: XCTestCase {
         XCTAssertFalse(titles(items(s)).contains { $0.hasPrefix("DEBUG") }, "Release: no DEBUG lines")
     }
 
+    /// P2-55: the learner line sits with the other DEBUG lines, Debug builds only.
+    func testLearnerDebugLineIsShownOnlyInDebug() {
+        var s = MenuState()
+        s.learnerDebug = "Learner: idle (words)"
+        let t = titles(items(s, debug: true))
+        XCTAssertEqual(Array(t.suffix(4)), ["DEBUG: Learner: idle (words)", "DEBUG: Switch to", "—", "Quit Kytkin"])
+        XCTAssertFalse(titles(items(s)).contains { $0.contains("Learner") }, "Release: no learner line")
+    }
+
     // MARK: - Context line, Pin, Forget
 
     func testLearnedRule() {

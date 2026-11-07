@@ -64,6 +64,8 @@ enum MenuModel {
             out.append(.info("DEBUG: Keyboard: \(state.tapMode)\(state.degradedByWatchdog ? " (lowered)" : "")"))
             out.append(.info("DEBUG: Double-Shift count: \(state.doubleShiftCount)"))
             out.append(.info("DEBUG: Tap re-enables: \(state.tapReEnableCount)"))
+            // P2-55: the learner's gate, candidate and last decision (IDs and reasons only).
+            if let line = state.learnerDebug { out.append(.info("DEBUG: \(line)")) }
             out.append(MenuItemModel(kind: .debugSwitchSubmenu, title: "DEBUG: Switch to", isEnabled: true,
                                      isChecked: false, indent: 0, keyEquivalent: ""))
         }

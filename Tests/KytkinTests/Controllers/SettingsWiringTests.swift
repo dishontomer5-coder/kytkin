@@ -217,4 +217,136 @@ final class SettingsWiringTests: XCTestCase {
         setEnabled(true)
         XCTAssertTrue(switcher.selects.isEmpty)
     }
+
+    // MARK: - P2-55 QA: menu activations vs Settings with a lagging frontmost app
+
+    private let textEdit = "com.apple.TextEdit"
+    private var resets: Int { watcher.calls.filter { $0 == .perform(.reset(.contextChange)) }.count }
+
+    /// TextEdit (no rule) in front and settled; frontmost reads TextEdit.
+    private func textEditInFront() {
+        monitor.activate(textEdit, pid: 20)
+        frontmost = 20
+        clock.advance(byMilliseconds: 1_000)
+    }
+
+    /// Settings comes forward with `NSApp.activate()`, but at didBecomeActive `frontmostApplication` still reads the
+    /// previous app. The second look sees Kytkin in front: it is Kytkin's window, so a switch typed there is not
+    /// learned for TextEdit (W2).
+    func testSettingsOpeningWithALaggingFrontmostIsStillKytkinsWindow() {
+        make()
+        textEditInFront()
+        sut.kytkinDidBecomeActive(isFrontmost: false)
+        XCTAssertFalse(sut.switching.isOwnAppActive, "not decided yet")
+        XCTAssertTrue(oneShot.isScheduled)
+        frontmost = ownPID                                   // NSWorkspace caught up
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertTrue(sut.switching.isOwnAppActive, "Settings after all")
+        XCTAssertFalse(oneShot.isScheduled)
+        XCTAssertEqual(resets, 2, "context change + Kytkin's own window: the word buffer is reset")
+        switcher.current = IDs.hebrew
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))   // typed in Settings
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertTrue(store.prefs.rules.allSatisfy { $0.scope != .app(bundleID: textEdit) }, "W2: not learned")
+        XCTAssertNil(sut.switching.learner.pending)
+    }
+
+    /// The status-bar menu opens (didBecomeActive, TextEdit stays frontmost) and closes with an unpaired resign:
+    /// the look finds TextEdit and stops; no reset, the candidate survives, learning works.
+    func testMenuOpenWithNoRealActivationChangesNothing() {
+        make()
+        textEditInFront()
+        switcher.current = IDs.hebrew
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        let resetsBefore = resets
+        sut.kytkinDidBecomeActive(isFrontmost: false)
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertFalse(oneShot.isScheduled, "another app is frontmost: the look stops at once")
+        XCTAssertFalse(sut.switching.isOwnAppActive)
+        sut.kytkinDidResignActive(frontmostPID: 20)          // unpaired
+        XCTAssertFalse(oneShot.isScheduled)
+        XCTAssertEqual(resets, resetsBefore, "a menu is not Kytkin's window")
+        XCTAssertEqual(switcher.selectedIDs, [], "no rule re-applied by the unpaired resign")
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(store.prefs.rules.last?.scope, .app(bundleID: textEdit))
+        XCTAssertEqual(store.prefs.rules.last?.inputSource, IDs.hebrew)
+    }
+
+    /// Menu opened and closed before the first look: the unpaired resign ends the look.
+    func testResignBeforeTheLookEndsIt() {
+        make()
+        textEditInFront()
+        sut.kytkinDidBecomeActive(isFrontmost: false)
+        sut.kytkinDidResignActive(frontmostPID: 20)
+        XCTAssertFalse(oneShot.isScheduled)
+        frontmost = ownPID
+        oneShot.advance(byMilliseconds: 500)
+        XCTAssertFalse(sut.switching.isOwnAppActive)
+    }
+
+    /// A real activation then a resign (frontmost still Kytkin): the P2-23 look re-applies the rule; the resign was
+    /// paired, so P2-55's "unpaired resign does nothing" doesn't apply.
+    func testRealActivationThenResignStillRechecks() {
+        make()
+        monitor.activate(notes, pid: 10)
+        frontmost = ownPID
+        sut.kytkinDidBecomeActive(isFrontmost: true)
+        XCTAssertTrue(sut.switching.isOwnAppActive)
+        switcher.current = IDs.abc
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        XCTAssertFalse(sut.switching.isOwnAppActive)
+        XCTAssertTrue(oneShot.isScheduled)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew])
+    }
+
+    /// A resign look is still running when the menu opens and closes: it keeps its job (re-apply Notes' rule).
+    func testMenuOpenDuringAResignLookKeepsTheResignLook() {
+        make()
+        openSettingsOverNotes()
+        frontmost = ownPID
+        sut.kytkinDidResignActive(frontmostPID: ownPID)
+        sut.kytkinDidBecomeActive(isFrontmost: false)        // menu, while frontmost still lags
+        sut.kytkinDidResignActive(frontmostPID: ownPID)      // menu closed (unpaired)
+        XCTAssertTrue(oneShot.isScheduled)
+        frontmost = 10
+        oneShot.advance(byMilliseconds: 150)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew])
+        XCTAssertFalse(sut.switching.isOwnAppActive)
+    }
+
+    /// The flag can't stay stuck after a lost resign: the next external switch, with another app frontmost, ends it
+    /// (without re-applying a rule over the user's switch) and is learned.
+    func testAStaleOwnWindowFlagHealsOnTheNextSwitch() {
+        make()
+        textEditInFront()
+        frontmost = ownPID
+        sut.kytkinDidBecomeActive(isFrontmost: true)
+        frontmost = 20                                       // Settings gone; resign never posted
+        clock.advance(byMilliseconds: 1_000)
+        switcher.current = IDs.hebrew
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        XCTAssertFalse(sut.switching.isOwnAppActive)
+        XCTAssertEqual(switcher.selectedIDs, [], "no rule forced over the user's switch")
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(store.prefs.rules.last?.scope, .app(bundleID: textEdit))
+    }
+
+    /// While Settings really is frontmost (or frontmost is unknown), words and switches never end the flag.
+    func testOwnWindowFlagIsKeptWhileKytkinIsFrontmost() {
+        make()
+        textEditInFront()
+        frontmost = ownPID
+        sut.kytkinDidBecomeActive(isFrontmost: true)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        XCTAssertTrue(sut.switching.isOwnAppActive)
+        frontmost = nil
+        sut.keySignal(.wordBoundary)
+        XCTAssertTrue(sut.switching.isOwnAppActive)
+    }
 }

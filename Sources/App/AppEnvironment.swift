@@ -89,7 +89,13 @@ import AppKit
         let center = NotificationCenter.default
         appObservers = [
             center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { controller.kytkinDidBecomeActive() }
+                MainActor.assumeIsolated {
+                    // P2-55: opening the status-bar menu can post this while the other app stays frontmost.
+                    // The pid comparison is the fact; AppController decides what it means (and looks again in case
+                    // frontmost lags behind, e.g. Settings brought forward with NSApp.activate()).
+                    let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    controller.kytkinDidBecomeActive(isFrontmost: front == ProcessInfo.processInfo.processIdentifier)
+                }
             },
             center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated {

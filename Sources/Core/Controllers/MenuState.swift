@@ -19,6 +19,9 @@ struct MenuState: Equatable {
     /// DEBUG counter for checklist §P2-17 (counts only, never keys).
     var doubleShiftCount = 0
     var conflicts = Conflicts.none
+    /// P2-55: DEBUG line about learning (gate, candidate, last decision). IDs and reasons only, never typed text,
+    /// site domains or chat keys. MenuModel shows it in Debug builds.
+    var learnerDebug: String?
     /// "Quit & Reopen" hint (P2-46).
     var showsQuitAndReopen = false
     /// P2-22: the grants as last read (silently). `.unknown` = not read yet: no warning.
