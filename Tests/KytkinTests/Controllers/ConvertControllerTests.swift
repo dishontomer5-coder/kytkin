@@ -61,7 +61,7 @@ final class ConvertControllerTests: XCTestCase {
 
     // MARK: - Last word (buffer strokes)
 
-    @TextActor func testLastWordRendersTheStrokesInTheOtherLayoutAndKeepsTheBuffer() async {
+    @TextActor func testLastWordRendersTheStrokesInTheOtherLayoutAndKeepsTheWholeBuffer() async {
         let f = field()
         let sut = make(f)
         let out = await sut.handle(request(word(akuo, in: IDs.abc), gen: 7), layouts: ConvertFixtures.layouts)
@@ -72,7 +72,7 @@ final class ConvertControllerTests: XCTestCase {
         // Claim (gen 7) before the first write, then the switch (keeping the buffer), then the one finish.
         XCTAssertEqual(log.entries, [.focus, .claim(gen: 7), .perform(.backspaceAndType(count: 4)), .end, .end,
                                      .switchTo(IDs.hebrew, keepsBuffer: true),
-                                     .finish(gen: 7, newRendering: IDs.hebrew, bufferAfter: akuo)])
+                                     .finish(gen: 7, newRendering: IDs.hebrew, bufferAfter: nil)])
         XCTAssertEqual(log.beeps, 0)
     }
 
@@ -88,14 +88,15 @@ final class ConvertControllerTests: XCTestCase {
         XCTAssertEqual(f.writes.map(\.new), ["שלום", "akuo"])
     }
 
-    @TextActor func testSwitchAfterConvertOffConvertsWithoutSwitchingAndDropsTheWord() async {
+    /// P2-59c (X5): switch off → the buffer is kept, re-rendered in the target while the input source stays.
+    @TextActor func testSwitchAfterConvertOffKeepsTheBufferRenderedInTheTarget() async {
         let sut = make(field())
         let out = await sut.handle(request(word(akuo, in: IDs.abc), gen: 3, switchAfter: false),
                                    layouts: ConvertFixtures.layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 4), switched: false))
         XCTAssertTrue(log.switches.isEmpty)
-        // The layout stays ABC while the word on screen is Hebrew: the strokes no longer describe it.
-        assertOneFinish(3, rendering: nil, after: [])
+        // The layout stays ABC while the word on screen is Hebrew: the kept buffer shows in Hebrew.
+        XCTAssertEqual(log.finishes, [.finish(gen: 3, newRendering: nil, bufferAfter: nil, renderedIn: IDs.hebrew)])
     }
 
     @TextActor func testAFailedSwitchDoesNotClaimTheNewRendering() async {
@@ -103,7 +104,8 @@ final class ConvertControllerTests: XCTestCase {
         let sut = make(field())
         let out = await sut.handle(request(word(akuo, in: IDs.abc), gen: 4), layouts: ConvertFixtures.layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 4), switched: false))
-        assertOneFinish(4, rendering: nil, after: [])
+        // P2-59c: the text is converted, the source isn't: the kept buffer shows in Hebrew (`bufferRenderedIn`).
+        XCTAssertEqual(log.finishes, [.finish(gen: 4, newRendering: nil, bufferAfter: nil, renderedIn: IDs.hebrew)])
     }
 
     @TextActor func testUnknownRenderingUsesTheCurrentSource() async {
@@ -160,8 +162,9 @@ final class ConvertControllerTests: XCTestCase {
         XCTAssertEqual(log.performs, [.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars),
                                       .axWriteSelection(verify: true)])
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axWriteSelection(verify: true), switched: true))
-        // An AX-found word doesn't make the strokes describe the screen: the switch resets the buffer.
-        XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: false)])
+        // An AX-found run doesn't make the strokes describe the screen: the finish forgets the buffer (`[]`). P2-59c:
+        // the switch still keeps the processor from resetting, so `untouchedSinceConvert` survives for the X6 undo.
+        XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true)])
         assertOneFinish(1, rendering: nil, after: [])
     }
 
@@ -286,13 +289,25 @@ final class ConvertControllerTests: XCTestCase {
         assertOneFinish(15)
     }
 
-    @TextActor func testLayoutsUnavailableBeepsAndFinishes() async {
+    @TextActor func testLayoutsUnavailableWithABufferBeepsAndFinishes() async {
         let f = field(selection: "akuo")
         let sut = make(f)
-        let out = await sut.handle(request(gen: 16), layouts: nil)
+        let out = await sut.handle(request(word(akuo, in: IDs.abc), gen: 16), layouts: nil)
         XCTAssertEqual(out, .noop(.layoutsUnavailable))
         XCTAssertEqual(log.beeps, 1)
         XCTAssertEqual(log.focusReads, 0)
+        XCTAssertTrue(log.switches.isEmpty)
+        assertOneFinish(16)
+    }
+
+    /// P2-54(a): no maps and nothing remembered: the gesture just switches the language, silently.
+    @TextActor func testLayoutsUnavailableWithAnEmptyBufferJustSwitches() async {
+        let sut = make(field())
+        let out = await sut.handle(request(gen: 16), layouts: nil)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .layoutsUnavailable))
+        XCTAssertEqual(log.beeps, 0)
+        XCTAssertEqual(log.focusReads, 0)
+        XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: false)])
         assertOneFinish(16)
     }
 
@@ -352,7 +367,7 @@ final class ConvertControllerTests: XCTestCase {
             let gen = UInt64(100 + i)
             _ = await make(f).handle(request(c.snapshot, gen: gen), layouts: ConvertFixtures.layouts)
             XCTAssertEqual(log.finishes.count, 1, c.name)
-            if case let .finish(g, _, _) = log.finishes.first { XCTAssertEqual(g, gen, c.name) }
+            if case let .finish(g, _, _, _) = log.finishes.first { XCTAssertEqual(g, gen, c.name) }
             XCTAssertEqual(log.entries.last.map { if case .finish = $0 { true } else { false } }, true,
                            "\(c.name): the finish is the last thing done")
         }

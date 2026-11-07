@@ -24,6 +24,8 @@ import Foundation
 
     var wordBeforeCaret: String? { executor.wordBeforeCaret }
 
+    var focusedElement: (any FocusedElementIdentity)? { executor.focusedElement }
+
     func endReplacement() {
         executor.endReplacement()
     }

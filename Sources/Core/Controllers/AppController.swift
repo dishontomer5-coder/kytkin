@@ -13,7 +13,9 @@
 //                         app is frontmost ends the stale flag.
 //   input-source change → SwitchController (learner / fights / re-assert), KeyWatcher `.inputSourceChanged`
 //                         (P2-52 item 7: `isOurs: true`, "keep the buffer", only for our own after-convert switch
-//                         that re-rendered the buffer; rule, menu and toggle switches reset it like any change)
+//                         that re-rendered the buffer; rule, menu and toggle switches reset it like any change.
+//                         P2-59c: also after an AX run convert, whose finish forgets the buffer itself, so the X6
+//                         `untouchedSinceConvert` survives the switch)
 //   permission change   → FeatureAvailability + TapModePolicy (retry only on a real change, §12 W7)
 //   conflicts change    → the learning flag (P2-38)
 //   KeyWatcher status   → achieved tap mode, Secure Input → FeatureAvailability (§12 W5) → dwell vs words
@@ -354,8 +356,9 @@ import Observation
     }
 
     /// P2-21: ConvertController's switch after a convert or toggle (flow (c) step 8), hopped onto main by the root.
-    /// `keepsBuffer`: the tap's buffer was re-rendered into `target` (last-word convert), so the change notification
-    /// must not reset it. True when `target` is now selected.
+    /// `keepsBuffer`: the change notification must not reset the processor: the convert's finish states the buffer
+    /// itself (P2-59c: kept, re-rendered into `target`, or forgotten after an AX run, which keeps the X6 undo alive).
+    /// True when `target` is now selected.
     @discardableResult func switchAfterConvert(to target: InputSourceID, keepsBuffer: Bool) -> Bool {
         guard isStarted else { return false }
         if switcher.current == target { return true }

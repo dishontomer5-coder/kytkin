@@ -180,6 +180,9 @@ struct KeyStreamProcessor: Sendable {
     /// that wasn't aborted becomes `lastConvertGen` (X6).
     mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
                                     bufferRenderedIn: InputSourceID? = nil) -> [HeldEvent] {
+        // P2-59c (X5): a re-rendered kept buffer is the whole buffer; new strokes for the current word contradict it.
+        assert(bufferRenderedIn == nil || bufferAfter?.isEmpty != false,
+               "P2-59: bufferRenderedIn never comes with a non-empty bufferAfter")
         // P2-35: the force-flushed worker is done posting, so new replacements may start again.
         if stalePosting?.gen == gen { stalePosting = nil }
         guard case let .replacing(r) = phase, r.gen == gen else { return [] }

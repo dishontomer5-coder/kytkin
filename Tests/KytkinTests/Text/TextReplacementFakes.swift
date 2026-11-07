@@ -41,6 +41,10 @@ final class FakeTextField: AXTextElement {
     private(set) var reads: [AXTextAttribute] = []
     private(set) var writes: [AXTextAttribute] = []
 
+    /// P2-59c: the owning process, and the identity the undo record compares (the same object = the same element).
+    var processID: Int32? = 4242
+    func isSameElement(as other: any FocusedElementIdentity) -> Bool { other === self }
+
     init(_ text: String, selection: TextRange? = nil) {
         units = Array(text.utf16)
         self.selection = selection ?? TextRange(location: units.count, length: 0)

@@ -27,11 +27,18 @@ import Foundation
     /// The run found by the last successful `axReadRunBeforeCaret` step, in memory for this replacement only.
     var wordBeforeCaret: String? { get }
 
+    /// P2-59c (001 §12.3 X6): the element the last `focusInfo` read as safe (not secure, not composing), until
+    /// `endReplacement`. Identity only, for the undo record's same-element check; nil = unknown.
+    var focusedElement: (any FocusedElementIdentity)? { get }
+
     /// Drops the element, ranges and any text held for this replacement (privacy: nothing outlives it).
     func endReplacement()
 }
 
 extension TextReplacing {
+    /// P2-59c: a replacer that can't name its element never gets an undo record (the safe default).
+    var focusedElement: (any FocusedElementIdentity)? { nil }
+
     /// 001 §2.2's signature: just the verdict.
     func execute(_ step: ReplacementStep, old: String, new: String) -> StepVerdict {
         perform(step, old: old, new: new).verdict

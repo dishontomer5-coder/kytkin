@@ -26,6 +26,9 @@ import Foundation
     private var pendingRange: TextRange?
     private(set) var wordBeforeCaret: String?
 
+    /// P2-59c: the element `focusInfo` read as safe, for the undo record's same-element check (identity only).
+    var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element : nil }
+
     init(focusProvider: any FocusedElementProviding, poster: any KeyEventPosting) {
         self.focusProvider = focusProvider
         self.poster = poster

@@ -68,6 +68,18 @@ final class AXUIElementTextElement: AXTextElement {
         return error == .success ? .success(()) : .failure(AXAccessError(error))
     }
 
+    // MARK: Identity (P2-59c, the undo record's same-element check)
+
+    var processID: Int32? {
+        var pid: pid_t = 0
+        return AXUIElementGetPid(element, &pid) == .success ? pid : nil
+    }
+
+    func isSameElement(as other: any FocusedElementIdentity) -> Bool {
+        guard let other = other as? AXUIElementTextElement else { return false }
+        return CFEqual(element, other.element)
+    }
+
     // MARK: Helpers
 
     private func copy(_ attribute: AXTextAttribute) -> Result<CFTypeRef, AXAccessError> {

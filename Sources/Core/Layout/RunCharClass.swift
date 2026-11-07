@@ -29,8 +29,8 @@ enum RunCharClass: Sendable, Equatable {
 
 /// P2-59 (001 §12.3 X5): the buffer's words and the spaces between them, as the key path needs them.
 /// `gaps.count == previousWords.count`; `gaps[i]` = spaces typed after `previousWords[i]` (the last one is trailing
-/// when `strokes` is empty). P2-59a adds `gaps` to `WordSnapshot`; the integration (P2-59c) then declares
-/// `extension WordSnapshot: BufferedRun {}`, so `LayoutSnapshot.typedRun(snap, in:)` reads as 001 writes it.
+/// when `strokes` is empty). `WordSnapshot` conforms (P2-59c), so `LayoutSnapshot.typedRun(snap, in:)` reads as 001
+/// writes it.
 protocol BufferedRun {
     /// The current word, oldest stroke first.
     var strokes: [Stroke] { get }

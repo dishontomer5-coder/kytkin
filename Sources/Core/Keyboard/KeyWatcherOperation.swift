@@ -14,7 +14,9 @@ enum KeyWatcherOperation: Sendable, Equatable {
     /// that re-rendered the buffer into `to` (P2-21/P2-52 item 7). Rule, menu and toggle switches are ours for the
     /// learner but pass `false` here: their buffer's strokes were typed in the old layout.
     /// P2-59 (001 §12.3 X5): `isOurs` keeps the **whole** buffer (every word, re-rendered into `to`), and a switch to the
-    /// layout a kept buffer was re-rendered into (`bufferRenderedIn`) ends that override.
+    /// layout a kept buffer was re-rendered into (`bufferRenderedIn`) ends that override. P2-59c: also passed for the
+    /// switch after an AX run convert, whose finish (`bufferAfter: []`) already forgot the buffer; skipping the reset
+    /// keeps `untouchedSinceConvert` for the X6 undo.
     case inputSourceChanged(to: InputSourceID?, isOurs: Bool)
     /// P2-50 (001 §12 W6): new settings. `mode` and `holdBackCapacity` are ignored; the double-Shift gesture in progress
     /// is dropped; the buffer, held keys and an armed deadline are kept (`KeyStreamProcessor.updateConfig`).

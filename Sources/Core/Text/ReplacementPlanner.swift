@@ -66,7 +66,7 @@ enum ReplacementPlanner {
                 return .steps(s)
             }
             if let n = keys { return .steps([.backspaceAndType(count: n)]) }   // the whole buffer
-            return .refuse(hasRun(r.snapshot) ? .noMethod : .bufferStale)
+            return .refuse(r.snapshot?.hasRun == true ? .noMethod : .bufferStale)
 
         case .autoFix:
             guard let n = bufferedLength(r) else { return .refuse(.bufferStale) }
@@ -93,15 +93,9 @@ enum ReplacementPlanner {
     /// P2-59 (X5): the backspace count for the whole buffer run (words and the spaces between them), else nil.
     /// The controller sets `typedLength` from `LayoutSnapshot.typedRun`, nil when the screen can't be counted.
     private static func bufferedRunLength(_ r: ReplacementRequest) -> Int? {
-        guard let s = r.snapshot, hasRun(s), s.isValid || s.strokes.isEmpty,
+        guard let s = r.snapshot, s.hasRun, s.isValid || s.strokes.isEmpty,
               let n = r.typedLength, n > 0 else { return nil }
         return n
-    }
-
-    /// 001 §12.3 X5's `WordSnapshot.hasRun` (added by P2-59a), computed here from the fields that exist today.
-    private static func hasRun(_ s: WordSnapshot?) -> Bool {
-        guard let s else { return false }
-        return !s.strokes.isEmpty || !s.previousWords.isEmpty
     }
 
     /// The backspace count when the buffer is exactly what's before the caret, else nil.
