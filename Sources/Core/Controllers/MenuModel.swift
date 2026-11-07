@@ -58,17 +58,22 @@ enum MenuModel {
         out.append(settingsAvailable ? .action("About Kytkin v\(version)", .openSettings(.about))
                                      : .info("Kytkin v\(version)"))
 
+        // P2-27: compiled out of Release, so its binary carries no DEBUG lines at all (not just hidden ones).
+        #if DEBUG
         if includeDebug {
             // P2-14 / P2-17 checklist tools. Counts and states, never keys.
             out.append(.separator)
             out.append(.info("DEBUG: Keyboard: \(state.tapMode)\(state.degradedByWatchdog ? " (lowered)" : "")"))
             out.append(.info("DEBUG: Double-Shift count: \(state.doubleShiftCount)"))
             out.append(.info("DEBUG: Tap re-enables: \(state.tapReEnableCount)"))
+            // P2-27 (001 §7 B1): tap callbacks over 1 ms, the on-device check of the callback budget.
+            out.append(.info("DEBUG: Slow key callbacks (over 1 ms): \(state.slowCallbackCount)"))
             // P2-55: the learner's gate, candidate and last decision (IDs and reasons only).
             if let line = state.learnerDebug { out.append(.info("DEBUG: \(line)")) }
             out.append(MenuItemModel(kind: .debugSwitchSubmenu, title: "DEBUG: Switch to", isEnabled: true,
                                      isChecked: false, indent: 0, keyEquivalent: ""))
         }
+        #endif
 
         out.append(.separator)
         out.append(.action("Quit Kytkin", .quit, key: "q"))

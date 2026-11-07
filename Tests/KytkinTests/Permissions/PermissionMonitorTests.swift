@@ -106,6 +106,22 @@ final class PermissionMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.ingest(reading(ax: true, im: true))?.inputMonitoringNeedsRelaunch, false)
     }
 
+    /// P2-64: on macOS 26 granting Accessibility makes the Input Monitoring preflight read true (the app is not in
+    /// the Input Monitoring list). That must not look like a fresh Input Monitoring grant needing a relaunch.
+    func testAccessibilityAloneMakingThePreflightTrueNeverNeedsARelaunch() {
+        var monitor = PermissionMonitor(clock: clock)
+        _ = monitor.ingest(reading(ax: false, im: false))
+        let status = monitor.ingest(reading(ax: true, im: true))
+        XCTAssertEqual(status?.grants.inputMonitoring, .granted)
+        XCTAssertEqual(status?.inputMonitoringNeedsRelaunch, false)
+        // Accessibility revoked again: the preflight follows it back to false; nothing to reopen for.
+        XCTAssertEqual(monitor.ingest(reading(ax: false, im: false))?.inputMonitoringNeedsRelaunch, false)
+        // A real Input Monitoring grant while Accessibility is off still needs the relaunch.
+        XCTAssertEqual(monitor.ingest(reading(ax: false, im: true))?.inputMonitoringNeedsRelaunch, true)
+        // ...until Accessibility is allowed: the active tap covers it.
+        XCTAssertEqual(monitor.ingest(reading(ax: true, im: true))?.inputMonitoringNeedsRelaunch, false)
+    }
+
     // MARK: - When to read
 
     func testEveryReasonReadsBeforeTheFirstRead() {

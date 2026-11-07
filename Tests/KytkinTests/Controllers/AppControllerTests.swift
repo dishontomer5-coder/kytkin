@@ -445,6 +445,17 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(watcher.starts, [.active])
     }
 
+    /// P2-27 (001 §7 B1): the DEBUG menu's slow-callback count is the tap's own counter, passed through as reported.
+    func testSlowCallbackCountFollowsTheTapStatus() {
+        make()
+        XCTAssertEqual(sut.menuState.slowCallbackCount, 0)
+        var status = KeyWatcherStatus()
+        status.health.mode = .active
+        status.health.overBudgetCallbacks = 3
+        sut.keyWatcherStatusDidChange(status)
+        XCTAssertEqual(sut.menuState.slowCallbackCount, 3)
+    }
+
     // MARK: - P2-21: convert requests, the after-convert switch, the buffer-keeping distinction (P2-52 item 7)
 
     func testStartTellsTheTapTheCurrentLayout() {

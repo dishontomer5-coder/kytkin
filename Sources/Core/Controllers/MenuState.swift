@@ -16,6 +16,9 @@ struct MenuState: Equatable {
     /// P2-22: the watchdog lowered the tap and a user-clicked restart could bring it back.
     var canRestartKeyboard = false
     var tapReEnableCount = 0
+    /// P2-27 (001 §7 B1): DEBUG counter of tap callbacks slower than 1 ms (`TapHealth.overBudgetCallbacks`, counted
+    /// only in Debug builds). Counts only, never keys.
+    var slowCallbackCount = 0
     /// DEBUG counter for checklist §P2-17 (counts only, never keys).
     var doubleShiftCount = 0
     var conflicts = Conflicts.none

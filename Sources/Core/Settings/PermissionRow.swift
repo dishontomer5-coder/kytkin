@@ -8,10 +8,10 @@
 //   - "Open System Settings" for both notDetermined and denied (P2-46): a notDetermined permission may still have
 //     been denied in an earlier run, and then only System Settings can turn it on.
 //   - "Quit & Reopen" on the Input Monitoring row only while `TapModePolicy.showsQuitAndReopen` says so (P2-46).
-//   - Input Monitoring is "not needed" while Accessibility is allowed AND the keyboard watcher reached the mode
-//     Kytkin wants (the active tap covers it): no buttons, so the user isn't asked for a second permission for
-//     nothing. QA (P2-26): whether Accessibility alone allows the tap on every Mac is still open (P1-17, 001 §6.1
-//     step 4), so if the tap stays below the wanted mode the row offers Input Monitoring as the fallback.
+//   - Input Monitoring is "not needed" while Accessibility is allowed: no buttons, so the user isn't asked for a
+//     second permission for nothing. P2-64: on macOS 26 Accessibility alone gives listen access and the Input
+//     Monitoring preflight then reads true although Kytkin isn't in that list, so this wins over "Allowed" and
+//     over "needs a restart" too (P1-17 answered).
 
 import Foundation
 
@@ -46,8 +46,7 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
 
     /// - Parameters:
     ///   - state: the permission as last read.
-    ///   - accessibilityCoversIt: Accessibility is allowed and the tap reached the wanted mode (Input Monitoring
-    ///     row only; see the button rules above).
+    ///   - accessibilityCoversIt: Accessibility is allowed (Input Monitoring row only; see the button rules above).
     ///   - showsQuitAndReopen: `TapModePolicy.showsQuitAndReopen` (Input Monitoring row only).
     ///   - appName: the name in System Settings' list ("Kytkin Dev" for Debug builds).
     static func make(_ pane: PermissionPane, state: PermissionState, accessibilityCoversIt: Bool,
@@ -79,10 +78,10 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
     private static func inputMonitoring(state: PermissionState, accessibilityCoversIt: Bool,
                                         showsQuitAndReopen: Bool, appName: String) -> PermissionRow {
         let status: Status
-        if showsQuitAndReopen, state == .granted {
+        if accessibilityCoversIt {
+            status = .notNeeded   // P2-64: whatever the preflight says
+        } else if showsQuitAndReopen, state == .granted {
             status = .needsRelaunch
-        } else if state != .granted, state != .unknown, accessibilityCoversIt {
-            status = .notNeeded
         } else {
             status = baseStatus(state)
         }

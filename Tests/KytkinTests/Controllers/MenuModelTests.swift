@@ -91,13 +91,15 @@ final class MenuModelTests: XCTestCase {
         s.degradedByWatchdog = true
         s.doubleShiftCount = 3
         s.tapReEnableCount = 2
+        s.slowCallbackCount = 4
         let all = items(s, debug: true)
         let t = titles(all)
-        XCTAssertEqual(Array(t.suffix(7)), [
+        XCTAssertEqual(Array(t.suffix(8)), [
             "—",
             "DEBUG: Keyboard: listenOnly (lowered)",
             "DEBUG: Double-Shift count: 3",
             "DEBUG: Tap re-enables: 2",
+            "DEBUG: Slow key callbacks (over 1 ms): 4",
             "DEBUG: Switch to",
             "—",
             "Quit Kytkin",
