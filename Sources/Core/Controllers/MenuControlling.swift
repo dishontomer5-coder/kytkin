@@ -1,22 +1,8 @@
 // P2-20: What the menu-bar menu reads and does (001 §5.1). AppController implements it; StatusItemController (UI)
-// depends only on this and on `InputSourceSwitching`. P2-22 builds the full menu on these hooks.
+// depends only on this and on `InputSourceSwitching`.
+// P2-22: the full menu. What it shows is decided by `MenuModel` (Core) from `menuState`; the UI only renders.
 
 import Foundation
-
-struct MenuState: Equatable {
-    /// The app Kytkin is acting for (never Kytkin itself), its resolution and the scope a Pin writes.
-    var currentRule: SwitchController.CurrentRule?
-    var paused = false
-    var tapMode: TapMode = .off
-    var secureInputOn = false
-    var degradedByWatchdog = false
-    var tapReEnableCount = 0
-    /// DEBUG counter for checklist §P2-17 (counts only, never keys).
-    var doubleShiftCount = 0
-    var conflicts = Conflicts.none
-    /// "Quit & Reopen" hint (P2-46).
-    var showsQuitAndReopen = false
-}
 
 @MainActor protocol MenuControlling: AnyObject {
     var menuState: MenuState { get }
@@ -26,4 +12,6 @@ struct MenuState: Equatable {
     func forgetCurrent()
     func setPaused(_ on: Bool)
     @discardableResult func selectFromMenu(_ id: InputSourceID) -> Bool
+    /// P2-22: "Restart Keyboard Features" after a watchdog downgrade (a user click only). Blocks main ≤ 1 s.
+    func restartKeyboard()
 }
