@@ -136,9 +136,14 @@ import Observation
         launching = true
         defer { launching = false }
         webLinkHandlerIDs = webLinkHandlers()   // P3-14: before the first policy (the permission read may push one)
+        // P3-26: a pre-P3-26 file's per-browser "Use website rules" becomes the global switch, once (on unless every
+        // browser here had it off); the next save writes the new key.
+        store.update { $0.browsers.resolveLegacySiteRules(among: SitePolicy.browsers(
+            webLinkHandlerIDs, ownBundleIDPrefix: KnownSwitchers.ownBundleIDPrefix)) }
         conflicts.start()
         permissions.start()
         // P3-7 (§14.7): a silent Automation check for the browsers the user turned on (never a prompt).
+        // P3-26: with the global switch on, every installed browser that supports Automation.
         permissions.refreshAutomation(for: automationOptIns)
         applyPreferences(force: true)
         // P2-21: the processor learns the layout its strokes are typed in only from changes; tell it the
@@ -171,7 +176,9 @@ import Observation
     func contextDidChange(_ c: Context) {
         cancelLooks()                 // the new app got its own rule
         // P3-7 (§14.7): an opted-in browser came to the front → silent check (≤ 1 per 5 s; catches a revoke).
-        if automationOptIns.contains(c.bundleID) { permissions.refreshAutomation(for: [c.bundleID]) }
+        // P3-26: silent only; nothing ever prompts when a browser comes to the front.
+        if usesAutomation(c.bundleID) { permissions.refreshAutomation(for: [c.bundleID]) }
+        noteFrontBrowser(c.bundleID)
         let change = switching.contextDidChange(c)
         // P3-19: a `.page` ↔ `.unknown` flip (one AX timeout) or a bar ↔ AXURL source change on the same site is not a
         // move to another text box: resetting the word buffer there could abort a convert mid-word. Into or out of
@@ -184,9 +191,29 @@ import Observation
         afterEvent()
     }
 
-    /// P3-7: the browsers the user turned Automation on for.
+    /// P3-7: the browsers the user turned Automation on for. P3-26: the global switch × the installed browsers
+    /// (web-link handlers) that support Automation.
     private var automationOptIns: Set<String> {
-        Set(store.prefs.browsers.appleEventsOptIn.filter(\.value).keys)
+        guard store.prefs.browsers.useAutomation else { return [] }
+        return webLinkHandlerIDs.filter(usesAutomation)
+    }
+
+    /// P3-26: the global "Use Automation" is on and `bundleID` has a scripting dictionary.
+    private func usesAutomation(_ bundleID: String) -> Bool {
+        store.prefs.browsers.useAutomation && BrowserCatalog.known[bundleID]?.appleScript != nil
+    }
+
+    /// P3-26: the browser most recently in front this session (Kytkin excluded), for the default choice of the
+    /// Browsers & Sites dropdown. Memory only.
+    private(set) var lastFrontBrowserID: String?
+
+    private func noteFrontBrowser(_ bundleID: String) {
+        guard !bundleID.isEmpty else { return }
+        let own = KnownSwitchers.ownBundleIDPrefix.lowercased()
+        guard own.isEmpty || !bundleID.lowercased().hasPrefix(own),
+              BrowserCatalog.engine(for: bundleID, opensWebLinks: webLinkHandlerIDs.contains(bundleID)) != nil
+        else { return }
+        lastFrontBrowserID = bundleID
     }
 
     /// P3-19: page-state-only changes between `.page` and `.unknown` (either way, or the same state with another
@@ -519,7 +546,7 @@ import Observation
     }
 
     /// P3-14 (001 §14.5): Kytkin on/paused and Accessibility (`availability.siteRules`), the Automation opt-ins, the
-    /// browser preferences (`siteRulesEnabled`, `ignorePrivateWindowsCompletely`), the PSL (D11) and the web-link
+    /// browser preferences (`siteRulesOn`, `ignorePrivateWindowsCompletely`), the PSL (D11) and the web-link
     /// handlers → one `SitePolicy`, pushed only when it changed (the monitor re-attaches or detaches at once).
     private func updateSitePolicy(_ availability: FeatureAvailability? = nil) {
         let policy = SitePolicy(availability: availability ?? self.availability, browsers: store.prefs.browsers,

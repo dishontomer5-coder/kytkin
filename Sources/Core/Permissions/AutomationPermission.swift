@@ -12,6 +12,8 @@
 // turned on, and when an opted-in browser comes to the front. The prompt is shown ONLY from a click: turning the
 // toggle on, or the row's "Ask" button, while that browser runs. If it isn't running, the choice is stored and the
 // row says to open the browser and click Ask; Kytkin never asks later on its own.
+// P3-26: the toggle is one global switch now (Settings → Browsers & Sites); turning it on may ask for several running
+// browsers, so click requests are queued here and macOS shows one question at a time.
 
 import Foundation
 
@@ -61,9 +63,33 @@ struct AutomationPermissionTracker: Sendable, Equatable {
         return true
     }
 
-    /// A click's request: always allowed. It also counts as a check for the throttle.
-    mutating func beginRequest(_ bundleID: String, now: UInt64) {
+    /// P3-26: the click request whose macOS question may be on screen now; others wait in `requestQueue`.
+    private(set) var requestInFlight: String?
+    private(set) var requestQueue: [String] = []
+
+    /// A click's request: always accepted. It also counts as a check for the throttle. P3-26: requests run one at a
+    /// time, so macOS never shows two Automation questions at once (turning the global switch on may ask for several
+    /// running browsers). Returns true when the caller should ask now; false = queued (or already pending).
+    mutating func beginRequest(_ bundleID: String, now: UInt64) -> Bool {
         lastCheckAt[bundleID] = now
+        guard requestInFlight != bundleID, !requestQueue.contains(bundleID) else { return false }
+        guard requestInFlight == nil else {
+            requestQueue.append(bundleID)
+            return false
+        }
+        requestInFlight = bundleID
+        return true
+    }
+
+    /// P3-26: the in-flight request for `bundleID` got its answer. Returns the next queued browser to ask (now in
+    /// flight), if any.
+    mutating func finishRequest(_ bundleID: String) -> String? {
+        guard requestInFlight == bundleID else { return nil }
+        requestInFlight = nil
+        guard !requestQueue.isEmpty else { return nil }
+        let next = requestQueue.removeFirst()
+        requestInFlight = next
+        return next
     }
 
     /// Takes a result. Returns true when `states` changed.

@@ -51,7 +51,7 @@ enum PreferencesMapping {
                         doubleShiftEnabled: prefs.convert.doubleShiftEnabled,
                         // P2-20: off until P4, as in `processorConfig` (it would also make a tap "wanted").
                         autoFixEnabled: false,
-                        appleEventsOptIn: Set(prefs.browsers.appleEventsOptIn.filter(\.value).keys))
+                        useAutomation: prefs.browsers.useAutomation)
     }
 
     // MARK: - MethodHint overrides (001 §12 T5)

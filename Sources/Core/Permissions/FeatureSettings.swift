@@ -9,14 +9,14 @@ struct FeatureSettings: Sendable, Equatable {
     var learnFromManualSwitches = true       // general.learnFromManualSwitches
     var doubleShiftEnabled = true            // convert.doubleShiftEnabled
     var autoFixEnabled = true                // autoFix.enabled (P4)
-    var appleEventsOptIn: Set<String> = []   // browsers.appleEventsOptIn where true (P3)
+    var useAutomation = false                // browsers.useAutomation (P3-26: one switch for every browser)
 
     init(enabled: Bool = true, learnFromManualSwitches: Bool = true, doubleShiftEnabled: Bool = true,
-         autoFixEnabled: Bool = true, appleEventsOptIn: Set<String> = []) {
+         autoFixEnabled: Bool = true, useAutomation: Bool = false) {
         self.enabled = enabled
         self.learnFromManualSwitches = learnFromManualSwitches
         self.doubleShiftEnabled = doubleShiftEnabled
         self.autoFixEnabled = autoFixEnabled
-        self.appleEventsOptIn = appleEventsOptIn
+        self.useAutomation = useAutomation
     }
 }

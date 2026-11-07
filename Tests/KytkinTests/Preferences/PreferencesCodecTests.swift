@@ -34,7 +34,8 @@ final class PreferencesCodecTests: XCTestCase {
         XCTAssertTrue(p.autoFix.switchLanguageAfterFix)
         XCTAssertTrue(p.autoFix.backspaceUndoes)
         XCTAssertFalse(p.browsers.ignorePrivateWindowsCompletely)
-        XCTAssertEqual(p.browsers.appleEventsOptIn, [:])
+        XCTAssertFalse(p.browsers.useAutomation)
+        XCTAssertTrue(p.browsers.siteRulesOn)
         XCTAssertEqual(p.rules, [])
         XCTAssertEqual(p.apps, [:])
         XCTAssertEqual(p.autoFixExceptions.algorithm, "HMAC-SHA256")
@@ -79,7 +80,7 @@ final class PreferencesCodecTests: XCTestCase {
         XCTAssertFalse(p.autoFix.switchLanguageAfterFix)
         XCTAssertFalse(p.autoFix.backspaceUndoes)
         XCTAssertTrue(p.browsers.ignorePrivateWindowsCompletely)
-        XCTAssertEqual(p.browsers.appleEventsOptIn, ["com.google.Chrome": true, "com.brave.Browser": false])
+        XCTAssertTrue(p.browsers.useAutomation, "P3-26: the old per-browser opt-ins, one on → on")
 
         XCTAssertEqual(p.rules.map(\.scope), [
             .app(bundleID: "com.tinyspeck.slackmacgap"),
@@ -168,7 +169,7 @@ final class PreferencesCodecTests: XCTestCase {
         XCTAssertEqual(p.convert.doubleShiftWindowMs, 500)
         XCTAssertFalse(p.convert.switchLanguageAfterConvert)
         XCTAssertEqual(p.autoFix, Preferences.AutoFix())
-        XCTAssertEqual(p.browsers.appleEventsOptIn, ["com.google.Chrome": true])
+        XCTAssertTrue(p.browsers.useAutomation, "P3-26: the old per-browser opt-ins")
         XCTAssertEqual(p.apps, ["com.apple.Terminal": .init(convertEnabled: true)])
         XCTAssertEqual(p.autoFixExceptions.cap, 2_000)
         XCTAssertEqual(p.autoFixExceptions.entries, [.init(h: "abc=", lastUsed: "2026-11-05")])

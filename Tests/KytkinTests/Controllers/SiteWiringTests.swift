@@ -115,9 +115,13 @@ final class SiteWiringTests: XCTestCase {
         store.update { $0.rules.append(.app("com.apple.Notes", IDs.hebrew)) }
         sut.preferencesDidChange()
         XCTAssertEqual(monitor.sitePolicyCalls.count, before, "rules don't change the policy")
-        store.update { $0.browsers.siteRulesEnabled[zen] = false }
+        store.update { $0.browsers.siteRulesOn = false }
         sut.preferencesDidChange()
         XCTAssertNil(try XCTUnwrap(monitor.sitePolicyCalls.last).request(for: zen))
+        XCTAssertNil(try XCTUnwrap(monitor.sitePolicyCalls.last).request(for: other), "P3-26: every browser")
+        store.update { $0.browsers.siteRulesOn = true }
+        sut.preferencesDidChange()
+        XCTAssertNotNil(try XCTUnwrap(monitor.sitePolicyCalls.last).request(for: zen))
         store.update { $0.browsers.ignorePrivateWindowsCompletely = true }
         sut.preferencesDidChange()
         XCTAssertEqual(try XCTUnwrap(monitor.sitePolicyCalls.last).request(for: other)?.ignorePrivateWindows, true)
@@ -133,7 +137,7 @@ final class SiteWiringTests: XCTestCase {
                                                                         isPrivate: nil, via: .axURL),
                                       sawWindow: true)
         XCTAssertEqual(sut.browserSupport(for: zen), .works)
-        store.update { $0.browsers.siteRulesEnabled[zen] = false }
+        store.update { $0.browsers.siteRulesOn = false }
         sut.preferencesDidChange()
         XCTAssertEqual(sut.browserSupport(for: zen), .off)
     }
@@ -173,10 +177,48 @@ final class SiteWiringTests: XCTestCase {
     func testBrowserSupportFollowsTheSwitchAtOnce() {
         make()
         // A Settings write, before the preferences observation has pushed a new policy.
-        store.update { $0.browsers.siteRulesEnabled[zen] = false }
+        store.update { $0.browsers.siteRulesOn = false }
         XCTAssertEqual(sut.browserSupport(for: zen), .off)
-        store.update { $0.browsers.siteRulesEnabled[zen] = nil }
+        store.update { $0.browsers.siteRulesOn = true }
         XCTAssertEqual(sut.browserSupport(for: zen), .notSeenYet)
+    }
+
+    // MARK: - P3-26: the old per-browser switch, settled once at launch
+
+    func testLaunchKeepsWebsiteRulesOnUnlessEveryBrowserHadThemOff() {
+        var prefs = Preferences()
+        prefs.browsers.legacySiteRulesOff = [zen]   // Zen off, the other browser still on
+        make(prefs)
+        XCTAssertEqual(store.prefs.browsers.legacySiteRulesOff, [], "resolved once")
+        XCTAssertTrue(store.prefs.browsers.siteRulesOn)
+        XCTAssertNotNil(monitor.sitePolicyCalls.last?.request(for: zen), "now on for Zen too (no per-browser switch)")
+
+        prefs.browsers.legacySiteRulesOff = [zen, other]
+        make(prefs)
+        XCTAssertEqual(store.prefs.browsers.legacySiteRulesOff, [])
+        XCTAssertFalse(store.prefs.browsers.siteRulesOn, "every browser had them off")
+        XCTAssertNil(monitor.sitePolicyCalls.last?.request(for: other))
+    }
+
+    func testLaunchWithNoWebLinkHandlersLeavesTheOldSwitchesForLater() {
+        handlers = []
+        var prefs = Preferences()
+        prefs.browsers.legacySiteRulesOff = [zen]
+        make(prefs)
+        XCTAssertEqual(store.prefs.browsers.legacySiteRulesOff, [zen], "a failed read doesn't decide it")
+        XCTAssertNotNil(monitor.sitePolicyCalls.last?.request(for: zen), "meanwhile: on")
+    }
+
+    func testLastBrowserInFrontIsRemembered() {
+        // P3-26: the Browsers & Sites dropdown's default.
+        make()
+        XCTAssertNil(sut.lastFrontBrowserID)
+        monitor.activate(zen, pid: 7)
+        monitor.activate("com.apple.Notes", pid: 8)
+        monitor.activate("io.github.kytkin.Kytkin.dev", pid: 9)
+        XCTAssertEqual(sut.lastFrontBrowserID, zen, "not apps, not Kytkin")
+        monitor.activate(other, pid: 10)
+        XCTAssertEqual(sut.lastFrontBrowserID, other, "a web-link handler counts")
     }
 
     func testDebugMenuCarriesTheSiteLine() {

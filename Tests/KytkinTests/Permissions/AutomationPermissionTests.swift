@@ -2,6 +2,8 @@
 // with fake seams (checks off main, results on main, the request only from the click path), the Settings seam for
 // P3-15 (`BrowserAutomationController`, the row state and its plain-English strings), and AppController's silent
 // checks at launch and on activation of an opted-in browser. No fake here talks to TCC or any app.
+// P3-26: one global switch (`browsers.useAutomation`); click requests are queued so macOS never shows two questions
+// at once; a browser coming to the front is only ever checked silently (FakePermissions fails on any prompt).
 
 import AppKit
 import XCTest
@@ -67,6 +69,24 @@ final class AutomationPermissionTrackerTests: XCTestCase {
         XCTAssertEqual(t.states["chrome"], .notDetermined)
         XCTAssertFalse(t.ingest("safari", .notRunning))
         XCTAssertNil(t.states["safari"], "never answered: unknown")
+    }
+
+    func testClickRequestsRunOneAtATime() {
+        // P3-26: the global switch may ask for several running browsers; macOS must never show two questions at once.
+        var t = AutomationPermissionTracker()
+        XCTAssertTrue(t.beginRequest("chrome", now: t0), "nothing on screen: ask now")
+        XCTAssertFalse(t.beginRequest("arc", now: t0), "queued")
+        XCTAssertFalse(t.beginRequest("safari", now: t0), "queued")
+        XCTAssertFalse(t.beginRequest("arc", now: t0), "already waiting: not twice")
+        XCTAssertFalse(t.beginRequest("chrome", now: t0), "already on screen: not twice")
+        XCTAssertEqual(t.requestInFlight, "chrome")
+        XCTAssertEqual(t.requestQueue, ["arc", "safari"])
+        XCTAssertNil(t.finishRequest("arc"), "only the one on screen finishes")
+        XCTAssertEqual(t.finishRequest("chrome"), "arc")
+        XCTAssertEqual(t.finishRequest("arc"), "safari")
+        XCTAssertNil(t.finishRequest("safari"))
+        XCTAssertNil(t.requestInFlight)
+        XCTAssertTrue(t.beginRequest("chrome", now: t0), "free again")
     }
 
     func testAutomationSettingsURL() {
@@ -138,6 +158,28 @@ final class PermissionsManagerAutomationTests: XCTestCase {
         manager.stop()
     }
 
+    func testRequestsWaitForTheQuestionOnScreen() {
+        // P3-26: hold each answer, as macOS does while its question is on screen.
+        var pending: [(@Sendable () -> AutomationCheckResult, @MainActor @Sendable (AutomationCheckResult) -> Void)] = []
+        let m = PermissionsManager(probe: NoProbe(), requester: plain, clock: clock,
+                                   workspaceCenter: NotificationCenter(), appCenter: NotificationCenter(),
+                                   automationProbe: probe, automationRequester: requester,
+                                   background: { work, done in pending.append((work, done)) })
+        let arc = "company.thebrowser.Browser"
+        m.requestAutomation(for: chrome)
+        m.requestAutomation(for: arc)
+        XCTAssertEqual(pending.count, 1, "the second question waits")
+        var rounds = 0
+        while !pending.isEmpty && rounds < 5 {   // bounded
+            rounds += 1
+            let (work, done) = pending.removeFirst()
+            done(work())
+            XCTAssertLessThanOrEqual(pending.count, 1, "never two at once")
+        }
+        XCTAssertEqual(requester.asks, [chrome, arc], "then the next, in order")
+        XCTAssertEqual(m.automation[arc], .granted)
+    }
+
     func testOpenAutomationSettings() {
         manager.openAutomationSettings()
         XCTAssertEqual(plain.opened, [PermissionPane.automationSettingsURL])
@@ -180,9 +222,11 @@ final class BrowserAutomationControllerTests: XCTestCase {
         XCTAssertEqual(sut.automationState(for: orion).status, .notAvailable)
         XCTAssertEqual(sut.automationState(for: "com.example.Other").status, .notAvailable)
         XCTAssertFalse(sut.automationState(for: zen).isAvailable)
-        sut.setAutomationEnabled(true, for: zen)
-        XCTAssertEqual(store.prefs.browsers.appleEventsOptIn, [:], "no toggle for Zen")
-        XCTAssertTrue(permissions.calls.isEmpty)
+        sut.setUseAutomation(true)
+        XCTAssertEqual(sut.automationState(for: zen).status, .notAvailableGecko, "P3-26: the switch is ignored for Zen")
+        XCTAssertFalse(permissions.calls.contains(.requestAutomation(zen)), "running, but never asked")
+        sut.askAutomation(for: zen)
+        XCTAssertFalse(permissions.calls.contains(.requestAutomation(zen)))
     }
 
     func testOffByDefault() {
@@ -190,24 +234,25 @@ final class BrowserAutomationControllerTests: XCTestCase {
         XCTAssertEqual(s.status, .off)
         XCTAssertTrue(s.isAvailable)
         XCTAssertFalse(s.isOn)
-        XCTAssertEqual(s.statusText(browserName: "Chrome"), "Off")
+        XCTAssertEqual(s.statusText(browserName: "Chrome"), "Off (\"Use Automation\" is off above)")
         XCTAssertNil(s.action)
     }
 
-    func testTurningOnARunningBrowserAsksOnThatClick() {
-        sut.setAutomationEnabled(true, for: chrome)
-        XCTAssertEqual(store.prefs.browsers.appleEventsOptIn, [chrome: true])
-        XCTAssertEqual(permissions.calls, [.requestAutomation(chrome)])
+    func testTurningOnAsksTheRunningBrowsersOnThatClick() {
+        sut.setUseAutomation(true)
+        XCTAssertTrue(store.prefs.browsers.useAutomation)
+        XCTAssertEqual(permissions.calls, [.requestAutomation(chrome), .requestAutomation(arc)],
+                       "Chrome and Arc run and support it; Zen runs but has no Automation; Safari isn't running")
         XCTAssertEqual(sut.automationState(for: chrome).status, .checking)
         permissions.set(automation: chrome, .granted)
         XCTAssertEqual(sut.automationState(for: chrome).status, .allowed)
         XCTAssertEqual(sut.automationState(for: chrome).statusText(browserName: "Chrome"), "Allowed")
     }
 
-    func testTurningOnABrowserThatIsntRunningOnlyStoresTheChoice() {
+    func testTurningOnWithNoBrowserRunningOnlyStoresTheChoice() {
         running = []
-        sut.setAutomationEnabled(true, for: safari)
-        XCTAssertEqual(store.prefs.browsers.appleEventsOptIn, [safari: true])
+        sut.setUseAutomation(true)
+        XCTAssertTrue(store.prefs.browsers.useAutomation)
         XCTAssertTrue(permissions.calls.isEmpty, "never asks later on its own")
         let s = sut.automationState(for: safari)
         XCTAssertEqual(s.status, .notAsked)
@@ -223,12 +268,13 @@ final class BrowserAutomationControllerTests: XCTestCase {
 
     func testAlreadyAllowedIsNotAskedAgain() {
         permissions.set(automation: chrome, .granted)
-        sut.setAutomationEnabled(true, for: chrome)
+        permissions.set(automation: arc, .granted)
+        sut.setUseAutomation(true)
         XCTAssertTrue(permissions.calls.isEmpty)
     }
 
     func testDeniedShowsTheSystemSettingsLink() {
-        sut.setAutomationEnabled(true, for: arc)
+        sut.setUseAutomation(true)
         permissions.set(automation: arc, .denied)
         let s = sut.automationState(for: arc)
         XCTAssertEqual(s.status, .denied)
@@ -241,7 +287,7 @@ final class BrowserAutomationControllerTests: XCTestCase {
     }
 
     func testNotAskedWhileRunningOffersAsk() {
-        sut.setAutomationEnabled(true, for: chrome)
+        sut.setUseAutomation(true)
         permissions.set(automation: chrome, .notDetermined)
         let s = sut.automationState(for: chrome)
         XCTAssertEqual(s.status, .notAsked)
@@ -250,11 +296,14 @@ final class BrowserAutomationControllerTests: XCTestCase {
     }
 
     func testTurningOffOnlyStoresTheChoice() {
-        sut.setAutomationEnabled(true, for: chrome)
-        sut.setAutomationEnabled(false, for: chrome)
-        XCTAssertEqual(store.prefs.browsers.appleEventsOptIn, [:])
+        running = [chrome]
+        sut.setUseAutomation(true)
+        sut.setUseAutomation(false)
+        XCTAssertFalse(store.prefs.browsers.useAutomation)
         XCTAssertEqual(permissions.calls, [.requestAutomation(chrome)], "turning off asks nothing")
         XCTAssertEqual(sut.automationState(for: chrome).status, .off)
+        sut.setUseAutomation(false)
+        XCTAssertEqual(permissions.calls.count, 1, "a repeated set does nothing")
     }
 
     func testAskWhenNotOptedInDoesNothing() {
@@ -273,42 +322,67 @@ final class BrowserAutomationControllerTests: XCTestCase {
 final class AutomationWiringTests: XCTestCase {
     private let chrome = "com.google.Chrome"
 
-    private func make(optIn: [String: Bool]) -> (AppController, FakePermissions, FakeContextMonitor) {
+    private func make(useAutomation: Bool) -> (AppController, FakePermissions, FakeContextMonitor) {
         let clock = FakeClock(nowNanos: 1_000_000_000)
         var prefs = Preferences()
-        prefs.browsers.appleEventsOptIn = optIn
+        prefs.browsers.useAutomation = useAutomation
         let monitor = FakeContextMonitor()
         let permissions = FakePermissions()
         permissions.statusOnStart = PermissionStatus(grants: PermissionGrants(accessibility: .granted))
         let sut = AppController(switcher: FakeSwitcher(current: IDs.abc), context: monitor,
                                 store: makeStore(prefs, clock: clock), permissions: permissions,
                                 conflicts: FakeConflicts(), keyWatcher: FakeKeyWatcher(), ticker: FakeTicker(),
-                                clock: clock, suffixListLoaded: true, webLinkHandlers: { [] })
+                                clock: clock, suffixListLoaded: true,
+                                webLinkHandlers: { ["com.google.Chrome", "com.apple.Safari", "app.zen-browser.zen"] })
         monitor.onChange = { sut.contextDidChange($0) }
         permissions.onChange = { sut.permissionsDidChange($0) }
         sut.start()
         return (sut, permissions, monitor)
     }
 
-    func testLaunchChecksTheOptedInBrowsersSilently() {
-        let (_, permissions, _) = make(optIn: [chrome: true, "com.apple.Safari": false])
-        XCTAssertEqual(permissions.automationRefreshes.first, [chrome])
+    func testLaunchChecksTheInstalledBrowsersThatSupportItSilently() {
+        let (_, permissions, _) = make(useAutomation: true)
+        XCTAssertEqual(permissions.automationRefreshes.first, [chrome, "com.apple.Safari"], "not Zen; never a prompt")
     }
 
-    func testAnOptedInBrowserInFrontIsCheckedSilently() {
-        let (_, permissions, monitor) = make(optIn: [chrome: true])
+    func testSwitchOffChecksNothing() {
+        let (_, permissions, monitor) = make(useAutomation: false)
+        monitor.activate(chrome, pid: 9)
+        XCTAssertTrue(permissions.automationRefreshes.allSatisfy(\.isEmpty))
+    }
+
+    func testABrowserInFrontIsCheckedSilentlyNeverAsked() {
+        let (_, permissions, monitor) = make(useAutomation: true)
         monitor.activate("com.apple.Notes", pid: 3)
         let before = permissions.automationRefreshes.count
         monitor.activate(chrome, pid: 9)
         XCTAssertEqual(permissions.automationRefreshes.count, before + 1)
-        XCTAssertEqual(permissions.automationRefreshes.last, [chrome])
+        XCTAssertEqual(permissions.automationRefreshes.last, [chrome], "silent; a prompt would fail the test")
+        let count = permissions.automationRefreshes.count
+        monitor.activate("app.zen-browser.zen", pid: 10)
+        XCTAssertEqual(permissions.automationRefreshes.count, count, "Zen: no Automation, no check")
     }
 
     func testAGrantPutsTheDialectIntoTheWatchRequest() {
-        let (_, permissions, monitor) = make(optIn: [chrome: true])
+        let (_, permissions, monitor) = make(useAutomation: true)
         XCTAssertNil(monitor.sitePolicyCalls.last?.request(for: chrome)?.appleScript, "not granted yet")
         permissions.status.grants.automation = [chrome: .granted]
         permissions.onChange?(permissions.status)
         XCTAssertEqual(monitor.sitePolicyCalls.last?.request(for: chrome)?.appleScript, .chromium)
+    }
+
+    func testTheGlobalSwitchGatesTheDialect() {
+        // P3-26: global switch × browser supports it × macOS allowed it.
+        let (_, permissions, monitor) = make(useAutomation: false)
+        permissions.status.grants.automation = [chrome: .granted, "app.zen-browser.zen": .granted]
+        permissions.onChange?(permissions.status)
+        XCTAssertNil(monitor.sitePolicyCalls.last?.request(for: chrome)?.appleScript, "switch off")
+        let (_, onPermissions, onMonitor) = make(useAutomation: true)
+        onPermissions.status.grants.automation = [chrome: .granted, "app.zen-browser.zen": .granted]
+        onPermissions.onChange?(onPermissions.status)
+        XCTAssertEqual(onMonitor.sitePolicyCalls.last?.request(for: chrome)?.appleScript, .chromium)
+        XCTAssertNil(onMonitor.sitePolicyCalls.last?.request(for: "app.zen-browser.zen")?.appleScript,
+                     "Zen has no dictionary: ignored")
+        XCTAssertNil(onMonitor.sitePolicyCalls.last?.request(for: "com.apple.Safari")?.appleScript, "not allowed")
     }
 }

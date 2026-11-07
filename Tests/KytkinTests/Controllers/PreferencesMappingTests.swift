@@ -58,13 +58,13 @@ final class PreferencesMappingTests: XCTestCase {
     func testFeatureSettingsAndPause() {
         var p = Preferences()
         p.general.learnFromManualSwitches = false
-        p.browsers.appleEventsOptIn = ["com.google.Chrome": true, "com.apple.Safari": false]
+        p.browsers.useAutomation = true
         let s = PreferencesMapping.featureSettings(p, paused: false)
         XCTAssertTrue(s.enabled)
         XCTAssertFalse(s.learnFromManualSwitches)
         XCTAssertTrue(s.doubleShiftEnabled)
         XCTAssertFalse(s.autoFixEnabled)
-        XCTAssertEqual(s.appleEventsOptIn, ["com.google.Chrome"])
+        XCTAssertTrue(s.useAutomation)
         XCTAssertFalse(PreferencesMapping.featureSettings(p, paused: true).enabled)
         p.general.enabled = false
         XCTAssertFalse(PreferencesMapping.featureSettings(p, paused: false).enabled)
