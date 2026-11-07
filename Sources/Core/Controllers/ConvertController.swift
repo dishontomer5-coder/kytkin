@@ -299,7 +299,9 @@ import Foundation
             return run
         }
         let convert: (String) -> String? = { text in
-            if let old, let rendered, text == old {
+            // P2-60: scalar equality, not String's canonical equivalence: a precomposed vs decomposed run must not
+            // count as "exactly the buffer" (the key path backspaces by the buffer's own count).
+            if let old, let rendered, text.unicodeScalars.elementsEqual(old.unicodeScalars) {
                 // The buffer's text (keys, or an AX run that is exactly the buffer): convert by its strokes.
                 guard rendered.text != old else { return nil }
                 fromBuffer = true

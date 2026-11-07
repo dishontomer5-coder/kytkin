@@ -12,6 +12,10 @@
 // P2-59a QA: Return, keypad Enter, Tab and Option-Space (which end the buffer, and can be auto-fix triggers) are typed,
 // and convert finishes randomly keep the buffer re-rendered (`bufferRenderedIn`), forget it, or switch. Also checked:
 // after any user keyDown reaches the processor, no "untouched since convert" generation is left (001 §12.3 X6).
+// P2-60: after-convert switch notifications (`isOurs: true`, and foreign ones) arrive at random, before or after the
+// finish, around ⌘ aborts, full FIFOs, clicks and hard-cap flushes. Also checked: an aborted generation still waiting
+// for its flush or finish holds no buffer, and an `isOurs` switch after an aborted or force-flushed generation keeps
+// nothing (no stale kept buffer).
 // Nothing is installed or posted: events are built in memory and handed to the fake.
 
 import CoreGraphics
@@ -192,6 +196,16 @@ final class KeyTapEngineSoakTests: XCTestCase {
                 if engine.processor.config.holdBackCapacity != config.holdBackCapacity {
                     fail("updateConfig changed the FIFO capacity")
                 }
+            case 96..<98:
+                // P2-60: an input-source change, mostly our own after-convert "keep the buffer" switch.
+                let id = rng.below(2) == 0 ? InputSourceID("com.apple.keylayout.Hebrew")
+                                           : InputSourceID("com.apple.keylayout.ABC")
+                let isOurs = rng.below(4) != 0
+                let revoked = engine.processor.keepBufferRevoked
+                engine.perform(.inputSourceChanged(to: id, isOurs: isOurs))
+                if isOurs, revoked, !engine.processor.buffer.isEmpty {
+                    fail("our switch after an aborted or force-flushed generation kept a buffer")
+                }
             case 88..<92:
                 // A worker that never finishes (stuck), past the hard cap.
                 tick(400 + UInt64(rng.below(1_200)))
@@ -202,6 +216,12 @@ final class KeyTapEngineSoakTests: XCTestCase {
 
             if engine.heldCGEventCount != engine.processor.heldCount {
                 fail("CGEvent FIFO (\(engine.heldCGEventCount)) desynced from the processor (\(engine.processor.heldCount))")
+                return
+            }
+            // P2-60: an aborted generation (held keys still out) never holds a buffer.
+            if engine.processor.activeGeneration != nil, !engine.processor.isReplacing,
+               !engine.processor.buffer.isEmpty {
+                fail("an aborted generation left a buffer")
                 return
             }
             if engine.processor.heldCount > 0, backend.armedDeadline == nil {

@@ -162,6 +162,18 @@ final class LayoutConverterTests: XCTestCase {
         XCTAssertEqual(toABC.convert(toHe.convert(all).text).text, all)
     }
 
+    /// P2-60: a correct Hebrew line with `.`, `,` and the Hebrew layout's apostrophe (geresh, on the W key) converts to
+    /// English and back to exactly the same scalars (a double-Shift on it, then the undo double-Shift).
+    /// Not covered: an ASCII `'` in a Hebrew line (pasted, or autocorrected) has no Apple Hebrew key, so it passes
+    /// through to English unchanged and then converts to `,` on the way back (reported in P2-60).
+    func testCorrectHebrewLineWithPunctuationRoundTripsExactly() {
+        let line = "שלום, מה שלומך? אני בסדר. זה ג׳ירפה, לא ג׳וק."
+        let english = convert(line, he, abc)
+        XCTAssertEqual(english, "akuo' nv akunl? tbh cxsr/ zv dwhrpv' kt dwue/")
+        let back = convert(english, abc, he)
+        XCTAssertTrue(back.unicodeScalars.elementsEqual(line.unicodeScalars), "round trip: \(back)")
+    }
+
     func testUSBehavesLikeABC() {
         XCTAssertEqual(convert("akuo", us, he), "שלום")
         XCTAssertEqual(convert("שלום", he, us), "akuo")
