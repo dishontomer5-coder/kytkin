@@ -46,6 +46,8 @@ final class FakeAXTree: AXNodeReading {
     var appError: AXReadError?
     /// From the n-th call on (0-based), every call throws `.timedOut`: a browser that hangs mid-read.
     var hangAfterCalls: Int?
+    /// Runs after a call is logged and before it answers: the browser's state changing mid-read (QA).
+    var beforeAnswer: ((Call) -> Void)?
 
     private(set) var calls: [Call] = []
 
@@ -83,6 +85,7 @@ final class FakeAXTree: AXNodeReading {
     private func log(_ call: Call) throws(AXReadError) {
         let index = calls.count
         calls.append(call)
+        beforeAnswer?(call)
         if let hang = hangAfterCalls, index >= hang { throw .timedOut }
         if let n = call.node {
             if let e = errors[n] { throw e }

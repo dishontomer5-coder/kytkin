@@ -103,17 +103,57 @@ final class BrowserAddressReaderTests: XCTestCase {
         XCTAssertEqual(o.pageState, .page)
     }
 
-    func testFocusWalkStopsAfterSixteenParents() throws {
+    func testFocusWalkStopsAfterFortyParents() throws {
         let t = FakeAXTree()
         let window = t.add("AXWindow", subrole: "AXStandardWindow")
         let webArea = t.add("AXWebArea", under: window, url: "https://example.com/")
         var parent = webArea
-        for _ in 0..<16 { parent = t.add("AXGroup", under: parent) }
-        let atLimit = parent                           // web area is 16 parents up
-        let beyond = t.add("AXGroup", under: parent)   // 17 parents up
+        for _ in 0..<40 { parent = t.add("AXGroup", under: parent) }
+        let atLimit = parent                           // web area is 40 parents up
+        let beyond = t.add("AXGroup", under: parent)   // 41 parents up
         typealias R = BrowserAddressReader<FakeAXTree>
+        XCTAssertEqual(BrowserReadLimits.focusWalkSteps, 40)
         XCTAssertEqual(try R.classifyFocus(atLimit, tree: t).0, .inPage)
         XCTAssertEqual(try R.classifyFocus(beyond, tree: t).0, .other)
+    }
+
+    // QA (P3-11/P3-13 review): 16 steps made a field deep in a real page count as "editing", which blocks learning.
+    func testDeepTextFieldInAChromiumPageIsInPageNotEditing() {
+        let t = FakeAXTree()
+        let window = t.add("AXWindow", subrole: "AXStandardWindow")
+        var parent = t.add("AXWebArea", under: window, url: "https://mail.example.com/compose")
+        for _ in 0..<24 { parent = t.add("AXGroup", under: parent) }
+        t.main = window
+        t.focused = t.add(AXRoleName.textArea, under: parent)
+        var r = BrowserAddressReader<FakeAXTree>(request: request(.chromium), siteReader: siteReader)
+        let o = r.read(t, now: 0).observation
+        XCTAssertEqual(o.pageState, .page)
+        XCTAssertEqual(o.site, site("mail.example.com", "example.com"))
+    }
+
+    // QA: an iframe's own web area (and AXURL) never wins over the page's: the outermost web area is the page.
+    func testInnerFrameWithItsOwnURLReadsTheOuterPage() {
+        for engine in [BrowserEngine.chromium, .gecko] {
+            for frameURL in ["https://ads.example.net/frame", "about:blank"] {
+                let t = FakeAXTree()
+                let window = t.add("AXWindow", subrole: "AXStandardWindow")
+                let page = t.add("AXWebArea", under: window, url: "https://www.example.com/article", area: 1_000_000)
+                let group = t.add("AXGroup", under: page)
+                let frame = t.add("AXWebArea", under: group, url: frameURL, area: 10_000)
+                t.main = window
+                t.focused = t.add(AXRoleName.textArea, under: t.add("AXGroup", under: frame))
+                var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
+                let o = r.read(t, now: 0).observation
+                XCTAssertEqual(o, BrowserObservation(site: site("www.example.com", "example.com"), pageState: .page,
+                                                     isPrivate: nil, via: .axURL), "\(engine) \(frameURL)")
+                XCTAssertFalse(t.calls.contains(.url(frame)), "\(engine) \(frameURL)")
+                XCTAssertEqual(r.windows[0].webArea, page)
+                // The next read stops at the known page web area: the frame is passed, never read.
+                t.resetCalls()
+                XCTAssertEqual(r.read(t, now: 1).observation.site, site("www.example.com", "example.com"))
+                XCTAssertFalse(t.calls.contains(.url(frame)))
+            }
+        }
     }
 
     func testFocusedTextFieldOutsidePageIsEditing() {
@@ -326,20 +366,31 @@ final class BrowserAddressReaderTests: XCTestCase {
         XCTAssertTrue(state.mayFullScan(now: 1_000 + BrowserReadLimits.fullScanIntervalNanos))
     }
 
-    // MARK: Default strategies (until P3-11/P3-13)
+    // MARK: Default strategies (P3-11: WebAreaReadStrategyTests; P3-13: GeckoReadStrategyTests)
 
-    func testEveryEngineHasAStrategyThatReadsNothingYet() {
-        for engine in [BrowserEngine.chromium, .gecko, .webkit, .unknown] {
+    func testEveryEngineHasARealStrategy() {
+        typealias R = BrowserAddressReader<FakeAXTree>
+        typealias L = LatchedAXTree<FakeAXTree>
+        for engine in [BrowserEngine.chromium, .webkit, .unknown] {
+            XCTAssertEqual((R.defaultStrategy(for: engine) as? WebAreaReadStrategy<L>)?.engine, engine, "\(engine)")
+        }
+        XCTAssertTrue(R.defaultStrategy(for: .gecko) is GeckoReadStrategy<L>)
+        // Every engine reads Arc's page from the web area holding focus.
+        for engine in [BrowserEngine.chromium, .webkit, .unknown, .gecko] {
             let arc = BrowserFixtures.arc()
             var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
-            let (o, sawWindow) = r.read(arc.tree, now: 0)
-            XCTAssertTrue(sawWindow)
-            XCTAssertEqual(o, .unknown(), "\(engine)")
-            XCTAssertFalse(arc.tree.calls.contains { if case .url = $0 { true } else { false } })
+            XCTAssertEqual(r.read(arc.tree, now: 0).observation.site, site("example.org", "example.org"), "\(engine)")
+        }
+    }
+
+    func testNoEngineReadsAFocusedAddressBarOrTheChromiumOmnibox() {
+        for engine in [BrowserEngine.chromium, .webkit, .unknown, .gecko] {
             let zen = BrowserFixtures.zen(focus: .urlbar)
-            XCTAssertEqual(r.read(zen.tree, now: 1).observation.pageState, .editingAddress)
+            var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
+            XCTAssertEqual(r.read(zen.tree, now: 1).observation.pageState, .editingAddress, "\(engine)")
             XCTAssertFalse(zen.tree.calls.contains(.string(.value, zen.urlbar)), "a focused bar is never read (D2)")
-            // QA: the Chromium omnibox is never read, focused (D2) or not (D16).
+            // QA: the Chromium omnibox is never read, focused (D2) or not (D16). Gecko's description fallback
+            // takes only a combo box, and Chrome's omnibox is a text field.
             for focused in [true, false] {
                 let chrome = BrowserFixtures.chrome(omniboxFocused: focused)
                 var c = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
