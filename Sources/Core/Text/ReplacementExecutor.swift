@@ -22,9 +22,12 @@ import Foundation
     private var element: (any AXTextElement)?
     /// True only after `focusInfo` read a focused element that is neither secure nor composing.
     private var focusIsSafe = false
-    /// The range `axReadBeforeCaret` found; the next AX write targets it.
+    /// The range `readRunBeforeCaret` found; the next AX write targets it.
     private var pendingRange: TextRange?
     private(set) var wordBeforeCaret: String?
+
+    /// P2-59c: the element `focusInfo` read as safe, for the undo record's same-element check (identity only).
+    var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element : nil }
 
     init(focusProvider: any FocusedElementProviding, poster: any KeyEventPosting) {
         self.focusProvider = focusProvider
@@ -116,7 +119,8 @@ import Foundation
         case .axWriteSelection(let verify): return axWriteSelection(old: old, new: new, verify: verify)
         case .typeOverSelection: return typeOverSelection(old: old, new: new)
         case .backspaceAndType(let count): return backspaceAndType(count: count, old: old, new: new)
-        case .axReadBeforeCaret(let maxChars): return axReadBeforeCaret(maxChars: maxChars)
+        // P2-59: the run read needs a locator, so it only runs through `readRunBeforeCaret`.
+        case .axReadRunBeforeCaret: return .unavailable
         case .pasteboard, .keyCodesAfterSwitch: return .unavailable   // P3 / P4: not in the MVP
         }
     }
@@ -133,20 +137,30 @@ import Foundation
         if outcome.verdict == .done {
             collapseSelection(el, to: pending.location + new.utf16.count)
         } else if outcome.fieldUntouched {
-            collapseSelection(el, to: pending.end)   // back where the user left the caret
+            // P2-59 (001 §12.3 X4): untouched only with the caret verified back where the user left it. If the run
+            // were still selected, a key fallback's Backspace would delete it all and then N − 1 more before it.
+            if !collapseSelection(el, to: pending.end) {
+                return StepOutcome(verdict: outcome.verdict, fieldUntouched: false)
+            }
         } else {
             collapseSelection(el, to: nil)           // unknown text: only drop the selection, at its end
         }
         return outcome
     }
 
-    /// Best effort, range only (never text): if something is selected, put a caret at `location` (nil = the
-    /// selection's end), and read it back. A caret the app already placed is left alone.
-    private func collapseSelection(_ el: any AXTextElement, to location: Int?) {
-        guard case .success(let current) = el.range(.selectedTextRange), !current.isCaret else { return }
-        let caret = TextRange(location: location ?? current.end, length: 0)
-        guard case .success = el.setRange(caret, for: .selectedTextRange) else { return }
-        _ = el.range(.selectedTextRange)   // read back; nothing more to try if it didn't take
+    /// Range only (never text): if something is selected, put a caret at `location` (nil = the selection's end),
+    /// then read the range back. True when the read-back shows a caret at `location` (at any place for nil).
+    /// A caret the app already placed is left alone (and verified like any other).
+    @discardableResult
+    private func collapseSelection(_ el: any AXTextElement, to location: Int?) -> Bool {
+        guard case .success(let current) = el.range(.selectedTextRange) else { return false }
+        if !current.isCaret {
+            let caret = TextRange(location: location ?? current.end, length: 0)
+            guard case .success = el.setRange(caret, for: .selectedTextRange),
+                  case .success(let after) = el.range(.selectedTextRange) else { return false }
+            return after.isCaret && (location == nil || after.location == location)
+        }
+        return location == nil || current.location == location
     }
 
     private func axWrite(_ el: any AXTextElement, old: String, new: String, verify: Bool,
@@ -214,19 +228,35 @@ import Foundation
         return post(deletes + typing)
     }
 
-    /// R5: stale buffer. Read ≤ `maxChars` UTF-16 units before the caret, scan back to whitespace, and remember
-    /// the word's range for the AX write that follows. Writes nothing.
-    private func axReadBeforeCaret(maxChars: Int) -> StepOutcome {
-        guard let el = element, maxChars > 0, let caret = try? currentSelectedRange(el),
+    /// P2-59 (001 §12.3 X4): one `AXStringForRange` read of `[max(0, caret − maxChars), caret)`, then `locate`
+    /// finds the run in it; its range is remembered for the AX write that follows. Writes nothing.
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
+        pendingRange = nil
+        wordBeforeCaret = nil
+        guard focusIsSafe, let el = element, maxChars > 0, let caret = try? currentSelectedRange(el),
               caret.isCaret, caret.location > 0 else { return .unavailable }
         let start = max(0, caret.location - maxChars)
         let window = TextRange(location: start, length: caret.location - start)
-        guard case .success(let text) = el.string(in: window), text.utf16.count == window.length,
-              let word = WordBeforeCaret.lastWord(in: text, reachesFieldStart: start == 0) else { return .unavailable }
-        let length = word.utf16.count
-        pendingRange = TextRange(location: caret.location - length, length: length)
-        wordBeforeCaret = word
-        return StepOutcome(verdict: .done, fieldUntouched: true)
+        // The read must return exactly the window, or the offsets mean nothing.
+        guard case .success(let text) = el.string(in: window), text.utf16.count == window.length else {
+            return .unavailable
+        }
+        let read = StepOutcome(verdict: .done, fieldUntouched: true)
+        guard let run = locate(BeforeCaretWindow(text: text, location: start, reachesFieldStart: start == 0)) else {
+            return read   // read fine, nothing there
+        }
+        // Defence in depth: the run ends at the caret, lies inside the window, starts and ends on scalar boundaries
+        // (a split surrogate would decode to U+FFFD), and holds no control character (§12 T2, X3).
+        let units = Array(text.utf16)
+        guard run.offset >= 0, run.length > 0, run.offset + run.length == units.count else { return .unavailable }
+        let slice = units[run.offset...]
+        let runText = String(decoding: slice, as: UTF16.self)
+        guard Array(runText.utf16) == Array(slice), !ReplacementPlanner.containsUnsafeCharacter(runText) else {
+            return .unavailable
+        }
+        pendingRange = TextRange(location: start + run.offset, length: run.length)
+        wordBeforeCaret = runText
+        return read
     }
 
     /// Checks every event first, then posts in order. If the poster refuses the first event nothing went out;

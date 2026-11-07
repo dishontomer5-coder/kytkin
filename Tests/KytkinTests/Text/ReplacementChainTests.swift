@@ -16,6 +16,12 @@ final class ReplacementChainTests: XCTestCase {
 
     private var poster = RecordingPoster()
 
+    /// P2-59: the real run scan over the ABC / Apple Hebrew fixtures, as ConvertController locates the run.
+    private let locate: (BeforeCaretWindow) -> RunLocation? = { w in
+        if case .run(let loc, _) = RunBeforeCaret.scan(w, classify: ConvertFixtures.layouts.runClass) { return loc }
+        return nil
+    }
+
     @TextActor private func executor(_ f: FakeTextField) -> ReplacementExecutor {
         ReplacementExecutor(focusProvider: FakeFocusProvider(f), poster: poster)
     }
@@ -135,17 +141,27 @@ final class ReplacementChainTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty)
     }
 
-    // MARK: - Last word
+    // MARK: - Run (P2-59, 001 §12.3 X4)
 
-    @TextActor func testLastWordWithAValidBufferBackspacesAndTypes() async {
+    /// A buffer snapshot of `count` strokes (the chain only needs it to exist; the text is `old`).
+    private func buffer(_ count: Int) -> WordSnapshot {
+        WordSnapshot(strokes: (0..<count).map { Stroke(keyCode: UInt16($0), layer: .plain) },
+                     previousWords: [], renderedIn: nil, isValid: true)
+    }
+
+    private let pairConvert: (String) -> String? = {
+        ConvertFixtures.layouts.converter(from: IDs.abc)?.convert($0).text
+    }
+
+    @TextActor func testUnreadableFieldBackspacesAndTypesTheBuffer() async {
         let f = FakeTextField("hello akuo")
+        f.supportsStringForRangeValue = false
         let x = executor(f)
         let focus = x.focusInfo(timeout: 0.25)
-        let snap = WordSnapshot(strokes: (0..<4).map { Stroke(keyCode: UInt16($0), layer: .plain) },
-                                previousWords: [], renderedIn: nil, isValid: true)
-        let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertLastWord, bundleID: app, snapshot: snap,
+        let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app, snapshot: buffer(4),
                                                               typedLength: 4), caps: ReplacementCapabilities(),
                                            focus: focus)
+        XCTAssertEqual(plan, .steps([.backspaceAndType(count: 4)]))
         var caps = ReplacementCapabilities()
         let out = ReplacementChain.run(plan, on: x, bundleID: app, old: "akuo", convert: convert, capabilities: &caps)
         XCTAssertEqual(out.result, .replaced(by: .backspaceAndType(count: 4)))
@@ -155,27 +171,264 @@ final class ReplacementChainTests: XCTestCase {
     }
 
     @TextActor func testStaleBufferReadsBeforeTheCaretThenWritesThroughAX() async {
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         let x = executor(f)
         let focus = x.focusInfo(timeout: 0.25)
-        let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertLastWord, bundleID: app),
+        let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app),
                                            caps: ReplacementCapabilities(), focus: focus)
-        XCTAssertEqual(plan, .steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]))
+        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)]))
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(plan, on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps)
+        let out = ReplacementChain.run(plan, on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps)
         XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
-        XCTAssertEqual(f.text, "hello תודה")
+        XCTAssertEqual(f.text, "שלום תודה")
+        XCTAssertEqual(f.selection, sel(9, 0))
         XCTAssertTrue(poster.events.isEmpty)
-        XCTAssertNil(x.wordBeforeCaret, "the word read through AX is dropped when the run ends")
+        XCTAssertNil(x.wordBeforeCaret, "the run read through AX is dropped when the chain ends")
     }
 
-    @TextActor func testStaleBufferWithNoWordStops() async {
-        let f = FakeTextField("hello ")
+    /// The owner's example, with the real pair converter: the whole wrong-layout run, one AX write, no keys.
+    @TextActor func testOwnersExampleConvertsTheWholeRunThroughAX() async {
+        let f = FakeTextField("שלום akuo vh, nhv")
+        let x = executor(f)
+        let focus = x.focusInfo(timeout: 0.25)
+        let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app, snapshot: buffer(3),
+                                                              typedLength: 3), caps: ReplacementCapabilities(),
+                                           focus: focus)
+        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                     .backspaceAndType(count: 3)]))
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(plan, on: x, bundleID: app, old: "nhv", convert: pairConvert,
+                                       locateRun: locate, capabilities: &caps, mayWrite: { asked += 1; return true })
+        XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
+        XCTAssertEqual(f.text, "שלום שלום הית מיה")
+        XCTAssertEqual(f.selection, sel(17, 0))
+        XCTAssertEqual(asked, 1)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    /// The AX write is a no-op with the caret verified back, and the AX run is exactly the buffer's text: the key
+    /// fallback runs, under the claim already taken for the AX write.
+    @TextActor func testKeyFallbackRunsWhenTheAXRunIsTheBufferAndTheClaimIsNotAskedAgain() async {
+        let f = FakeTextField("שלום akuo")
+        f.writeBehavior = .silentNoop
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+        var asked = 0
+        var writesWhenAsked: [AXTextAttribute]?
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
+                                       capabilities: &caps,
+                                       mayWrite: { asked += 1; writesWhenAsked = f.writes; return true })
+        XCTAssertEqual(out.result, .replaced(by: .backspaceAndType(count: 4)))
+        XCTAssertEqual(asked, 1, "one claim, before the AX write, covers the key fallback")
+        XCTAssertEqual(writesWhenAsked, [])
+        XCTAssertEqual(f.selection, sel(9, 0), "the caret was back before the keys")
+        XCTAssertEqual(poster.backspaceCount, 4)
+        XCTAssertEqual(poster.typed, "שלום")
+    }
+
+    /// The AX run is longer than the buffer (it sees further back): Backspace × buffer would leave half of it.
+    @TextActor func testKeyFallbackIsSkippedWhenTheAXRunIsNotTheBuffer() async {
+        let f = FakeTextField("שלום akuo vh")
+        f.writeBehavior = .silentNoop
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 2)]),
+                                       on: x, bundleID: app, old: "vh", convert: pairConvert, locateRun: locate,
+                                       capabilities: &caps, mayWrite: { asked += 1; return true })
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(out.attempts.map(\.step),
+                       [.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)])
+        XCTAssertEqual(asked, 1)
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(f.text, "שלום akuo vh")
+        XCTAssertEqual(f.selection, sel(12, 0))
+    }
+
+    /// P2-59b QA: the AX run is canonically equal to the buffer's text but in another normalization (`e` + U+0301
+    /// on screen, `é` in the buffer). Swift's `==` says equal; the key fallback must not trust it: some apps delete
+    /// a decomposed character one scalar per Backspace, so the count would be wrong.
+    @TextActor func testKeyFallbackIsSkippedWhenTheAXRunIsOnlyCanonicallyEqualToTheBuffer() async {
+        let f = FakeTextField("cafe\u{301}")
+        f.writeBehavior = .silentNoop
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "caf\u{e9}", convert: { _ in "xxxx" },
+                                       locateRun: { w in RunLocation(offset: 0, length: w.text.utf16.count) },
+                                       capabilities: &caps)
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(out.attempts.map(\.step),
+                       [.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)])
+        XCTAssertTrue(poster.events.isEmpty, "no Backspace on a merely canonically-equal run")
+        XCTAssertEqual(f.text, "cafe\u{301}")
+    }
+
+    /// The run read can't run (no AXStringForRange here): the AX write that depends on it is skipped, not run and
+    /// not recorded, and the key step runs on the caller's buffer text.
+    @TextActor func testUnavailableReadSkipsTheAXWriteAndRunsTheKeyStep() async {
+        let f = FakeTextField("שלום akuo")
+        f.supportsStringForRangeValue = false
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
+                                       capabilities: &caps, mayWrite: { asked += 1; return true })
+        XCTAssertEqual(out.result, .replaced(by: .backspaceAndType(count: 4)))
+        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: 256), verdict: .unavailable),
+                                      .init(step: .backspaceAndType(count: 4), verdict: .done)])
+        XCTAssertEqual(asked, 1)
+        XCTAssertTrue(f.writes.isEmpty, "the AX write never ran")
+        XCTAssertEqual(poster.typed, "שלום")
+    }
+
+    @TextActor func testUnavailableReadWithoutAKeyStepWritesNothing() async {
+        let f = FakeTextField("שלום akuo")
+        f.supportsStringForRangeValue = false
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps, mayWrite: { asked += 1; return true })
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(asked, 0)
+        XCTAssertEqual(out.attempts.count, 1)
+    }
+
+    /// Without a locator the read step can't run; it is just unavailable.
+    @TextActor func testReadWithoutALocatorIsUnavailable() async {
+        let f = FakeTextField("שלום akuo")
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)]),
                                        on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps)
+        XCTAssertEqual(out.result, .exhausted)
+        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: 256), verdict: .unavailable)])
+        XCTAssertTrue(f.writes.isEmpty)
+    }
+
+    @TextActor func testHaltedAXWriteNeverFallsBackToKeys() async {
+        let f = FakeTextField("שלום akuo")
+        f.writeBehavior = .garble
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
+                                       capabilities: &caps)
+        XCTAssertEqual(out.result, .halted(after: .axWriteSelection(verify: true)))
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    /// X4 strict collapse: the write failed untouched but the run is still selected (the caret can't be put back),
+    /// so a Backspace would delete the selection and N − 1 more: halted, no keys.
+    @TextActor func testUnverifiedCaretRestoreHaltsAndNeverTypes() async {
+        let f = FakeTextField("שלום akuo")
+        f.writeBehavior = .silentNoop
+        f.rejectsCaretRanges = true
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
+                                       capabilities: &caps)
+        XCTAssertEqual(out.result, .halted(after: .axWriteSelection(verify: true)))
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertTrue(out.shouldBeep)
+    }
+
+    @TextActor func testRefusedClaimOnTheRunPathWritesAndTypesNothing() async {
+        let f = FakeTextField("שלום akuo")
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
+                                       capabilities: &caps, mayWrite: { asked += 1; return false })
+        XCTAssertEqual(out.result, .abandoned)
+        XCTAssertEqual(asked, 1)
+        XCTAssertTrue(f.writes.isEmpty)
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(f.selection, sel(9, 0))
+    }
+
+    @TextActor func testBudgetExpiryBetweenTheRunReadAndTheWriteWritesNothing() async {
+        let f = FakeTextField("שלום akuo")
+        let clock = FakeClock()
+        let slow = SlowReplacer(executor(f), clock: clock, stepNanos: 450_000_000)
+        _ = slow.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        var asked = 0
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+                                               .backspaceAndType(count: 4)]),
+                                       on: slow, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
+                                       capabilities: &caps, clock: clock, mayWrite: { asked += 1; return true })
+        XCTAssertEqual(out.result, .timedOut)
+        XCTAssertEqual(asked, 0)
+        XCTAssertTrue(f.writes.isEmpty)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    /// Every `.convertRun` plan shape the planner returns: the gate is asked once, before the first write, and
+    /// never by the read.
+    @TextActor func testWriteGateIsAskedOnceBeforeTheFirstWriteOnEveryRunPlanShape() async {
+        let read = ReplacementStep.axReadRunBeforeCaret(maxChars: 256)
+        let ax = ReplacementStep.axWriteSelection(verify: true)
+        let keys = ReplacementStep.backspaceAndType(count: 4)
+        for steps in [[read, ax, keys], [read, ax], [keys]] {
+            poster = RecordingPoster()
+            poster.failFrom = 0   // the key step fails untouched, so the whole shape runs
+            let f = FakeTextField("שלום akuo")
+            f.writeBehavior = .silentNoop
+            let counting = CountingReplacer(executor(f))
+            _ = counting.focusInfo(timeout: 0.25)
+            var caps = ReplacementCapabilities()
+            var asked = 0
+            var performedWhenAsked: [ReplacementStep]?
+            var writesWhenAsked: [AXTextAttribute]?
+            let out = ReplacementChain.run(.steps(steps), on: counting, bundleID: app, old: "akuo", convert: convert,
+                                           locateRun: locate, capabilities: &caps, mayWrite: {
+                                               asked += 1
+                                               performedWhenAsked = counting.performed
+                                               writesWhenAsked = f.writes
+                                               return true
+                                           })
+            XCTAssertEqual(out.result, .exhausted, "\(steps)")
+            XCTAssertEqual(asked, 1, "\(steps)")
+            XCTAssertEqual(performedWhenAsked, steps.first == read ? [read] : [], "\(steps)")
+            XCTAssertEqual(writesWhenAsked, [], "\(steps)")
+            XCTAssertEqual(counting.performed, steps, "\(steps)")
+            XCTAssertEqual(f.text, "שלום akuo", "\(steps)")
+        }
+    }
+
+    @TextActor func testStaleBufferWithNoWordStops() async {
+        let f = FakeTextField("akuo\n")
+        let x = executor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var caps = ReplacementCapabilities()
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps)
         XCTAssertEqual(out.result, .exhausted)
         XCTAssertEqual(out.attempts.count, 1)
         XCTAssertTrue(f.writes.isEmpty)
@@ -183,38 +436,39 @@ final class ReplacementChainTests: XCTestCase {
 
     // MARK: - Stale path never leaves a selection behind (P2-18 QA)
 
-    /// Runs the stale-buffer plan on "hello ,usv" (caret at the end) with the given write behavior.
+    /// Runs the stale-buffer plan on "שלום ,usv" (caret at the end) with the given write behavior.
     @TextActor private func staleRun(_ behavior: FakeTextField.WriteBehavior) -> (FakeTextField, ReplacementOutcome) {
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         f.writeBehavior = behavior
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
-                                       on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps)
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps)
         return (f, out)
     }
 
     @TextActor func testStaleNoopWriteRestoresTheCaretSoTheNextKeyCantEatTheWord() async {
         let (f, out) = staleRun(.silentNoop)
         XCTAssertEqual(out.result, .exhausted)
-        XCTAssertEqual(f.text, "hello ,usv")
-        XCTAssertEqual(f.selection, sel(10, 0), "the word must not stay selected after a failed convert")
+        XCTAssertEqual(f.text, "שלום ,usv")
+        XCTAssertEqual(f.selection, sel(9, 0), "the word must not stay selected after a failed convert")
         XCTAssertTrue(poster.events.isEmpty)
     }
 
     @TextActor func testStaleFailedWriteRestoresTheCaret() async {
         let (f, out) = staleRun(.fails)
         XCTAssertEqual(out.result, .exhausted)
-        XCTAssertEqual(f.text, "hello ,usv")
-        XCTAssertEqual(f.selection, sel(10, 0))
+        XCTAssertEqual(f.text, "שלום ,usv")
+        XCTAssertEqual(f.selection, sel(9, 0))
     }
 
     @TextActor func testStaleWriteThatLeavesTheNewWordSelectedEndsWithACaret() async {
         let (f, out) = staleRun(.normalKeepsSelection)
         XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
-        XCTAssertEqual(f.text, "hello תודה")
-        XCTAssertEqual(f.selection, sel(10, 0), "the converted word must not stay selected")
+        XCTAssertEqual(f.text, "שלום תודה")
+        XCTAssertEqual(f.selection, sel(9, 0), "the converted word must not stay selected")
     }
 
     @TextActor func testStaleGarbledWriteHaltsAndLeavesNoSelection() async {
@@ -225,14 +479,14 @@ final class ReplacementChainTests: XCTestCase {
     }
 
     @TextActor func testStaleWordChangedBeforeTheWriteIsNotWrittenAndCaretIsRestored() async {
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
-        XCTAssertEqual(x.perform(.axReadBeforeCaret(maxChars: 64), old: "", new: "").verdict, .done)
-        f.units = Array("hello ,usx".utf16)   // the app changed the word between the read and the write
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 64, locate: locate).verdict, .done)
+        f.units = Array("שלום ,usx".utf16)   // the app changed the word between the read and the write
         XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: ",usv", new: "תודה"), .unavailable)
-        XCTAssertEqual(f.text, "hello ,usx")
-        XCTAssertEqual(f.selection, sel(10, 0))
+        XCTAssertEqual(f.text, "שלום ,usx")
+        XCTAssertEqual(f.selection, sel(9, 0))
     }
 
     @TextActor func testSelectionPathKeepsTheUsersOwnSelection() async {
@@ -293,14 +547,15 @@ final class ReplacementChainTests: XCTestCase {
 
     @TextActor func testWriteGateIsNotAskedAfterTheBudgetRanOut() async {
         // The read step uses up the budget, so the chain stops before its first write and never claims.
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         let clock = FakeClock()
         let slow = SlowReplacer(executor(f), clock: clock, stepNanos: 450_000_000)
         _ = slow.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
-                                       on: slow, bundleID: app, old: nil, convert: convert, capabilities: &caps,
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: slow, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps,
                                        clock: clock, mayWrite: { asked += 1; return true })
         XCTAssertEqual(out.result, .timedOut)
         XCTAssertEqual(asked, 0)
@@ -308,13 +563,14 @@ final class ReplacementChainTests: XCTestCase {
     }
 
     @TextActor func testWriteGateIsNotAskedForAReadThatFindsNothing() async {
-        let f = FakeTextField("hello ")
+        let f = FakeTextField("akuo\n")
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
-                                       on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps,
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps,
                                        mayWrite: { asked += 1; return true })
         XCTAssertEqual(out.result, .exhausted)
         XCTAssertEqual(asked, 0, "a read-only step never takes the hold-back commit")
@@ -341,20 +597,21 @@ final class ReplacementChainTests: XCTestCase {
     }
 
     @TextActor func testRefusedWriteGateOnTheStalePathLeavesFieldAndCaretUntouched() async {
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
-                                       on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps,
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps,
                                        mayWrite: { asked += 1; return false })
         XCTAssertEqual(out.result, .abandoned)
         XCTAssertEqual(asked, 1, "asked after the read, before the range write")
-        XCTAssertEqual(out.attempts, [.init(step: .axReadBeforeCaret(maxChars: 64), verdict: .done)])
+        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: 64), verdict: .done)])
         XCTAssertTrue(f.writes.isEmpty, "not even the selection range is set: a replayed key would eat the word")
-        XCTAssertEqual(f.text, "hello ,usv")
-        XCTAssertEqual(f.selection, sel(10, 0))
+        XCTAssertEqual(f.text, "שלום ,usv")
+        XCTAssertEqual(f.selection, sel(9, 0))
         XCTAssertNil(x.wordBeforeCaret)
         XCTAssertFalse(out.shouldBeep)
     }
@@ -362,12 +619,13 @@ final class ReplacementChainTests: XCTestCase {
     /// The W8 race: the deadline flush replays the user's held keys while the convert runs. If the flush wins, the
     /// claim says no and the AX write never lands on the text the user just typed.
     @TextActor func testDeadlineFlushBeforeTheClaimMeansNoAXWrite() async {
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
-                                       on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps,
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps,
                                        mayWrite: {
                                            // The flush won: the held key reached the field first.
                                            f.units += Array("x".utf16)
@@ -375,22 +633,23 @@ final class ReplacementChainTests: XCTestCase {
                                            return false
                                        })
         XCTAssertEqual(out.result, .abandoned)
-        XCTAssertEqual(f.text, "hello ,usvx")
-        XCTAssertEqual(f.selection, sel(11, 0))
+        XCTAssertEqual(f.text, "שלום ,usvx")
+        XCTAssertEqual(f.selection, sel(10, 0))
         XCTAssertTrue(f.writes.isEmpty)
     }
 
     /// If the convert wins the claim, every write and the stale-range check run under it, so no flush can land
     /// between the check and `AXSelectedText`.
     @TextActor func testStalePathClaimsBeforeTheRangeWriteAndTheStaleRangeCheck() async {
-        let f = FakeTextField("hello ,usv")
+        let f = FakeTextField("שלום ,usv")
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var writesWhenAsked: [AXTextAttribute]?
         var readsWhenAsked = 0
-        let out = ReplacementChain.run(.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
-                                       on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps,
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]),
+                                       on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+                                       capabilities: &caps,
                                        mayWrite: {
                                            writesWhenAsked = f.writes
                                            readsWhenAsked = f.reads.count
@@ -400,7 +659,7 @@ final class ReplacementChainTests: XCTestCase {
         XCTAssertEqual(writesWhenAsked, [], "claimed before setRange selects the word")
         XCTAssertTrue(f.reads[readsWhenAsked...].contains(.selectedText), "the stale-range check runs after the claim")
         XCTAssertEqual(f.writes.first, .selectedTextRange)
-        XCTAssertEqual(f.text, "hello תודה")
+        XCTAssertEqual(f.text, "שלום תודה")
     }
 
     // MARK: - Gate over every plan shape the planner can produce (P2-51 QA)
@@ -534,6 +793,10 @@ final class ReplacementChainTests: XCTestCase {
         clock.advance(byNanos: stepNanos)
         return inner.perform(step, old: old, new: new)
     }
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
+        clock.advance(byNanos: stepNanos)
+        return inner.readRunBeforeCaret(maxChars: maxChars, locate: locate)
+    }
     var wordBeforeCaret: String? { inner.wordBeforeCaret }
     func endReplacement() { inner.endReplacement() }
 }
@@ -549,6 +812,10 @@ final class ReplacementChainTests: XCTestCase {
     func perform(_ step: ReplacementStep, old: String, new: String) -> StepOutcome {
         performed.append(step)
         return inner.perform(step, old: old, new: new)
+    }
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
+        performed.append(.axReadRunBeforeCaret(maxChars: maxChars))
+        return inner.readRunBeforeCaret(maxChars: maxChars, locate: locate)
     }
     var wordBeforeCaret: String? { inner.wordBeforeCaret }
     func endReplacement() { inner.endReplacement() }

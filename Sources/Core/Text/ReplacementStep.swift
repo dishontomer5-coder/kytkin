@@ -10,9 +10,10 @@ enum ReplacementStep: Sendable, Equatable {
     case typeOverSelection
     /// Backspace × `count`, then type. `count` = grapheme clusters of what is on screen now (R5 "counting").
     case backspaceAndType(count: Int)
-    /// Stale buffer: read ≤ `maxChars` before the caret through AX and scan back to whitespace only.
-    /// It selects nothing by itself; the next step writes over the range it found.
-    case axReadBeforeCaret(maxChars: Int)
+    /// P2-59 (001 §12.3 X4): read ≤ `maxChars` UTF-16 units before the caret through AX and find the run in them
+    /// (`RunBeforeCaret`). Read-only: it selects nothing; the next AX step writes over the range it found. Runs
+    /// through `TextReplacing.readRunBeforeCaret` (its locator needs the layouts); `perform` answers `.unavailable`.
+    case axReadRunBeforeCaret(maxChars: Int)
     /// P3: opt-in pasteboard step (snapshot → ⌘V → restore). Never planned for keys-only apps (terminals).
     case pasteboard
     /// P4: post key codes after switching the input source, for apps that ignore Unicode key events.

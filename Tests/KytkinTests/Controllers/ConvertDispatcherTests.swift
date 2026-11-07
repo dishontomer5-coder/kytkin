@@ -1,6 +1,6 @@
 // P2-21: ConvertDispatcher, the main → @TextActor hop (001 §12 W9): requests reach the controller in order and are
-// always finished, toggle-only needs no maps, missing maps beep, the LayoutSnapshot follows the pair, and the
-// per-app hints reach the controller's capabilities.
+// always finished, toggle-only needs no maps, missing maps just switch (P2-54(a)), the LayoutSnapshot follows
+// the pair, and the per-app hints reach the controller's capabilities.
 
 import XCTest
 
@@ -41,10 +41,12 @@ final class ConvertDispatcherTests: XCTestCase {
                                      .finish(gen: 1, newRendering: nil, bufferAfter: nil)])
     }
 
-    func testMissingMapsBeepAndFinish() async {
+    /// P2-54(a): missing maps with an empty buffer just switch the language (no beep).
+    func testMissingMapsWithAnEmptyBufferSwitchAndFinish() async {
         sut.convert(request(gen: 1, mode: .convert))
         await drain()
-        XCTAssertEqual(log.entries, [.beep, .finish(gen: 1, newRendering: nil, bufferAfter: nil)])
+        XCTAssertEqual(log.entries, [.switchTo(IDs.hebrew, keepsBuffer: false),
+                                     .finish(gen: 1, newRendering: nil, bufferAfter: nil)])
     }
 
     func testRequestsReachTheControllerInOrder() async {
@@ -73,10 +75,11 @@ final class ConvertDispatcherTests: XCTestCase {
         maps.maps = [IDs.abc: ConvertFixtures.abc, IDs.hebrew: ConvertFixtures.hebrew]
         sut.convert(request(gen: 1, mode: .convert))
         await drain()
-        // Maps present, focus unknown: the planner refuses (beep), not "layouts unavailable".
+        // Maps present, focus unknown, empty buffer: P2-54(a) just switches, not "layouts unavailable".
         let outcome = await sut.controller.lastOutcome
-        XCTAssertEqual(outcome, .noop(.replacement(.refused(.focusUnknown))))
-        XCTAssertEqual(log.entries, [.focus, .end, .end, .beep,.finish(gen: 1, newRendering: nil, bufferAfter: nil)])
+        XCTAssertEqual(outcome, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(log.entries, [.focus, .end, .end, .switchTo(IDs.hebrew, keepsBuffer: false),
+                                     .finish(gen: 1, newRendering: nil, bufferAfter: nil)])
     }
 
     func testMethodHintsReachTheController() async {

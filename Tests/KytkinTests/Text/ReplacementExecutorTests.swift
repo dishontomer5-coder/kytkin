@@ -113,7 +113,7 @@ final class ReplacementExecutorTests: XCTestCase {
     @TextActor func testNoStepRunsWithoutFocusInfo() async {
         let x = makeExecutor(FakeTextField("hello akuo", selection: sel(6, 4)))
         for step in [ReplacementStep.axWriteSelection(verify: true), .typeOverSelection, .backspaceAndType(count: 4),
-                     .axReadBeforeCaret(maxChars: 64)] {
+                     .axReadRunBeforeCaret(maxChars: 64)] {
             XCTAssertEqual(x.perform(step, old: "akuo", new: "שלום"), .unavailable)
         }
         XCTAssertTrue(poster.events.isEmpty)
@@ -129,7 +129,7 @@ final class ReplacementExecutorTests: XCTestCase {
             let x = makeExecutor(f)
             _ = x.focusInfo(timeout: 0.25)
             for step in [ReplacementStep.axWriteSelection(verify: true), .typeOverSelection,
-                         .backspaceAndType(count: 4), .axReadBeforeCaret(maxChars: 64)] {
+                         .backspaceAndType(count: 4), .axReadRunBeforeCaret(maxChars: 64)] {
                 XCTAssertEqual(x.perform(step, old: "akuo", new: "שלום"), .unavailable)
             }
             XCTAssertTrue(poster.events.isEmpty)
@@ -288,36 +288,158 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty)
     }
 
-    // MARK: - Read before the caret
+    // MARK: - Run read before the caret (P2-59, 001 §12.3 X4)
 
-    @TextActor func testReadBeforeCaretFindsTheWholeWordAcrossHebrewPunctuationKeys() async {
-        let x = makeExecutor(FakeTextField("hello ,usv"))
+    /// The real scan over the ABC / Apple Hebrew fixtures.
+    private let scan: (BeforeCaretWindow) -> RunLocation? = { w in
+        if case .run(let loc, _) = RunBeforeCaret.scan(w, classify: ConvertFixtures.layouts.runClass) { return loc }
+        return nil
+    }
+
+    @TextActor func testRunReadFindsTheRunAndTheWriteTargetsIt() async {
+        let x = makeExecutor(FakeTextField("שלום ,usv"))
         _ = x.focusInfo(timeout: 0.25)
-        XCTAssertEqual(x.perform(.axReadBeforeCaret(maxChars: 64), old: "", new: ""),
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan),
                        StepOutcome(verdict: .done, fieldUntouched: true))
         XCTAssertEqual(x.wordBeforeCaret, ",usv")
         XCTAssertTrue(field.writes.isEmpty, "the read writes nothing")
-        // The following AX write targets the word it found.
+        XCTAssertEqual(field.stringRangesRead, [sel(0, 9)], "one AXStringForRange read of the window")
         XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: ",usv", new: "תודה"), .done)
-        XCTAssertEqual(field.text, "hello תודה")
+        XCTAssertEqual(field.text, "שלום תודה")
+        XCTAssertEqual(field.selection, sel(9, 0), "success: the caret after the new text")
     }
 
-    @TextActor func testReadBeforeCaretNeedsACaret() async {
+    @TextActor func testPerformOnTheRunReadIsUnavailable() async {
+        let x = makeExecutor(FakeTextField("akuo"))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.perform(.axReadRunBeforeCaret(maxChars: 256), old: "", new: ""), .unavailable)
+        XCTAssertTrue(field.stringRangesRead.isEmpty)
+    }
+
+    @TextActor func testRunReadWindowIsAtMostMaxCharsAndReachesTheFieldStartOnlyAtZero() async {
+        let text = String(repeating: "x", count: 300) + " akuo"   // 305 units, caret at the end
+        let x = makeExecutor(FakeTextField(text))
+        _ = x.focusInfo(timeout: 0.25)
+        var seen: BeforeCaretWindow?
+        _ = x.readRunBeforeCaret(maxChars: 256) { seen = $0; return nil }
+        XCTAssertEqual(field.stringRangesRead, [sel(49, 256)])
+        XCTAssertEqual(seen?.location, 49)
+        XCTAssertEqual(seen?.text.utf16.count, 256)
+        XCTAssertEqual(seen?.reachesFieldStart, false)
+
+        let y = makeExecutor(FakeTextField("akuo"))
+        _ = y.focusInfo(timeout: 0.25)
+        _ = y.readRunBeforeCaret(maxChars: 256) { seen = $0; return nil }
+        XCTAssertEqual(seen, BeforeCaretWindow(text: "akuo", location: 0, reachesFieldStart: true))
+    }
+
+    @TextActor func testRunReadPendingRangeIsAbsolute() async {
+        // The caret sits in the middle of the field; the run's range is absolute, not window-relative.
+        let x = makeExecutor(FakeTextField("first line\nשלום akuo|tail", selection: sel(20, 0)))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 8, locate: scan).verdict, .done)
+        XCTAssertEqual(field.stringRangesRead, [sel(12, 8)])
+        XCTAssertEqual(x.wordBeforeCaret, "akuo")
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"), .done)
+        XCTAssertEqual(field.text, "first line\nשלום שלום|tail")
+        XCTAssertEqual(field.selection, sel(20, 0))
+    }
+
+    @TextActor func testRunReadFindingNothingIsDoneWithoutARun() async {
+        let x = makeExecutor(FakeTextField("akuo\n"))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan),
+                       StepOutcome(verdict: .done, fieldUntouched: true))
+        XCTAssertNil(x.wordBeforeCaret)
+        // Nothing found, so the next AX write has no range and works on the (empty) selection: refused.
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertEqual(field.text, "akuo\n")
+    }
+
+    @TextActor func testRunReadNeedsACaretAfterTheFieldStart() async {
         let x = makeExecutor(FakeTextField("hello akuo", selection: sel(6, 4)))
         _ = x.focusInfo(timeout: 0.25)
-        XCTAssertEqual(x.perform(.axReadBeforeCaret(maxChars: 64), old: "", new: ""), .unavailable)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan), .unavailable, "a selection, not a caret")
+        XCTAssertNil(x.wordBeforeCaret)
+        let y = makeExecutor(FakeTextField("akuo", selection: sel(0, 0)))
+        _ = y.focusInfo(timeout: 0.25)
+        XCTAssertEqual(y.readRunBeforeCaret(maxChars: 256, locate: scan), .unavailable, "caret at the field start")
+    }
+
+    @TextActor func testRunReadMustReturnExactlyTheWindow() async {
+        let f = FakeTextField("שלום akuo")
+        f.stringForRangeOverride = "akuo"   // the app answered fewer units than asked
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var called = false
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256) { _ in called = true; return nil }, .unavailable)
+        XCTAssertFalse(called)
         XCTAssertNil(x.wordBeforeCaret)
     }
 
-    @TextActor func testReadBeforeCaretNeverGuessesACutOffWord() async {
-        let long = String(repeating: "a", count: 70)
-        let x = makeExecutor(FakeTextField(long))
+    @TextActor func testRunReadTimeoutIsUnavailable() async {
+        let f = FakeTextField("שלום akuo")
+        let x = makeExecutor(f)
         _ = x.focusInfo(timeout: 0.25)
-        XCTAssertEqual(x.perform(.axReadBeforeCaret(maxChars: 64), old: "", new: ""), .unavailable)
-        // At the start of the field the whole text is the word.
-        let y = makeExecutor(FakeTextField("akuo"))
+        f.timeouts = [.selectedTextRange]
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan), .unavailable)
+    }
+
+    @TextActor func testRunReadRefusesARunThatDoesNotEndAtTheCaretOrSplitsAScalar() async {
+        let x = makeExecutor(FakeTextField("😀akuo"))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256) { _ in RunLocation(offset: 2, length: 2) }, .unavailable)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256) { _ in RunLocation(offset: 1, length: 5) }, .unavailable,
+                       "starts inside the emoji's surrogate pair")
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256) { _ in RunLocation(offset: 6, length: 0) }, .unavailable)
+        XCTAssertNil(x.wordBeforeCaret)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan).verdict, .done)
+        XCTAssertEqual(x.wordBeforeCaret, "😀akuo", "an emoji inside the token passes through with it")
+    }
+
+    @TextActor func testRunReadNeedsASafeFocus() async {
+        let x = makeExecutor(FakeTextField("akuo"))
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan), .unavailable, "no focusInfo yet")
+        let secure = FakeTextField("akuo")
+        secure.role = FocusInfo.secureTextFieldRole
+        let y = makeExecutor(secure)
         _ = y.focusInfo(timeout: 0.25)
-        XCTAssertEqual(y.perform(.axReadBeforeCaret(maxChars: 64), old: "", new: "").verdict, .done)
-        XCTAssertEqual(y.wordBeforeCaret, "akuo")
+        XCTAssertEqual(y.readRunBeforeCaret(maxChars: 256, locate: scan), .unavailable)
+        XCTAssertTrue(secure.stringRangesRead.isEmpty, "nothing is read from a password field")
+    }
+
+    // MARK: - Strict collapse (X4)
+
+    @TextActor func testFailedRunWriteIsUntouchedOnlyWithTheCaretVerifiedBack() async {
+        let f = FakeTextField("שלום akuo")
+        f.writeBehavior = .silentNoop
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        _ = x.readRunBeforeCaret(maxChars: 256, locate: scan)
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"),
+                       StepOutcome(verdict: .failedVerify, fieldUntouched: true))
+        XCTAssertEqual(f.selection, sel(9, 0))
+    }
+
+    @TextActor func testUnverifiedCollapseCountsAsTouched() async {
+        let f = FakeTextField("שלום akuo")
+        f.writeBehavior = .silentNoop
+        f.rejectsCaretRanges = true
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        _ = x.readRunBeforeCaret(maxChars: 256, locate: scan)
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"),
+                       StepOutcome(verdict: .failedVerify, fieldUntouched: false))
+        XCTAssertEqual(f.selection, sel(5, 4), "the run is still selected: no key may follow")
+    }
+
+    @TextActor func testStaleRangeGuardRestoresTheCaretAndStaysUntouched() async {
+        let f = FakeTextField("שלום akuo")
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        _ = x.readRunBeforeCaret(maxChars: 256, locate: scan)
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akux", new: "שלום"), .unavailable)
+        XCTAssertEqual(f.selection, sel(9, 0))
+        XCTAssertEqual(f.text, "שלום akuo")
     }
 }

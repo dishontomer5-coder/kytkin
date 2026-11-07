@@ -18,7 +18,13 @@ import Foundation
         executor.perform(step, old: old, new: new)
     }
 
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
+        executor.readRunBeforeCaret(maxChars: maxChars, locate: locate)
+    }
+
     var wordBeforeCaret: String? { executor.wordBeforeCaret }
+
+    var focusedElement: (any FocusedElementIdentity)? { executor.focusedElement }
 
     func endReplacement() {
         executor.endReplacement()

@@ -9,14 +9,15 @@ import Foundation
 struct LayoutConverter: Sendable {
     let from: LayoutMap
     let to: LayoutMap
-    private let index: LayoutReverseIndex
+    /// `from`'s reverse index. P2-59 (001 §12.3 X1): read-only, so `LayoutSnapshot.runClass` reuses it.
+    let sourceIndex: LayoutReverseIndex
     /// `to`'s reverse index, for `guessSource(of:)`. Both are built once per converter (once per pair).
-    private let targetIndex: LayoutReverseIndex
+    let targetIndex: LayoutReverseIndex
 
     init(from: LayoutMap, to: LayoutMap) {
         self.from = from
         self.to = to
-        index = LayoutReverseIndex(from)
+        sourceIndex = LayoutReverseIndex(from)
         targetIndex = LayoutReverseIndex(to)
     }
 
@@ -25,7 +26,7 @@ struct LayoutConverter: Sendable {
     func convert(_ text: String) -> (text: String, unmapped: Int) {
         var out = ""
         var unmapped = 0
-        Self.forEachUnit(of: text, in: index) { unit, stroke in
+        Self.forEachUnit(of: text, in: sourceIndex) { unit, stroke in
             if let stroke, let converted = output(for: stroke, typed: unit) {
                 out += converted
             } else {
@@ -56,7 +57,7 @@ struct LayoutConverter: Sendable {
 
     /// P2-7: `guessSource` between `from` and `to`, reusing the indexes built in `init`.
     func guessSource(of text: String) -> InputSourceID? {
-        let first = Self.coverage(of: text, in: index)
+        let first = Self.coverage(of: text, in: sourceIndex)
         let second = Self.coverage(of: text, in: targetIndex)
         if first == second { return nil }
         return first > second ? from.id : to.id

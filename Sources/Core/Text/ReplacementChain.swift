@@ -3,7 +3,13 @@
 //
 //   - A step that fails but leaves the field untouched falls through to the next step.
 //   - A step that fails with the field in an unknown state halts the chain (never type over a half-written field).
-//   - `axReadBeforeCaret` supplies the text for the steps after it; if it fails, nothing after it can run.
+//   - P2-59 (001 §12.3 X4): `axReadRunBeforeCaret` supplies the text for the AX steps after it (through
+//     `readRunBeforeCaret` and the caller's `locateRun`). Found a run → it is the text to replace. Read fine but
+//     nothing there → `.exhausted`, nothing written. Unavailable → the AX steps after it are skipped (not run, not
+//     recorded) and the key step, if any, runs on the caller's `old`.
+//   - P2-59 key-step rule: `backspaceAndType` runs only if `old != nil` and `current` has exactly `old`'s scalars:
+//     after a run read it deletes exactly what AX and the buffer agree is before the caret. Otherwise it is skipped
+//     as untouched.
 //   - Before the first step that writes to the field, `mayWrite` is asked once (ConvertController takes the
 //     hold-back commit there, 001 §7 B3). false = abandon silently, nothing written.
 //     P2-51 (001 §12.2 W8): "writes" covers AX writes as well as key posts. The AX step's own writes include the
@@ -19,15 +25,18 @@ enum ReplacementChain {
     static let defaultBudgetNanos: UInt64 = 400_000_000
 
     /// - Parameters:
-    ///   - old: the text on screen now (selection or current rendering). nil for the stale-buffer path, where
-    ///     `axReadBeforeCaret` finds it.
+    ///   - old: the text on screen now (selection or the buffer's rendering). nil when there is no buffer text; an
+    ///     `axReadRunBeforeCaret` step then finds it.
     ///   - convert: maps the text on screen to its replacement. nil = can't convert (stop, nothing written).
+    ///   - locateRun: P2-59: finds the run in the window an `axReadRunBeforeCaret` step read (the caller's scan,
+    ///     which needs the layouts). nil = the read step can't run (unavailable).
     @TextActor
     static func run(_ plan: ReplacementPlan,
                     on replacer: some TextReplacing,
                     bundleID: String,
                     old: String?,
                     convert: (String) -> String?,
+                    locateRun: ((BeforeCaretWindow) -> RunLocation?)? = nil,
                     capabilities: inout ReplacementCapabilities,
                     clock: any Clock = SystemClock(),
                     budgetNanos: UInt64 = defaultBudgetNanos,
@@ -43,8 +52,16 @@ enum ReplacementChain {
         var current = old
         var replacement: String?
         var writeClaimed = false
+        /// P2-59: the run read was unavailable, so the AX steps that depend on it don't run.
+        var skipAXSteps = false
 
         for step in steps {
+            let isKeyStep = if case .backspaceAndType = step { true } else { false }
+            if skipAXSteps && !isKeyStep { continue }
+            // P2-59 (X4): delete only what is known to be before the caret. QA (P2-59b): compared scalar by scalar,
+            // not with `==` (canonical equivalence): an AX run in another normalization (`e` + U+0301 for `é`) is
+            // the same grapheme count but some apps delete it a scalar at a time, so Backspace × N would be wrong.
+            if isKeyStep, !Self.sameScalars(current, old) { continue }
             if clock.nowNanos &- start > budgetNanos {
                 return ReplacementOutcome(result: .timedOut, attempts: attempts)
             }
@@ -65,27 +82,45 @@ enum ReplacementChain {
                 writeClaimed = true
             }
 
-            let outcome = replacer.perform(step, old: oldText, new: newText)
+            let outcome: StepOutcome
+            if case .axReadRunBeforeCaret(let maxChars) = step, let locateRun {
+                outcome = replacer.readRunBeforeCaret(maxChars: maxChars, locate: locateRun)
+            } else {
+                outcome = replacer.perform(step, old: oldText, new: newText)
+            }
             capabilities.record(outcome.verdict, of: step, for: bundleID)
             attempts.append(.init(step: step, verdict: outcome.verdict))
 
             if outcome.verdict == .done {
                 guard isRead(step) else { return ReplacementOutcome(result: .replaced(by: step), attempts: attempts) }
-                // The stale-buffer read found the word; the steps after it replace that word.
-                current = replacer.wordBeforeCaret
+                // The read found the run; the steps after it replace that run. Read fine, nothing there: done.
+                guard let run = replacer.wordBeforeCaret, !run.isEmpty else {
+                    return ReplacementOutcome(result: .exhausted, attempts: attempts)
+                }
+                current = run
                 replacement = nil
                 continue
             }
             if !outcome.fieldUntouched { return ReplacementOutcome(result: .halted(after: step), attempts: attempts) }
-            if isRead(step) { return ReplacementOutcome(result: .exhausted, attempts: attempts) }
+            if isRead(step) {
+                skipAXSteps = true
+                current = old
+                replacement = nil
+            }
         }
         return ReplacementOutcome(result: .exhausted, attempts: attempts)
+    }
+
+    /// P2-59b QA: exactly the same text (same scalars), both non-nil. `String ==` is canonical equivalence.
+    private static func sameScalars(_ a: String?, _ b: String?) -> Bool {
+        guard let a, let b else { return false }
+        return a.unicodeScalars.elementsEqual(b.unicodeScalars)
     }
 
     /// The only step that writes nothing (not even a selection range). P2-51: every other step, including any
     /// added later, counts as a write and takes the claim first.
     private static func isRead(_ step: ReplacementStep) -> Bool {
-        if case .axReadBeforeCaret = step { return true }
+        if case .axReadRunBeforeCaret = step { return true }
         return false
     }
 }

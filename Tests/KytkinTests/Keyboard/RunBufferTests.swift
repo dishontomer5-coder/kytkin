@@ -394,6 +394,40 @@ final class RunBufferTests: XCTestCase {
         XCTAssertEqual(third.untouchedSinceConvert, gen2)
     }
 
+    /// QA (P2-59c deviation): after an AX run that differs from the buffer, ConvertController finishes with
+    /// `bufferAfter: []` and switches with `keepsBuffer: true` (`isOurs`). The finish and the change notification
+    /// reach the tap thread in either order; both orders must end in the same state: buffer forgotten, no kept
+    /// rendering, the new source, and the convert still "untouched" for the X6 undo.
+    func testAXRunFinishAndOurSwitchEndTheSameInEitherOrder() {
+        func state(_ p: KeyStreamProcessor) -> (Bool, InputSourceID?, InputSourceID?, UInt64?) {
+            (p.buffer.isEmpty, p.bufferRendering, p.inputSource, p.lastConvertGen)
+        }
+        var finishFirst = processor()
+        type(&finishFirst, [a, KeyCode.space, s])
+        guard let (_, g1) = doubleShift(&finishFirst, at: 500) else { return }
+        _ = finishFirst.finishReplacement(gen: g1, newRendering: nil, bufferAfter: [])
+        finishFirst.inputSourceChanged(to: hebrew, isOurs: true)
+
+        var switchFirst = processor()
+        type(&switchFirst, [a, KeyCode.space, s])
+        guard let (_, g2) = doubleShift(&switchFirst, at: 500) else { return }
+        switchFirst.inputSourceChanged(to: hebrew, isOurs: true)
+        _ = switchFirst.finishReplacement(gen: g2, newRendering: nil, bufferAfter: [])
+
+        let x = state(finishFirst), y = state(switchFirst)
+        XCTAssertTrue(x.0 && y.0, "the buffer is forgotten either way")
+        XCTAssertNil(x.1)
+        XCTAssertNil(y.1)
+        XCTAssertEqual(x.2, hebrew)
+        XCTAssertEqual(y.2, hebrew)
+        XCTAssertEqual(x.3, g1)
+        XCTAssertEqual(y.3, g2, "the switch arriving first doesn't abort the generation (no reset)")
+        guard let (snap, _) = doubleShift(&switchFirst, at: 1_500) else { return }
+        XCTAssertFalse(snap.hasRun)
+        XCTAssertEqual(snap.untouchedSinceConvert, g2)
+        XCTAssertEqual(snap.renderedIn, hebrew)
+    }
+
     func testAnyKeyDownClearsUntouchedSinceConvert() {
         let keys: [KeyEvent] = [F.key(d), F.key(d, origin: .replay), F.key(KeyCode.space), F.key(KeyCode.delete),
                                 F.key(KeyCode.escape), F.key(KeyCode.leftArrow), F.key(d, command: true),

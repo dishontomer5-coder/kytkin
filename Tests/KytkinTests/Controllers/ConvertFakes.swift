@@ -12,7 +12,8 @@ final class ConvertLog: @unchecked Sendable { // @unchecked: guarded by `lock`
         case end
         case claim(gen: UInt64)
         case switchTo(InputSourceID, keepsBuffer: Bool)
-        case finish(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?)
+        /// P2-59c: `renderedIn` is the finish's `bufferRenderedIn` (defaults to nil in expectations).
+        case finish(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?, renderedIn: InputSourceID? = nil)
         case beep
     }
 
@@ -48,10 +49,9 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return claimAnswer
     }
 
-    // P2-59a: `bufferRenderedIn` is accepted but not logged yet (P2-59c records it with the run flow).
     func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
                            bufferRenderedIn: InputSourceID?) {
-        log.add(.finish(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter))
+        log.add(.finish(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter, renderedIn: bufferRenderedIn))
     }
 }
 
@@ -62,8 +62,13 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     let log: ConvertLog
     var focus: FocusInfo?
     var results: [StepKind: StepOutcome] = [:]
-    /// What `axReadBeforeCaret` finds when it succeeds.
+    /// What `axReadRunBeforeCaret` finds when it succeeds.
     var foundWord: String?
+    /// P2-59c: the read hands this window to the caller's `locate` (as the executor does) and the run it names
+    /// becomes `wordBeforeCaret`. Unset: `foundWord` alone, as a window at the field start.
+    var window: BeforeCaretWindow?
+    /// P2-59c: the focused element's identity (the undo record's same-element check).
+    var element: (any FocusedElementIdentity)?
     /// Runs inside every `perform` (e.g. to move a fake clock past the budget).
     var onPerform: (() -> Void)?
 
@@ -97,6 +102,24 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return outcome
     }
 
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
+        let step = ReplacementStep.axReadRunBeforeCaret(maxChars: maxChars)
+        log.add(.perform(step))
+        onPerform?()
+        let outcome = results[.read] ?? .done
+        guard outcome.verdict == .done else { return outcome }
+        let w = window ?? foundWord.map { BeforeCaretWindow(text: $0, location: 0, reachesFieldStart: true) }
+        wordBeforeCaret = w.flatMap { w in
+            locate(w).map { run in
+                let units = Array(w.text.utf16)
+                return String(decoding: units[run.offset..<(run.offset + run.length)], as: UTF16.self)
+            }
+        }
+        return outcome
+    }
+
+    var focusedElement: (any FocusedElementIdentity)? { focus == nil ? nil : element }
+
     func endReplacement() {
         log.add(.end)
         heldOld = nil
@@ -113,7 +136,7 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         case .axWriteSelection: .axWrite
         case .typeOverSelection: .typeOver
         case .backspaceAndType: .backspace
-        case .axReadBeforeCaret: .read
+        case .axReadRunBeforeCaret: .read
         case .pasteboard: .paste
         case .keyCodesAfterSwitch: .keyCodes
         }

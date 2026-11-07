@@ -39,3 +39,6 @@ struct WordSnapshot: Sendable, Equatable {
         self.untouchedSinceConvert = untouchedSinceConvert
     }
 }
+
+/// P2-59c (001 §12.3 X5): the snapshot is the key path's run, so `LayoutSnapshot.typedRun(snap, in:)` reads it directly.
+extension WordSnapshot: BufferedRun {}
