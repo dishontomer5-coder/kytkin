@@ -183,6 +183,91 @@ final class ImportedLayoutStoreTests: XCTestCase {
         XCTAssertEqual(sut.maps.map(\.name), ["Arabic (mine)", "Hebrew (custom)", "Hebrew with niqqud (imported)"])
     }
 
+    // MARK: - QA (P2-24): hostile ids and files
+
+    private func mapJSON(id: String) -> Data {
+        Data("""
+        {"format":"kytkin-layoutmap","version":1,"id":"\(id)","name":"N","language":"he","source":"user",
+         "base":"com.apple.keylayout.Hebrew","keys":{"0":{"plain":"ש"}}}
+        """.utf8)
+    }
+
+    func testIDsThatCouldLeaveTheFolderOrHideAreRefusedAndNothingIsWritten() {
+        for id in ["../evil", "user./../x", "a/b", "user.he\u{0301}", "\u{FF55}ser.x", "user.\u{2215}x", "/etc/x",
+                   "user.x y"] {
+            fs[picked] = mapJSON(id: id)
+            guard case .invalid(.invalidIDCharacters) = importError({ _ = try sut.importFile(at: picked) }) else {
+                return XCTFail(id)
+            }
+        }
+        XCTAssertTrue(fs.writes.isEmpty)
+    }
+
+    func testAnIDDifferingOnlyInCaseIsRefusedNotStoredOverTheOther() throws {
+        fs[picked] = mapJSON(id: "user.Foo")
+        try sut.importFile(at: picked)
+        fs[picked] = mapJSON(id: "user.foo")
+        XCTAssertEqual(importError { _ = try sut.importFile(at: picked) }, .idDiffersOnlyInCase(existingName: "N"))
+        XCTAssertEqual(sut.maps.map(\.id), [InputSourceID("user.Foo")])
+        XCTAssertEqual(fs.writes, [dir.appendingPathComponent("user.Foo.json")], "the second is never written")
+        // The same id again is still a plain replace.
+        fs[picked] = mapJSON(id: "user.Foo")
+        XCTAssertEqual(try sut.importFile(at: picked).map.id, InputSourceID("user.Foo"))
+    }
+
+    func testReloadLoadsOneOfTwoFilesWhoseIDsDifferOnlyInCase() {
+        fs[dir.appendingPathComponent("a.json")] = mapJSON(id: "user.Foo")
+        fs[dir.appendingPathComponent("b.json")] = mapJSON(id: "user.FOO")
+        sut.reload()
+        XCTAssertEqual(sut.maps.map(\.id), [InputSourceID("user.Foo")])
+        XCTAssertEqual(sut.skippedFiles, ["b.json"])
+    }
+
+    func testLocalFileSystemIgnoresLinksFoldersAndFIFOsAndRemoveDeletesOnlyThatFile() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kytkin-p2-24-\(UUID().uuidString)", isDirectory: true)
+        let layouts = root.appendingPathComponent("layouts", isDirectory: true)
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: layouts, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A valid map outside, linked in; a folder and a FIFO named like maps; two real maps.
+        let target = outside.appendingPathComponent("target.json")
+        try mapJSON(id: "user.linked").write(to: target)
+        let link = layouts.appendingPathComponent("user.linked.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        try FileManager.default.createDirectory(at: layouts.appendingPathComponent("folder.json"),
+                                                withIntermediateDirectories: false)
+        let fifo = layouts.appendingPathComponent("fifo.json")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        try mapJSON(id: "user.real").write(to: layouts.appendingPathComponent("user.real.json"))
+        try mapJSON(id: "user.other").write(to: layouts.appendingPathComponent("user.other.json"))
+
+        let local = LocalLayoutFileSystem()
+        XCTAssertEqual(try local.jsonFiles(in: layouts).map(\.lastPathComponent), ["user.other.json", "user.real.json"])
+        XCTAssertThrowsError(try local.contents(of: fifo, maxBytes: 10), "a FIFO is refused, not waited on")
+        XCTAssertThrowsError(try local.contents(of: layouts.appendingPathComponent("folder.json"), maxBytes: 10))
+        XCTAssertEqual(try local.contents(of: link, maxBytes: 10)?.count, 11, "a picked file may be a link")
+
+        let store = ImportedLayoutStore(directory: layouts, fileSystem: local)
+        XCTAssertEqual(store.maps.map(\.id), [InputSourceID("user.other"), InputSourceID("user.real")])
+        XCTAssertNil(store.map(for: InputSourceID("user.linked")))
+        try store.remove(id: InputSourceID("user.real"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: layouts.appendingPathComponent("user.real.json").path))
+        for kept in ["user.other.json", "folder.json", "fifo.json"] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: layouts.appendingPathComponent(kept).path), kept)
+        }
+        XCTAssertNotNil(try? FileManager.default.destinationOfSymbolicLink(atPath: link.path))
+
+        // Importing a map whose file name is the link's replaces the link with a file in the folder; the target
+        // outside is never written.
+        var other = try XCTUnwrap(store.map(for: InputSourceID("user.other")))
+        other.id = InputSourceID("user.linked")
+        try store.add(other)
+        XCTAssertEqual(try Data(contentsOf: target), mapJSON(id: "user.linked"), "the link's target is untouched")
+        XCTAssertNil(try? FileManager.default.destinationOfSymbolicLink(atPath: link.path), "now a plain file")
+    }
+
     // MARK: - The real file system, in a temporary directory only
 
     func testLocalFileSystemWritesOwnerOnlyAndReadsCapped() throws {

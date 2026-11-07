@@ -61,11 +61,12 @@ import Observation
     func reload() {
         var loaded: [Entry] = []
         var skipped: [String] = []
-        var seen = Set<InputSourceID>()
+        // QA (P2-24): ids compared ignoring ASCII case, like the file system (see `add`); the first file wins.
+        var seen = Set<String>()
         let files = (try? fileSystem.jsonFiles(in: directory)) ?? []
         for url in files {
             guard let data = try? fileSystem.contents(of: url, maxBytes: LayoutMap.maxFileBytes),
-                  let map = try? LayoutMap.validate(data), seen.insert(map.id).inserted else {
+                  let map = try? LayoutMap.validate(data), seen.insert(map.id.rawValue.lowercased()).inserted else {
                 skipped.append(url.lastPathComponent)
                 continue
             }
@@ -113,6 +114,13 @@ import Observation
             throw .saveFailed
         }
         let existing = entries.first { $0.map.id == map.id }
+        // QA (P2-24): `user.Foo` and `user.foo` are the same file on the Mac's case-insensitive disk, so storing the
+        // second would overwrite the first while both stayed listed (and Remove of one would delete the other, even
+        // one in the pair). Ids are ASCII only (P2-30), so `lowercased()` is exact.
+        if existing == nil,
+           let clash = entries.first(where: { $0.map.id.rawValue.lowercased() == map.id.rawValue.lowercased() }) {
+            throw .idDiffersOnlyInCase(existingName: clash.map.name)
+        }
         guard let url = existing?.fileURL ?? fileURL(for: map.id) else {
             throw .invalid(.invalidIDCharacters(map.id.rawValue))
         }

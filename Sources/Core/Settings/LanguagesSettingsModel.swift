@@ -148,6 +148,9 @@ import Observation
         }
         if result.isEmpty, pair.a == pair.b {
             result.append(LanguagePairProblem.sameLanguage.message)
+        } else if result.isEmpty, let a = catalog.inputSource(for: pair.a), a == catalog.inputSource(for: pair.b) {
+            // QA (P2-24): e.g. a map in the pair was re-imported with the other member's keyboard as its base.
+            result.append(LanguagePairProblem.sameKeyboard(name(of: a)).message)
         }
         return result
     }

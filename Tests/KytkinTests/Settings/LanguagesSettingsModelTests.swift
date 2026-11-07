@@ -139,6 +139,20 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertTrue(sut.pairWarnings.isEmpty)
     }
 
+    func testReimportingAPairMapOntoTheOtherMembersKeyboardWarns() throws {
+        make()
+        try pick("sample-user.json")
+        sut.importFile(at: picked)
+        sut.pairB = IDs.userHebrew.rawValue        // ABC ⇄ Hebrew (custom)
+        XCTAssertEqual(store.prefs.languagePair, LanguagePair(a: IDs.abc, b: IDs.userHebrew))
+        XCTAssertTrue(sut.pairWarnings.isEmpty)
+        var map = try XCTUnwrap(imported.map(for: IDs.userHebrew))
+        map.base = IDs.abc                         // re-imported to type with ABC, like A
+        fs[picked] = try map.jsonData()
+        sut.importFile(at: picked)
+        XCTAssertEqual(sut.pairWarnings, [LanguagePairProblem.sameKeyboard("ABC").message])
+    }
+
     func testSwap() {
         make()
         sut.swap()

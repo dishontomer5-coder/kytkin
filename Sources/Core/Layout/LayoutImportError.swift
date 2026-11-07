@@ -8,6 +8,9 @@ enum LayoutImportError: Error, Equatable, Sendable {
     case unreadable
     /// The file was read but isn't a layout map Kytkin accepts.
     case invalid(LayoutMapError)
+    /// QA (P2-24): another imported map's id differs only in capital letters (`user.Foo` vs `user.foo`). The Mac's
+    /// file system ignores case, so both would be the same `<id>.json` file: one would silently replace the other.
+    case idDiffersOnlyInCase(existingName: String)
     /// Writing to (or deleting from) the layouts folder failed.
     case saveFailed
     /// Writing the exported file failed.
@@ -17,6 +20,9 @@ enum LayoutImportError: Error, Equatable, Sendable {
         switch self {
         case .unreadable: "Kytkin couldn't read this file."
         case .invalid(let error): error.message
+        case .idDiffersOnlyInCase(let name):
+            "Its id differs only in capital letters from “\(name)”, which is already imported. "
+                + "Change the id in the file, or remove “\(name)” first."
         case .saveFailed: "Kytkin couldn't save to its layouts folder. Try again."
         case .exportFailed: "Kytkin couldn't write the file there. Try another folder."
         }
