@@ -1,20 +1,19 @@
-// P0-5: App lifecycle. Creates the menu-bar status item at launch.
+// P0-5: App lifecycle. P2-20: builds the composition root (AppEnvironment) at launch and stops it on quit.
 
 import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var statusItemController: StatusItemController?
-    // P2-14: the one switcher for the app (P2-20's AppEnvironment will own it).
-    private var inputSourceSwitcher: InputSourceSwitcher?
+    private var environment: AppEnvironment?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let switcher = InputSourceSwitcher.makeTIS()
-        inputSourceSwitcher = switcher
-        statusItemController = StatusItemController(switcher: switcher)
+        let env = AppEnvironment()
+        environment = env
+        env.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        statusItemController?.stop()
+        // Flushes held keys, removes the tap and saves pending preferences.
+        environment?.stop()
     }
 }

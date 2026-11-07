@@ -101,7 +101,8 @@ struct RuleEngine: Sendable {
     }
 
     /// nil = the rule can never match (empty key).
-    private static func normalized(_ scope: RuleScope) -> RuleScope? {
+    /// P2-20: internal (was private) so `RuleWriter` collapses duplicates with exactly the matching rule (001 §12 S3).
+    static func normalized(_ scope: RuleScope) -> RuleScope? {
         switch scope {
         case .app(let bundleID):
             return nonEmpty(bundleID).map { .app(bundleID: $0) }
