@@ -60,8 +60,10 @@ import Observation
             AppRow(bundleID: bundleID, name: appNames.name(for: bundleID),
                    kytkinOn: o.disabled != true, convertOn: o.convertEnabled != false,
                    methodID: AppMethodOption.id(for: o.replacementMethod),
-                   effectiveMethod: PreferencesMapping.methodHint(o)
-                       ?? ReplacementCapabilities().method(for: bundleID))
+                   // P2-25 QA: through ReplacementCapabilities, so a terminal shows what it really does (T1).
+                   effectiveMethod: ReplacementCapabilities(
+                       overrides: PreferencesMapping.methodHint(o).map { [bundleID: $0] } ?? [:])
+                       .method(for: bundleID))
         }
         .sorted {
             let c = $0.name.localizedStandardCompare($1.name)
@@ -75,7 +77,7 @@ import Observation
     }
 
     func methodOptions(for row: AppRow) -> [AppMethodOption] {
-        AppMethodOption.options(for: row.bundleID)
+        AppMethodOption.options(for: row.bundleID, current: store.prefs.apps[row.bundleID]?.replacementMethod)
     }
 
     // MARK: - Actions
@@ -107,6 +109,7 @@ import Observation
 
     /// `optionID` is an `AppMethodOption.id`; an unknown one is ignored.
     func setMethod(_ optionID: String, for bundleID: String) {
+        // P2-25 QA: only the offered methods (a terminal can't be set to a method that types at the prompt).
         guard let option = AppMethodOption.options(for: bundleID).first(where: { $0.id == optionID }) else { return }
         edit(bundleID) { $0.replacementMethod = option.method }
     }

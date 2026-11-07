@@ -111,6 +111,28 @@ final class ConvertSettingsModelTests: XCTestCase {
         sut.windowMs = 250
         XCTAssertTrue(fired.value)
     }
+
+    /// P2-25 QA: a slider drag sends one store change per distinct value, so AppController (which sends
+    /// `updateConfig` only when the clamped config changed) can't storm the tap thread; reading never writes.
+    func testReadingNeverWritesAndRepeatedValuesAreNoOps() {
+        var convert = Preferences.Convert()
+        convert.doubleShiftWindowMs = 305
+        make(convert)
+        let changed = Fired()
+        withObservationTracking {
+            _ = store.prefs
+        } onChange: { changed.value = true }
+        _ = (sut.doubleShiftEnabled, sut.sidesID, sut.windowMs, sut.windowText, sut.switchLanguageAfterConvert,
+             sut.sidesOptions)
+        sut.windowMs = 305
+        sut.windowMs = 305.2
+        sut.sidesID = "sameSide"
+        sut.sidesID = "bogus"
+        sut.doubleShiftEnabled = true
+        XCTAssertFalse(changed.value, "same values and unknown ids write nothing")
+        XCTAssertEqual(store.prefs.convert.doubleShiftWindowMs, 305, "an off-step saved value is kept")
+    }
+
 }
 
 private final class Fired: @unchecked Sendable { var value = false }

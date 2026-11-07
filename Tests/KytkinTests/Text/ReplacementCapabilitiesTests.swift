@@ -52,6 +52,20 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         XCTAssertEqual(c.method(for: "com.apple.Terminal"), .terminal)
     }
 
+    /// P2-25 QA (001 §12 T1): a seeded terminal stays a terminal; only `.disabled` overrides it.
+    func testATerminalSeedKeepsTheTerminalClassUnlessDisabled() {
+        for hint in [MethodHint.auto, .keysOnly, .noUnicode, .preferPaste, .terminal] {
+            let c = ReplacementCapabilities(overrides: ["com.apple.Terminal": hint])
+            XCTAssertEqual(c.method(for: "com.apple.Terminal"), .terminal, "\(hint)")
+            XCTAssertEqual(c.method(for: "COM.apple.terminal"), .terminal, "\(hint), any case")
+        }
+        XCTAssertEqual(ReplacementCapabilities(overrides: ["com.apple.Terminal": .disabled])
+            .method(for: "com.apple.Terminal"), .disabled)
+        XCTAssertEqual(ReplacementCapabilities(overrides: ["com.apple.Terminal": .auto])
+            .seedMethod(for: "com.apple.Terminal"), .terminal)
+        XCTAssertEqual(ReplacementCapabilities().seedMethod(for: ""), .auto)
+    }
+
     func testLongestPrefixWins() {
         let c = ReplacementCapabilities(seeds: [
             .init(match: .prefix("com.example."), hint: .keysOnly),

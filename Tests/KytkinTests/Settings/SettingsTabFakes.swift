@@ -23,3 +23,6 @@ import Foundation
         return names[bundleID]
     }
 }
+
+/// P2-25 QA: set by an Observation `onChange` when a test's store changed.
+final class WriteSpy: @unchecked Sendable { var fired = false }

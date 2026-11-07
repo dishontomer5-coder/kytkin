@@ -335,4 +335,29 @@ final class RulesSettingsModelTests: XCTestCase {
         XCTAssertTrue(sut.isEditable)
         XCTAssertEqual(sut.notices, [])
     }
+
+    /// P2-25 QA: opening the tab (refresh, rows, sorting, filtering, options) never writes, even with duplicates
+    /// and an empty-key rule in the file.
+    func testReadingTheTabNeverWrites() {
+        let a = Rule.app(notes, IDs.hebrew)
+        let dup = Rule(id: UUID(), scope: .app(bundleID: notes), inputSource: IDs.abc, origin: .pinned, updatedAt: t1)
+        let empty = Rule(id: UUID(), scope: .app(bundleID: "  "), inputSource: IDs.abc, origin: .learned, updatedAt: t0)
+        make([a, dup, empty])
+        let changed = WriteSpy()
+        withObservationTracking { _ = store.prefs } onChange: { changed.fired = true }
+        sut.refresh()
+        for order in RuleSortOrder.allCases {
+            sut.sortOrder = order
+            for filter in RuleOriginFilter.allCases {
+                sut.originFilter = filter
+                for row in sut.rows { _ = sut.languageOptions(for: row) }
+            }
+        }
+        sut.searchText = "note"
+        _ = sut.rows
+        _ = sut.forgetAllLearnedQuestion
+        XCTAssertFalse(changed.fired)
+        XCTAssertEqual(rules, [a, dup, empty])
+    }
+
 }

@@ -54,13 +54,52 @@ final class AppsSettingsModelTests: XCTestCase {
     }
 
     func testMethodOptionsShowTheBuiltInChoiceAsDefault() {
-        make([term: .init()])
+        make([chrome: .init()])
         let options = sut.methodOptions(for: sut.rows[0])
         XCTAssertEqual(options.map(\.id), ["default", "auto", "keysOnly", "noUnicode", "preferPaste", "terminal"])
-        XCTAssertEqual(options[0].title, "Default (Terminal)")
+        XCTAssertEqual(options[0].title, "Default (Keys only)")
         XCTAssertNil(options[0].method)
         XCTAssertTrue(options[4].title.contains("coming later"))
         XCTAssertEqual(AppMethodOption.options(for: notes)[0].title, "Default (Auto)")
+    }
+
+    // MARK: - Terminals (P2-25 QA, 001 §12 T1)
+
+    func testATerminalOffersOnlyItsDefault() {
+        make([term: .init()])
+        let options = sut.methodOptions(for: sut.rows[0])
+        XCTAssertEqual(options.map(\.id), ["default"], "no method that would type a selection at the prompt")
+        XCTAssertEqual(options[0].title, "Default (Terminal)")
+    }
+
+    func testATerminalCantBeSetToAMethodThatTypesAtThePrompt() {
+        make([term: .init()])
+        for id in ["auto", "keysOnly", "noUnicode", "preferPaste", "terminal"] {
+            sut.setMethod(id, for: term)
+            XCTAssertNil(apps[term]?.replacementMethod, id)
+        }
+        XCTAssertEqual(sut.rows[0].effectiveMethod, .terminal)
+    }
+
+    func testAHandEditedTerminalMethodIsShownButNotUsed() {
+        make([term: .init(replacementMethod: .auto)])
+        let row = sut.rows[0]
+        XCTAssertEqual(row.methodID, "auto")
+        XCTAssertEqual(row.effectiveMethod, .terminal, "the terminal class wins over the file")
+        let options = sut.methodOptions(for: row)
+        XCTAssertEqual(options.map(\.id), ["default", "auto"], "the picker never goes blank")
+        XCTAssertTrue(options[1].title.contains("not used in terminals"))
+        sut.setMethod("default", for: term)
+        XCTAssertNil(apps[term]?.replacementMethod, "and the user can clear it")
+    }
+
+    func testATerminalCanStillBeTurnedOff() {
+        make([term: .init()])
+        sut.setConvertOn(false, for: term)
+        XCTAssertEqual(sut.rows[0].effectiveMethod, .disabled)
+        sut.setConvertOn(true, for: term)
+        sut.setKytkinOn(false, for: term)
+        XCTAssertEqual(sut.rows[0].effectiveMethod, .disabled)
     }
 
     func testConvertOffCopySaysDoubleShiftOnlySwitches() {
@@ -89,24 +128,25 @@ final class AppsSettingsModelTests: XCTestCase {
     }
 
     func testMethodChoices() {
-        make([term: .init()])
-        sut.setMethod("auto", for: term)
-        XCTAssertEqual(apps[term]?.replacementMethod, .auto)
-        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [term: .auto])
+        make([notes: .init()])
+        sut.setMethod("auto", for: notes)
+        XCTAssertEqual(apps[notes]?.replacementMethod, .auto)
+        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .auto])
         XCTAssertEqual(sut.rows[0].methodID, "auto")
-        sut.setMethod("keysOnly", for: term)
-        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [term: .keysOnly])
-        sut.setMethod("noUnicode", for: term)
-        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [term: .noUnicode])
-        sut.setMethod("preferPaste", for: term)
-        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [term: .preferPaste])
-        sut.setMethod("terminal", for: term)
-        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [term: .terminal])
-        sut.setMethod("default", for: term)
-        XCTAssertNil(apps[term]?.replacementMethod)
-        XCTAssertEqual(sut.rows[0].effectiveMethod, .terminal, "the built-in choice again")
-        sut.setMethod("bogus", for: term)
-        XCTAssertNil(apps[term]?.replacementMethod)
+        sut.setMethod("keysOnly", for: notes)
+        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .keysOnly])
+        sut.setMethod("noUnicode", for: notes)
+        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .noUnicode])
+        sut.setMethod("preferPaste", for: notes)
+        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .preferPaste])
+        sut.setMethod("terminal", for: notes)
+        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .terminal])
+        XCTAssertEqual(sut.rows[0].effectiveMethod, .terminal, "any app can be made a terminal")
+        sut.setMethod("default", for: notes)
+        XCTAssertNil(apps[notes]?.replacementMethod)
+        XCTAssertEqual(sut.rows[0].effectiveMethod, .auto, "the built-in choice again")
+        sut.setMethod("bogus", for: notes)
+        XCTAssertNil(apps[notes]?.replacementMethod)
     }
 
     func testFieldsAreIndependent() {
@@ -188,4 +228,19 @@ final class AppsSettingsModelTests: XCTestCase {
         XCTAssertEqual(apps, before)
         XCTAssertEqual(sut.rows.count, 2, "still listed")
     }
+
+    /// P2-25 QA: opening the tab (refresh, rows, options) never writes, even for a hand-edited terminal method.
+    func testReadingTheTabNeverWrites() {
+        let before: [String: Preferences.AppOverride] = [notes: .init(), term: .init(replacementMethod: .auto)]
+        make(before)
+        running = [AppCandidate(bundleID: chrome, name: "Chrome")]
+        let changed = WriteSpy()
+        withObservationTracking { _ = store.prefs } onChange: { changed.fired = true }
+        sut.refresh()
+        for row in sut.rows { _ = sut.methodOptions(for: row) }
+        _ = sut.emptyText
+        XCTAssertFalse(changed.fired)
+        XCTAssertEqual(apps, before)
+    }
+
 }

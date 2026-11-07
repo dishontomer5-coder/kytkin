@@ -17,10 +17,23 @@ struct AppMethodOption: Identifiable, Equatable, Sendable {
         method?.rawValue ?? defaultID
     }
 
-    /// "Default (Terminal)" first, then every method in a fixed order.
-    static func options(for bundleID: String) -> [AppMethodOption] {
-        let builtIn = ReplacementCapabilities().method(for: bundleID)
+    /// "Default (…)" first, then every method in a fixed order.
+    /// P2-25 QA (001 §12 T1): a built-in terminal offers only "Default (Terminal)": any other method would type a
+    /// "converted" selection at the shell prompt, and `ReplacementCapabilities` keeps terminals on `.terminal`
+    /// anyway. A method a hand-edited file stored is still listed (marked as not used), so the picker never goes
+    /// blank and never changes the file by itself.
+    static func options(for bundleID: String,
+                        current: Preferences.AppOverride.ReplacementMethod? = nil) -> [AppMethodOption] {
+        let builtIn = ReplacementCapabilities().seedMethod(for: bundleID)
         var result = [AppMethodOption(id: defaultID, title: "Default (\(title(of: builtIn)))", method: nil)]
+        if builtIn == .terminal {
+            if let current {
+                let suffix = current == .terminal ? "" : " (not used in terminals)"
+                result.append(AppMethodOption(id: current.rawValue, title: title(of: current) + suffix,
+                                              method: current))
+            }
+            return result
+        }
         let order: [Preferences.AppOverride.ReplacementMethod] = [.auto, .keysOnly, .noUnicode, .preferPaste, .terminal]
         for m in order {
             result.append(AppMethodOption(id: m.rawValue, title: title(of: m), method: m))
