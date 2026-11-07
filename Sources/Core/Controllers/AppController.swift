@@ -4,6 +4,10 @@
 //
 // Fan-out (001 §2.2, §3):
 //   context change      → SwitchController (rule + learner), KeyWatcher `.reset(.contextChange)` + `checkSecureInputNow()` (P2-45)
+//                         P3-19: no reset for a page-state-only `.page` ↔ `.unknown` change (or bar ↔ AXURL)
+//   site policy (P3-14) → availability (Kytkin on/paused, Accessibility, Automation) + browser preferences + the PSL
+//                         + web-link handlers → `SitePolicy`, pushed to the context monitor (before it starts, then
+//                         on every change); `browserSupport(for:)` for Settings (P3-15)
 //   Kytkin active/resign → SwitchController (P2-39), KeyWatcher `.reset(.contextChange)` (+ Secure Input check on resign)
 //                         P2-52 item 1: a resign whose frontmost app still reads as Kytkin (or unknown) is looked at
 //                         again after 150 ms (up to 3 times) → SwitchController.recheckAfterResign
@@ -71,6 +75,14 @@ import Observation
     private let ownPID: Int32
     private let frontmostPID: @MainActor () -> Int32?
     private let scheduler: (any OneShotScheduling)?
+
+    /// P3-14 (D11): the bundled Public Suffix List loaded. Without it no browser is watched and Settings says why.
+    let suffixListLoaded: Bool
+    /// P3-14: apps registered for https links (D1, "best effort" browsers). Read once, at `start()`.
+    private let webLinkHandlers: @MainActor () -> Set<String>
+    private var webLinkHandlerIDs: Set<String> = []
+    /// P3-14: the policy last pushed to the context monitor (nil before `start()`).
+    private(set) var sitePolicy: SitePolicy?
     private var looksLeft = 0
     /// What the pending look is for: a resign whose frontmost app read as Kytkin/unknown (P2-52 item 1), and/or an
     /// activation whose frontmost app didn't read as Kytkin yet (P2-55 QA).
@@ -82,7 +94,11 @@ import Observation
          ticker: any RepeatingTicking, convert: (any ConvertControlling)? = nil, clock: any Clock,
          now: @escaping () -> Date = Date.init, scheduler: (any OneShotScheduling)? = nil,
          ownPID: Int32 = ProcessInfo.processInfo.processIdentifier,
-         frontmostPID: @escaping @MainActor () -> Int32? = { nil }) {
+         frontmostPID: @escaping @MainActor () -> Int32? = { nil },
+         suffixListLoaded: Bool = false,
+         webLinkHandlers: @escaping @MainActor () -> Set<String> = { [] }) {
+        self.suffixListLoaded = suffixListLoaded
+        self.webLinkHandlers = webLinkHandlers
         self.scheduler = scheduler
         self.ownPID = ownPID
         self.frontmostPID = frontmostPID
@@ -118,12 +134,16 @@ import Observation
         isStarted = true
         launching = true
         defer { launching = false }
+        webLinkHandlerIDs = webLinkHandlers()   // P3-14: before the first policy (the permission read may push one)
         conflicts.start()
         permissions.start()
         applyPreferences(force: true)
         // P2-21: the processor learns the layout its strokes are typed in only from changes; tell it the
         // current one at launch, so the first double-Shift knows which way to convert.
         keyWatcher.perform(.inputSourceChanged(to: switcher.current, isOurs: false))
+        // P3-14: the policy goes in before the monitor starts, so a browser in front at launch gets its site grace
+        // (one switch) instead of the browser's rule and then the site's.
+        updateSitePolicy()
         context.start()            // emits the frontmost app at once → its rule applies
         recompute(grantsChanged: false)
         observePreferences()
@@ -147,11 +167,24 @@ import Observation
 
     func contextDidChange(_ c: Context) {
         cancelLooks()                 // the new app got its own rule
-        switching.contextDidChange(c)
-        keyWatcher.perform(.reset(.contextChange))
+        let change = switching.contextDidChange(c)
+        // P3-19: a `.page` ↔ `.unknown` flip (one AX timeout) or a bar ↔ AXURL source change on the same site is not a
+        // move to another text box: resetting the word buffer there could abort a convert mid-word. Into or out of
+        // `.editingAddress` still resets (the address bar is another field).
+        if !Self.keepsWordBuffer(change) {
+            keyWatcher.perform(.reset(.contextChange))
+        }
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
         retryTapAfterLaunchTimeout()          // P2-52 item 2: at most once per run
         afterEvent()
+    }
+
+    /// P3-19: page-state-only changes between `.page` and `.unknown` (either way, or the same state with another
+    /// source) keep the KeyWatcher's word buffer.
+    static func keepsWordBuffer(_ change: SwitchController.ContextChange) -> Bool {
+        guard case let .pageStateOnly(from, to) = change else { return false }
+        let quiet: [BrowserPageState?] = [.page, .unknown]
+        return quiet.contains(from) && quiet.contains(to)
     }
 
     func inputSourceDidChange(_ change: InputSourceChange) {
@@ -304,6 +337,11 @@ import Observation
 
     /// Any writer changed the preferences (Settings, our own learn/pin/forget). Idempotent.
     func preferencesDidChange() {
+        // QA (P3-14): Kytkin turned back on → the policy goes first, so a browser in front is held for its site read
+        // and the turn-on re-apply waits for it (one switch, not the browser's rule and then the site's).
+        if isStarted, store.prefs.general.enabled, lastPrefs?.general.enabled == false {
+            updateSitePolicy(availabilityFor(paused: switching.paused))
+        }
         applyPreferences(force: false)
         recompute(grantsChanged: false)
     }
@@ -315,8 +353,10 @@ import Observation
         // P2-27: the learner line is built only for the DEBUG menu (it is read on every label refresh).
         #if DEBUG
         let learnerDebug: String? = switching.learnerDebug
+        let siteDebug: String? = context.siteDebug
         #else
         let learnerDebug: String? = nil
+        let siteDebug: String? = nil
         #endif
         return MenuState(
             currentRule: switching.currentRule, paused: switching.paused, enabled: store.prefs.general.enabled,
@@ -327,7 +367,7 @@ import Observation
             keyboardBelowDesired: isStarted && policy.runsBelow(desired: desiredTapMode()),
             tapReEnableCount: keyWatcherStatus.health.reEnableCount,
             slowCallbackCount: keyWatcherStatus.health.overBudgetCallbacks, doubleShiftCount: doubleShiftCount,
-            conflicts: conflicts.conflicts, learnerDebug: learnerDebug,
+            conflicts: conflicts.conflicts, learnerDebug: learnerDebug, siteDebug: siteDebug,
             showsQuitAndReopen: policy.showsQuitAndReopen(needsRelaunch: status.inputMonitoringNeedsRelaunch),
             accessibility: status.grants.accessibility, inputMonitoring: status.grants.inputMonitoring,
             store: MenuState.StoreFlags(loadIssue: store.loadIssue, isReadOnly: store.isReadOnly,
@@ -353,6 +393,9 @@ import Observation
     }
 
     func setPaused(_ on: Bool) {
+        // QA (P3-14): on Resume the policy goes first (see `preferencesDidChange`); on Pause it follows, so the
+        // browser's dropped site never reaches an unpaused SwitchController.
+        if isStarted, !on, switching.paused { updateSitePolicy(availabilityFor(paused: false)) }
         switching.setPaused(on)
         recompute(grantsChanged: false)   // Pause turns the tap off; resume turns it back on
         onDisplayChange?()
@@ -461,7 +504,39 @@ import Observation
         availability = FeatureAvailability.compute(grants: grants, tapMode: policy.achieved,
                                                    secureInput: keyWatcherStatus.secureInputOn, settings: settings)
         switching.setKeyboardTapAvailable(availability.learningWithWords)
+        if isStarted { updateSitePolicy() }
         afterEvent()
+    }
+
+    /// P3-14 (001 §14.5): Kytkin on/paused and Accessibility (`availability.siteRules`), the Automation opt-ins, the
+    /// browser preferences (`siteRulesEnabled`, `ignorePrivateWindowsCompletely`), the PSL (D11) and the web-link
+    /// handlers → one `SitePolicy`, pushed only when it changed (the monitor re-attaches or detaches at once).
+    private func updateSitePolicy(_ availability: FeatureAvailability? = nil) {
+        let policy = SitePolicy(availability: availability ?? self.availability, browsers: store.prefs.browsers,
+                                suffixListLoaded: suffixListLoaded, webLinkHandlers: webLinkHandlerIDs,
+                                ownBundleIDPrefix: KnownSwitchers.ownBundleIDPrefix)
+        guard policy != sitePolicy else { return }
+        sitePolicy = policy
+        context.setSitePolicy(policy)
+    }
+
+    /// QA (P3-14): the availability `recompute` is about to compute, for pushing the policy ahead of it. Site rules
+    /// and the Automation opt-ins depend only on Kytkin on/paused and the grants, not on the tap.
+    private func availabilityFor(paused: Bool) -> FeatureAvailability {
+        FeatureAvailability.compute(grants: permissions.status.grants, tapMode: policy.achieved,
+                                    secureInput: keyWatcherStatus.secureInputOn,
+                                    settings: PreferencesMapping.featureSettings(store.prefs, paused: paused))
+    }
+
+    /// P3-14, for Settings → Browsers & Sites (P3-15): what Kytkin knows about reading `bundleID` this session.
+    func browserSupport(for bundleID: String) -> BrowserSupport {
+        context.browserSupport.status(bundleID: bundleID, request: sitePolicy?.request(for: bundleID),
+                                      availability: availability, suffixListLoaded: suffixListLoaded)
+    }
+
+    /// P3-14: the "best effort" browsers (apps registered for https links, read at `start()`), for P3-15's list.
+    var otherBrowserBundleIDs: Set<String> {
+        webLinkHandlerIDs.filter { BrowserCatalog.known[$0] == nil }
     }
 
     private func apply(_ action: TapModePolicy.Action) {

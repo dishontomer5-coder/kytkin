@@ -84,14 +84,40 @@ final class WorkspaceAppActivationSourceTests: XCTestCase {
         let center = NotificationCenter()
         let source = WorkspaceAppActivationSource(center: center, frontmost: { self.me })
         var count = 0
-        source.onActivate = { _, _ in count += 1 }
+        var events: [String] = []
+        source.onActivate = { _, _ in count += 1; events.append("activate") }
+        source.onWake = { events.append("wake") }
+        source.onSessionResign = { events.append("resign") }
         source.start()
         count = 0
+        events = []
         post(NSWorkspace.didWakeNotification, on: center, app: nil)
         post(NSWorkspace.sessionDidBecomeActiveNotification, on: center, app: nil)
         XCTAssertEqual(count, 2)
         post(NSWorkspace.sessionDidResignActiveNotification, on: center, app: nil)
         XCTAssertEqual(count, 2, "switching away reports nothing")
+        // P3-14: the frontmost app is reported before the wake (so the monitor re-attaches first), and a resign is told.
+        XCTAssertEqual(events, ["activate", "wake", "activate", "wake", "resign"])
+        source.stop()
+    }
+
+    /// QA (P3-14): the Mac can wake while another user's session is in front; nothing is reported (no re-attach, no
+    /// AX read) until this session becomes active again.
+    func testWakeWhileAnotherSessionIsInFrontReportsNothing() {
+        let center = NotificationCenter()
+        let source = WorkspaceAppActivationSource(center: center, frontmost: { self.me })
+        var events: [String] = []
+        source.onActivate = { _, _ in events.append("activate") }
+        source.onWake = { events.append("wake") }
+        source.onSessionResign = { events.append("resign") }
+        source.start()
+        events = []
+        post(NSWorkspace.sessionDidResignActiveNotification, on: center, app: nil)
+        post(NSWorkspace.didWakeNotification, on: center, app: nil)
+        XCTAssertEqual(events, ["resign"])
+        post(NSWorkspace.sessionDidBecomeActiveNotification, on: center, app: nil)
+        post(NSWorkspace.didWakeNotification, on: center, app: nil)
+        XCTAssertEqual(events, ["resign", "activate", "wake", "activate", "wake"])
         source.stop()
     }
 
@@ -116,7 +142,7 @@ final class WorkspaceAppActivationSourceTests: XCTestCase {
             let source = WorkspaceAppActivationSource(center: center, frontmost: { nil })
             weakSource = source
             source.start()
-            XCTAssertEqual(center.live, 5)
+            XCTAssertEqual(center.live, 6)   // P3-14: + sessionDidResignActive
         }
         XCTAssertNil(weakSource)
         XCTAssertEqual(center.live, 0, "isolated deinit removed every observer")
@@ -128,6 +154,8 @@ final class ContextMonitorTests: XCTestCase {
     private final class FakeSource: AppActivationSource {
         var onActivate: (@MainActor (String, Int32) -> Void)?
         var onTerminate: (@MainActor (Int32) -> Void)?
+        var onWake: (@MainActor () -> Void)?
+        var onSessionResign: (@MainActor () -> Void)?
         var started = 0, stopped = 0
         func start() { started += 1 }
         func stop() { stopped += 1 }

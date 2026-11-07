@@ -89,7 +89,7 @@ final class BrowserWatchEngineTests: XCTestCase {
                 return o
             },
             timer: timer,
-            deliver: { pid, id, o in log.items.append((pid, id, o)) },
+            deliver: { pid, id, o, _ in log.items.append((pid, id, o)) },
             makeReader: strategy.map { s in
                 { request in
                     BrowserAddressReader(request: request, siteReader: siteReader, strategy: s,

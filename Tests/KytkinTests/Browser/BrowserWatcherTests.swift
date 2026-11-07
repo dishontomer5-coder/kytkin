@@ -32,7 +32,7 @@ final class FakeWatchEngine: BrowserWatchEngineDriving, @unchecked Sendable { //
     private let lock = NSLock()
     private var _calls: [Call] = []
     var calls: [Call] { lock.withLock { _calls } }
-    var deliver: (@Sendable (Int32, UInt64, BrowserObservation) -> Void)?
+    var deliver: (@Sendable (Int32, UInt64, BrowserObservation, Bool) -> Void)?
 
     func attach(pid: Int32, request: BrowserWatchRequest, attachID: UInt64) {
         lock.withLock { _calls.append(.attach(pid, request, attachID)) }
@@ -93,7 +93,7 @@ final class BrowserWatcherTests: XCTestCase {
                 return engine
             },
             postToMain: { block in queue.post(block) })
-        w.onObservation = { [unowned self] pid, id, o in received.append((pid, id, o)) }
+        w.onObservation = { [unowned self] pid, id, o, _ in received.append((pid, id, o)) }
         return w
     }
 
@@ -151,7 +151,7 @@ final class BrowserWatcherTests: XCTestCase {
         w.attach(pid: 1, bundleID: "app.zen-browser.zen", request: gecko)
         executor.drain()
         let deliver = try XCTUnwrap(engine.deliver)
-        deliver(1, 1, site)
+        deliver(1, 1, site, true)
         XCTAssertTrue(received.isEmpty, "posted to main, not delivered inline")
         mainQueue.drain()
         XCTAssertEqual(received.count, 1)
@@ -160,17 +160,17 @@ final class BrowserWatcherTests: XCTestCase {
         XCTAssertEqual(received.first?.2, site)
 
         w.attach(pid: 2, bundleID: "com.google.Chrome", request: gecko)
-        deliver(1, 1, site)          // read for the old attach, arriving late
-        deliver(2, 1, site)          // wrong attachID
-        deliver(1, 2, site)          // wrong pid
+        deliver(1, 1, site, true)          // read for the old attach, arriving late
+        deliver(2, 1, site, true)          // wrong attachID
+        deliver(1, 2, site, true)          // wrong pid
         mainQueue.drain()
         XCTAssertEqual(received.count, 1, "stale results dropped")
-        deliver(2, 2, site)
+        deliver(2, 2, site, true)
         mainQueue.drain()
         XCTAssertEqual(received.count, 2)
 
         w.detach()
-        deliver(2, 2, site)
+        deliver(2, 2, site, true)
         mainQueue.drain()
         XCTAssertEqual(received.count, 2, "nothing is delivered after detach")
     }
@@ -200,7 +200,7 @@ final class BrowserWatcherTests: XCTestCase {
         executor.drain()
         let deliver = try XCTUnwrap(engine.deliver)
         w = nil
-        deliver(1, 1, site)
+        deliver(1, 1, site, true)
         mainQueue.drain()
         XCTAssertTrue(received.isEmpty)
     }
@@ -218,9 +218,9 @@ final class BrowserWatcherTests: XCTestCase {
         XCTAssertEqual(engine.calls, [.attach(1, gecko, 1), .attach(2, gecko, 2), .attach(1, gecko, 3)])
         let deliver = try XCTUnwrap(engine.deliver)
         let other = BrowserObservation(site: nil, pageState: .notWebPage, isPrivate: nil, via: .axURL)
-        deliver(1, 1, other)   // read for A's first attach, arriving after the switch back
-        deliver(2, 2, other)   // B's
-        deliver(1, 3, site)
+        deliver(1, 1, other, true)   // read for A's first attach, arriving after the switch back
+        deliver(2, 2, other, true)   // B's
+        deliver(1, 3, site, true)
         mainQueue.drain()
         XCTAssertEqual(received.count, 1)
         XCTAssertEqual(received.first?.1, 3)
@@ -272,7 +272,7 @@ final class BrowserWatcherTests: XCTestCase {
                 return engine
             })
         nonisolated(unsafe) var got = 0
-        w?.onObservation = { _, _, _ in got += 1 }
+        w?.onObservation = { _, _, _, _ in got += 1 }
         w?.attach(pid: 7, bundleID: "app.zen-browser.zen", request: gecko)
         wait(for: [inRead], timeout: 2)
         w = nil   // isolated deinit queues engine.detach() behind the read in flight

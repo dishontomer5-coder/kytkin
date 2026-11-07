@@ -6,7 +6,8 @@
 //     A successful select of ours → `conflicts.noteOurSwitch()`. An external change within 300 ms of that select,
 //     to another source, in the same context → re-assert once (design.md: "re-assert at most once"), never again.
 //     P3-9 (D5): a Context that differs from the last one only in `pageState` reaches the learner but re-applies
-//     nothing. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
+//     nothing (P3-14: the same for a change of `readFromAddressBar` alone). P3-19: such a change keeps the one fight
+//     re-assert of the rule switch it follows. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
 //     only on a site or siteHost rule (D6).
 // (b) `.external` change → `conflicts.noteExternalSwitch()` and, unless Kytkin's own window is active, paused or
 //     the app disabled, learner `externalSwitch`; `.ours` → learner `ourSwitch`. Word boundaries and dwell ticks feed
@@ -82,6 +83,8 @@ import Foundation
     private var lastLearnerNote: String?
     /// P3-9 (D5): the last Context delivered to `contextDidChange`, to spot a page-state-only change.
     private var lastDelivered: Context?
+    /// QA (P3-14): a Resume / turn-on re-apply is waiting for the browser's first site read (`reapply`).
+    private var reapplyOnNextContext = false
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init) {
@@ -101,25 +104,54 @@ import Foundation
 
     // MARK: - Flow (a)
 
-    func contextDidChange(_ c: Context) {
+    /// What kind of change `contextDidChange` saw (P3-14: AppController skips the KeyWatcher reset for some).
+    enum ContextChange: Equatable {
+        /// A new app, site, private flag or chat: the rule was applied.
+        case full
+        /// P3-9 (D5): only the page state (or, P3-14, where the site was read from) changed; nothing was applied.
+        case pageStateOnly(from: BrowserPageState?, to: BrowserPageState?)
+    }
+
+    @discardableResult func contextDidChange(_ c: Context) -> ContextChange {
         isOwnAppActive = false   // P2-55: another app is frontmost, so Kytkin's own window can't be
-        let pageStateOnly = lastDelivered.map { Self.differsOnlyInPageState($0, c, engine: engine) } ?? false
+        let previous = lastDelivered
+        let pageStateOnly = previous.map { Self.differsOnlyInPageState($0, c, engine: engine) } ?? false
         lastDelivered = c
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
+        // QA (P3-14): a Resume or turn-on re-apply that waited for the browser's site read applies with this Context,
+        // whatever changed (the read may add no site: a new tab, or the grace ran out).
+        let deferred = reapplyOnNextContext
+        reapplyOnNextContext = false
         // P3-9 (D5, 001 §14.6): a change of page state alone (e.g. a click into the address bar and back) cancels a
         // candidate and restarts the settle, like a window focus change, but doesn't re-apply the rule: that would
         // undo the user's manual switch.
-        guard !pageStateOnly else { return }
-        applyRule(for: c)
+        guard pageStateOnly, !deferred, let previous else {
+            applyRule(for: c)
+            return .full
+        }
+        carryFightWindow(from: previous.generation, to: c.generation)
+        return .pageStateOnly(from: previous.pageState, to: c.pageState)
+    }
+
+    /// P3-19: the one re-assert belongs to the rule switch, not to a generation. A page-state-only Context (an AX
+    /// read landing right after the browser's activation, or `.page` ↔ `.unknown`) re-applies nothing, so the switch
+    /// made for the previous generation still stands and may still be fought over within its 300 ms.
+    private func carryFightWindow(from old: UInt64, to new: UInt64) {
+        if let last = lastRuleSelect, last.generation == old {
+            lastRuleSelect = (last.target, last.atNanos, new)
+        }
+        if reassertedGeneration == old { reassertedGeneration = new }
     }
 
     /// P3-9: same app, pid, site, private flag and chat; only `pageState` (and the generation) differs.
+    /// P3-14: or only `readFromAddressBar` (Gecko bar ↔ `AXURL` on the same site): it changes learning, not the rule.
     /// QA (P3-9): the host counts only as ContextAssembler counts it: when the two differ (after HostNormalizer) and
     /// either has a siteHost rule. The assembler drops a host-only change inside one site, so the host it emits with
     /// the next page-state change can be newer than the last one delivered (www.google.com → mail.google.com, then a
     /// click into the address bar); that must not re-apply the site rule over a manual switch.
     static func differsOnlyInPageState(_ a: Context, _ b: Context, engine: RuleEngine) -> Bool {
-        guard a.pageState != b.pageState, a.bundleID == b.bundleID, a.pid == b.pid,
+        guard a.pageState != b.pageState || a.readFromAddressBar != b.readFromAddressBar,
+              a.bundleID == b.bundleID, a.pid == b.pid,
               a.siteDomain == b.siteDomain, a.isPrivateWindow == b.isPrivateWindow, a.chatKey == b.chatKey else {
             return false
         }
@@ -265,7 +297,18 @@ import Foundation
         wasEnabled = enabled
         guard let c = context.current else { return }
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
-        if enabled, !paused, !isOwnAppActive { applyRule(for: c) }
+        if enabled, !paused, !isOwnAppActive { reapply(c) } else { reapplyOnNextContext = false }
+    }
+
+    /// QA (P3-14): the Resume / turn-on re-apply. While ContextMonitor holds the browser in front for its first site
+    /// read (it was just re-attached), the switch waits for that Context: one switch, not the browser's rule now and
+    /// the site's a few ms later.
+    private func reapply(_ c: Context) {
+        if context.isAwaitingSite {
+            reapplyOnNextContext = true
+        } else {
+            applyRule(for: c)
+        }
     }
 
     /// FeatureAvailability changed: `learningWithWords` decides words vs dwell (001 §6.2).
@@ -328,7 +371,7 @@ import Foundation
         refreshLearning()
         if let c = context.current {
             handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))   // drop any candidate
-            if !on, !isOwnAppActive { applyRule(for: c) }
+            if !on, !isOwnAppActive { reapply(c) } else { reapplyOnNextContext = false }
         }
     }
 

@@ -29,11 +29,18 @@ struct BrowserObservation: Sendable, Equatable {
         BrowserObservation(site: site, pageState: .unknown, isPrivate: isPrivate, via: .kept)
     }
 
+    /// P3-14 (P3-20 decision, plan.md P3-11/13 T1): the answer came only from the Gecko address bar, not from a web
+    /// area's `AXURL`. Firefox can keep half-typed text in an unfocused bar, so such a site is applied but never
+    /// learned. Only this one bit of `via` reaches the Context; never any text.
+    var readFromAddressBar: Bool { via == .addressBar }
+
     /// The facts main acts on; the AX thread posts only when these change (§14.3.4 "post only on change").
     /// The host counts, not only the site key: a host inside one domain can have a siteHost override (§14.5).
-    /// `via` doesn't count.
+    /// `via` doesn't count, except whether it was the address bar (P3-14: bar → `AXURL` on the same site makes the
+    /// site learnable, so main must hear about it).
     func hasSameFacts(as other: BrowserObservation) -> Bool {
         site == other.site && pageState == other.pageState && isPrivate == other.isPrivate
+            && readFromAddressBar == other.readFromAddressBar
     }
 }
 

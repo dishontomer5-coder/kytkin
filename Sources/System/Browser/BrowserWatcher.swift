@@ -13,11 +13,11 @@
 import Foundation
 
 @MainActor final class BrowserWatcher: BrowserWatching {
-    typealias MakeEngine = (_ deliver: @escaping @Sendable (Int32, UInt64, BrowserObservation) -> Void)
+    typealias MakeEngine = (_ deliver: @escaping @Sendable (Int32, UInt64, BrowserObservation, Bool) -> Void)
         -> any BrowserWatchEngineDriving
     typealias PostToMain = @Sendable (@escaping @Sendable @MainActor () -> Void) -> Void
 
-    var onObservation: (@MainActor (_ pid: Int32, _ attachID: UInt64, BrowserObservation) -> Void)?
+    var onObservation: (@MainActor (_ pid: Int32, _ attachID: UInt64, BrowserObservation, _ sawWindow: Bool) -> Void)?
 
     private struct Current: Equatable {
         let pid: Int32
@@ -85,16 +85,16 @@ import Foundation
         if let thread, let engine { return (thread, engine) }
         let thread = makeThread()
         let post = postToMain
-        let engine = makeEngine { [weak self] pid, attachID, observation in
-            post { self?.receive(pid: pid, attachID: attachID, observation) }
+        let engine = makeEngine { [weak self] pid, attachID, observation, sawWindow in
+            post { self?.receive(pid: pid, attachID: attachID, observation, sawWindow: sawWindow) }
         }
         self.thread = thread
         self.engine = engine
         return (thread, engine)
     }
 
-    private func receive(pid: Int32, attachID: UInt64, _ observation: BrowserObservation) {
+    private func receive(pid: Int32, attachID: UInt64, _ observation: BrowserObservation, sawWindow: Bool) {
         guard let current, current.pid == pid, current.attachID == attachID else { return }   // stale: dropped
-        onObservation?(pid, attachID, observation)
+        onObservation?(pid, attachID, observation, sawWindow)
     }
 }

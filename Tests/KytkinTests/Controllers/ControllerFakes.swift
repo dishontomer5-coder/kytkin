@@ -45,12 +45,30 @@ enum IDs {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     func setHostsWithOverrides(_ hosts: Set<String>) { overrideHostsCalls.append(hosts) }
+    /// P3-14: every `setSitePolicy` call, in order, and what `start()` saw.
+    private(set) var sitePolicyCalls: [SitePolicy] = []
+    private(set) var policyAtStart: SitePolicy??
+    func setSitePolicy(_ policy: SitePolicy) {
+        sitePolicyCalls.append(policy)
+        if let id = awaitSiteOnPolicy, current?.bundleID == id, current?.pageState == nil,
+           policy.request(for: id) != nil {
+            isAwaitingSite = true
+        }
+    }
+    var browserSupport = BrowserSupportTracker()
+    var siteDebug = "Sites: fake"
+    /// QA (P3-14): set by a test (or `awaitSiteOnPolicy`) to stand for the monitor's site hold.
+    var isAwaitingSite = false
+    /// QA (P3-14): when set, a policy push with a request for this bundle ID (the app in front) starts the hold,
+    /// as the real monitor does when it attaches to the browser in front.
+    var awaitSiteOnPolicy: String?
     /// Emitted from start() (the frontmost app), like the real monitor.
     var emitOnStart: Context?
     private var generation: UInt64 = 0
 
     func start() {
         startCount += 1
+        policyAtStart = .some(sitePolicyCalls.last)
         if let c = emitOnStart { current = c; onChange?(c) }
     }
     func stop() { stopCount += 1 }

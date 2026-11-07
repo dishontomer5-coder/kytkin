@@ -74,6 +74,8 @@ enum MenuModel {
             out.append(.info("DEBUG: Slow key callbacks (over 1 ms): \(state.slowCallbackCount)"))
             // P2-55: the learner's gate, candidate and last decision (IDs and reasons only).
             if let line = state.learnerDebug { out.append(.info("DEBUG: \(line)")) }
+            // P3-14: the browser watch (001 §14.12 "Site reads" line; states and counts only, never a host).
+            if let line = state.siteDebug { out.append(.info("DEBUG: \(line)")) }
             out.append(MenuItemModel(kind: .debugSwitchSubmenu, title: "DEBUG: Switch to", isEnabled: true,
                                      isChecked: false, indent: 0, keyEquivalent: ""))
         }
