@@ -43,9 +43,16 @@ final class GeckoReadStrategyTests: XCTestCase {
         XCTAssertEqual(o, BrowserObservation(site: example, pageState: .page, isPrivate: nil, via: .axURL))
         XCTAssertEqual(zen.tree.calls(about: zen.urlbar), [])
         XCTAssertEqual(zen.tree.childrenCalls, 0, "no scan while the page has focus")
-        XCTAssertNil(r.windows[0].webArea, "the Zen web area isn't cached")
-        // Budget: 2 app calls + the focus element's role + its AXURL.
-        XCTAssertEqual(zen.tree.calls, [.focusedElement, .mainWindow, .string(.role, zen.webArea), .url(zen.webArea)])
+        // QA: the walk goes on to the window (an outer web area would win over this one), then keeps the web area
+        // only as its next stop point.
+        XCTAssertEqual(r.windows[0].webArea, zen.webArea)
+        XCTAssertEqual(zen.tree.calls.first, .focusedElement)
+        XCTAssertEqual(zen.tree.calls.last, .url(zen.webArea))
+        XCTAssertEqual(zen.tree.calls.filter { if case .url = $0 { true } else { false } }.count, 1)
+        // Budget, steady state: 2 app calls + AXURL; the walk stops at the known web area without asking.
+        zen.tree.resetCalls()
+        XCTAssertEqual(r.read(zen.tree, now: 1).observation.site, example)
+        XCTAssertEqual(zen.tree.calls, [.focusedElement, .mainWindow, .url(zen.webArea)])
     }
 
     func testFocusInPageDeeperDownWalksUpToTheWebArea() {
@@ -87,7 +94,7 @@ final class GeckoReadStrategyTests: XCTestCase {
         zen.tree.resetCalls()
         XCTAssertEqual(r.read(zen.tree, now: 1).observation.pageState, .editingAddress)
         XCTAssertEqual(zen.tree.calls(about: zen.urlbar),
-                       [.string(.role, zen.urlbar), .parent(zen.urlbar), .string(.role, zen.urlbar)],
+                       [.string(.role, zen.urlbar), .parent(zen.urlbar)],
                        "only the prelude's focus walk and focus class touched the bar")
     }
 
@@ -116,6 +123,44 @@ final class GeckoReadStrategyTests: XCTestCase {
         var r = reader()
         XCTAssertEqual(r.read(zen.tree, now: 0).observation, .unknown())
         XCTAssertEqual(valueReads(zen.tree, zen.urlbar), 0, "can't tell whether it's focused: don't read it")
+    }
+
+    // QA: the user clicks into the bar between the focus check and the value read. The value read is dropped
+    // (one extra AXFocused call), so a half-typed address can't become the window's site.
+    func testBarFocusedDuringTheValueReadIsDropped() {
+        let zen = BrowserFixtures.zen(focus: .sidebar, urlbarValue: "example.net")
+        var r = reader()
+        zen.tree.beforeAnswer = { [unowned tree = zen.tree, bar = zen.urlbar] call in
+            if call == .string(.value, bar) { tree.set(bar) { $0.focused = true } }
+        }
+        let o = r.read(zen.tree, now: 0).observation
+        XCTAssertEqual(o, BrowserObservation(site: nil, pageState: .editingAddress, isPrivate: nil, via: .kept))
+        XCTAssertNil(r.windows[0].lastSite, "nothing from the bar is kept")
+        XCTAssertEqual(zen.tree.calls(about: zen.urlbar).suffix(3),
+                       [.isFocused(zen.urlbar), .string(.value, zen.urlbar), .isFocused(zen.urlbar)])
+    }
+
+    func testBarWhoseFocusTurnsUnknownAfterTheReadIsDropped() {
+        let zen = BrowserFixtures.zen(focus: .sidebar)
+        var r = reader()
+        zen.tree.beforeAnswer = { [unowned tree = zen.tree, bar = zen.urlbar] call in
+            if call == .string(.value, bar) { tree.set(bar) { $0.focused = nil } }
+        }
+        XCTAssertEqual(r.read(zen.tree, now: 0).observation.site, nil)
+    }
+
+    // QA: the description fallback takes only a combo box. A find bar or another search box is a text field
+    // holding the user's own words, and its value must never be read as an address.
+    func testDescriptionFallbackNeverTakesATextField() {
+        let zen = BrowserFixtures.zen(focus: .sidebar)
+        zen.tree.set(zen.urlbar) { $0.domIdentifier = nil; $0.description = nil }   // no id, no matching words
+        let find = zen.tree.add("AXTextField", under: zen.window, description: "Search in page", value: "example.org",
+                                focused: false)
+        var r = reader()
+        XCTAssertEqual(r.read(zen.tree, now: 0).observation, .unknown())
+        XCTAssertNil(r.windows[0].addressBar)
+        XCTAssertEqual(valueReads(zen.tree, find), 0)
+        XCTAssertFalse(zen.tree.calls.contains(.string(.description, find)))
     }
 
     func testFocusedFlagOnTheBarWinsOverAnOtherFocusClass() {
@@ -308,8 +353,9 @@ final class GeckoReadStrategyTests: XCTestCase {
         return (t, leaf)
     }
 
-    func testWalkGoesBeyondThePreludeUpToThirtyParents() {
-        for depth in [17, 25, 30] {
+    func testWalkFindsTheWebAreaUpToFortyParents() {
+        // QA: the shared prelude walks 40 parents (was 16 + a Gecko-only extension to 30).
+        for depth in [17, 25, 30, 40] {
             let (t, _) = deepPage(depth: depth)
             var r = reader()
             XCTAssertEqual(r.read(t, now: 0).observation,
@@ -317,19 +363,18 @@ final class GeckoReadStrategyTests: XCTestCase {
         }
     }
 
-    func testWalkStopsAfterThirtyParents() {
-        let (t, _) = deepPage(depth: 31)
+    func testWalkStopsAfterFortyParents() {
+        let (t, _) = deepPage(depth: 41)
         var r = reader()
         let o = r.read(t, now: 0).observation
-        XCTAssertEqual(o, .unknown(), "31 parents up: not found, and this tree has no bar")
+        XCTAssertEqual(o, .unknown(), "41 parents up: not found, and this tree has no bar")
         XCTAssertFalse(t.calls.contains { if case .url = $0 { true } else { false } })
         let parents = t.calls.filter { if case .parent = $0 { true } else { false } }.count
-        // Prelude: 17 parents; the strategy re-walks 17 and goes on 14 more (steps 17…30).
-        XCTAssertEqual(parents, 17 + 31)
+        XCTAssertEqual(parents, BrowserReadLimits.focusWalkSteps + 1, "one walk, no second walk by the strategy")
     }
 
     func testDeepTextFieldInThePageIsNotTheAddressBar() {
-        // The prelude calls a text field 20 levels into a page "editing"; the longer walk finds it's in the page.
+        // A text field 20 levels into a page is in the page, not "editing" (the old 16-step walk got this wrong).
         let (t, _) = deepPage(depth: 20, focusRole: AXRoleName.textArea)
         var r = reader()
         XCTAssertEqual(r.read(t, now: 0).observation,
@@ -359,18 +404,22 @@ final class GeckoReadStrategyTests: XCTestCase {
         let cold = zen.tree.calls.count
         let scanned = zen.tree.calls.filter { if case .string(.role, _) = $0 { true } else { false } }.count
         XCTAssertLessThanOrEqual(scanned, 25, "the scan stops at the bar (the Zen fixture has 19 nodes)")
-        XCTAssertEqual(cold, 43, "measured: 2 app + 9 prelude focus walk + 4 walk extension + 26 scan + 2 bar")
+        XCTAssertEqual(cold, 35, "measured: 2 app + 6 focus walk (stops at the window) + 24 scan + 3 bar")
 
         // Warm: the cached bar, no scan.
         zen.tree.resetCalls()
         _ = r.read(zen.tree, now: 1)
         XCTAssertEqual(zen.tree.childrenCalls, 0)
-        XCTAssertEqual(zen.tree.calls.count, 17, "measured: 2 app + 9 prelude focus walk + 4 walk extension + 2 bar")
+        XCTAssertEqual(zen.tree.calls.count, 9, "measured: 2 app + 4 focus walk + 3 bar (focus, value, focus)")
 
-        // Focus in page: 4 calls, whatever the bar.
+        // Focus in page, first time: the walk goes on to the window (outermost web area wins).
         zen.tree.focused = zen.webArea
         zen.tree.resetCalls()
         _ = r.read(zen.tree, now: 2)
-        XCTAssertEqual(zen.tree.calls.count, 4)
+        XCTAssertEqual(zen.tree.calls.count, 13, "2 app + 10 walk (5 roles, 5 parents) + AXURL")
+        // Then: 3 calls, the walk stops at the known web area (isSame asks nothing).
+        zen.tree.resetCalls()
+        _ = r.read(zen.tree, now: 3)
+        XCTAssertEqual(zen.tree.calls.count, 3)
     }
 }

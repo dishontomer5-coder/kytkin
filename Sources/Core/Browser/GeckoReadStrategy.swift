@@ -1,24 +1,25 @@
 // P3-13: The Gecko (Zen, Firefox) read strategy (001 §14.3.3 "Gecko", R3b §1). Pure Core over `AXNodeReading`.
 //
 // Order:
-//   1. The page's own address: the AXWebArea above the focused element → AXURL. The prelude walks 16 parents; Gecko
-//      pages nest deeper than that (a field in a web mail compose box), so when the prelude found none this walk
-//      goes on up to 30 parents. The web area is never cached: Zen doesn't list it under its parent, so the walk
-//      from focus is the only way to it (R3b §1).
+//   1. The page's own address: the AXWebArea the prelude found above the focused element → AXURL. (QA: the prelude
+//      now walks 40 parents and takes the outermost web area, so a field deep in a page, e.g. a web-mail compose
+//      box, is "in page", and this strategy no longer walks on by itself.) Zen doesn't list the web area under its
+//      parent, so the walk from focus is the only way to it (R3b §1); the prelude keeps it in the window's cache
+//      only as the point where the next walk may stop (`isSame`), and this strategy never reads it from there.
 //   2. Else the window's `urlbar-input` (an AXComboBox), found once by a bounded scan of the main window and
 //      cached per window. Its AXValue is read **only** when the bar isn't focused (D2): focused (or focus in any
-//      text field outside the page) → `.editingAddress`, kept site, the value never asked for.
+//      text field outside the page) → `.editingAddress`, kept site, the value never asked for. Focus is checked
+//      again right after the value read; if the bar took focus in between, the read is dropped.
 //   3. The value goes to `SiteReader` as `.geckoAddressBar`, the only source where scheme-less text counts.
 //      Search terms, empty text → `.unknown` with the kept site, never "no site" (D10). `about:` → `.notWebPage`.
 //   4. No web area and no bar (Zen compact mode hides the toolbar, focus in the sidebar) → `.unknown`, kept site.
 // Never sets anything on the browser (no AXEnhancedUserInterface): `AXNodeReading` can't.
 
 enum GeckoReadLimits {
-    /// Parents walked up from the focused element to its AXWebArea (the prelude's 16, extended here).
-    static let walkSteps = 30
     /// Firefox's DOM id for the address bar input; Zen keeps it (R3b §1, [V] for Zen).
     static let urlbarID = "urlbar-input"
-    /// Last-resort match when no element has the id: a combo box / text field described like an address bar.
+    /// Last-resort match when no element has the id: a **combo box** (Firefox's urlbar is one; its find bar and
+    /// other search boxes are text fields holding the user's own text, QA) described like an address bar.
     /// Lowercased; descriptions are localized, so this is only a fallback.
     static let barDescriptionWords = ["search", "address"]
 }
@@ -30,11 +31,7 @@ struct GeckoReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
         if let focused = prelude.focused, let bar = window.addressBar, tree.isSame(focused, bar) { return .editingKept }
 
         // 1. The web area above the focus.
-        var webArea = prelude.webAreaFromFocus
-        if webArea == nil, let focused = prelude.focused {
-            webArea = try Self.webAreaBeyondPrelude(from: focused, tree: tree)
-        }
-        if let webArea {
+        if let webArea = prelude.webAreaFromFocus {
             if let url = try tree.url(of: webArea) {
                 let read = siteReader.read(url, from: .axURL)
                 if read != .unreadable { return BrowserReadOutcome(read: read, via: .axURL) }
@@ -59,23 +56,6 @@ struct GeckoReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
         }
     }
 
-    /// Continues the prelude's walk: ancestors 0…16 of `focused` were already checked (and weren't a web area),
-    /// so only their parents are asked for, then roles from 17 up to `GeckoReadLimits.walkSteps`.
-    static func webAreaBeyondPrelude(from focused: Tree.Node, tree: Tree) throws(AXReadError) -> Tree.Node? {
-        var node: Tree.Node? = focused
-        var steps = 0
-        while let n = node, steps <= BrowserReadLimits.focusWalkSteps {
-            node = try tree.parent(of: n)
-            steps += 1
-        }
-        while let n = node, steps <= GeckoReadLimits.walkSteps {
-            if try tree.string(.role, of: n) == AXRoleName.webArea { return n }
-            node = try tree.parent(of: n)
-            steps += 1
-        }
-        return nil
-    }
-
     /// The window's cached bar; else one bounded scan for it (≤ 400 nodes, ≤ 1 per window per 2 s), cached.
     static func locateBar(_ tree: Tree, window: inout BrowserWindowState<Tree.Node>,
                           now: UInt64) throws(AXReadError) -> Tree.Node? {
@@ -87,8 +67,9 @@ struct GeckoReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
         return bar
     }
 
-    /// Breadth-first from the window. Per node: its role; for a combo box or text field also its DOM id, and (when
-    /// the id isn't the urlbar's) its description for the fallback. Never descends into a web area or a field.
+    /// Breadth-first from the window. Per node: its role; for a combo box or text field also its DOM id, and (for
+    /// a combo box whose id isn't the urlbar's) its description for the fallback. Never descends into a web area
+    /// or a field.
     static func scanForBar(_ tree: Tree, from window: Tree.Node) throws(AXReadError) -> Tree.Node? {
         var byID: Tree.Node?
         var byDescription: Tree.Node?
@@ -100,7 +81,8 @@ struct GeckoReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
                 byID = n
                 return .stop
             }
-            if byDescription == nil, let text = try tree.string(.description, of: n)?.lowercased(),
+            if byDescription == nil, role == AXRoleName.comboBox,
+               let text = try tree.string(.description, of: n)?.lowercased(),
                GeckoReadLimits.barDescriptionWords.contains(where: { text.contains($0) }) {
                 byDescription = n
             }
@@ -109,7 +91,8 @@ struct GeckoReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
         return byID ?? byDescription
     }
 
-    /// D2: the value is asked for only when the bar says it isn't focused (`false`, not nil).
+    /// D2: the value is asked for only when the bar says it isn't focused (`false`, not nil), and it counts only if
+    /// the bar still isn't focused right after (QA: closes the gap between the check and the read; one more call).
     static func readBar(_ bar: Tree.Node, tree: Tree, prelude: BrowserReadPrelude<Tree.Node>,
                         siteReader: SiteReader) throws(AXReadError) -> BrowserReadOutcome {
         if let focused = prelude.focused, tree.isSame(focused, bar) { return .editingKept }
@@ -118,8 +101,11 @@ struct GeckoReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
         case nil: return .unknown   // can't tell whether the user is typing in it: don't read it
         case .some(false): break
         }
-        guard let value = try tree.string(.value, of: bar) else { return .unknown }
-        let read = siteReader.read(value, from: .geckoAddressBar)
+        // The string is reduced at once; only the SiteRead (a host) waits for the second focus check.
+        guard let read = try tree.string(.value, of: bar).map({ siteReader.read($0, from: .geckoAddressBar) }) else {
+            return .unknown
+        }
+        guard try tree.isFocused(bar) == false else { return .editingKept }
         // D10: search terms or empty text say nothing about the page: unknown (kept site), not "no site".
         return read == .unreadable ? .unknown : BrowserReadOutcome(read: read, via: .addressBar)
     }

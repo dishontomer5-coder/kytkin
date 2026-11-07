@@ -103,17 +103,57 @@ final class BrowserAddressReaderTests: XCTestCase {
         XCTAssertEqual(o.pageState, .page)
     }
 
-    func testFocusWalkStopsAfterSixteenParents() throws {
+    func testFocusWalkStopsAfterFortyParents() throws {
         let t = FakeAXTree()
         let window = t.add("AXWindow", subrole: "AXStandardWindow")
         let webArea = t.add("AXWebArea", under: window, url: "https://example.com/")
         var parent = webArea
-        for _ in 0..<16 { parent = t.add("AXGroup", under: parent) }
-        let atLimit = parent                           // web area is 16 parents up
-        let beyond = t.add("AXGroup", under: parent)   // 17 parents up
+        for _ in 0..<40 { parent = t.add("AXGroup", under: parent) }
+        let atLimit = parent                           // web area is 40 parents up
+        let beyond = t.add("AXGroup", under: parent)   // 41 parents up
         typealias R = BrowserAddressReader<FakeAXTree>
+        XCTAssertEqual(BrowserReadLimits.focusWalkSteps, 40)
         XCTAssertEqual(try R.classifyFocus(atLimit, tree: t).0, .inPage)
         XCTAssertEqual(try R.classifyFocus(beyond, tree: t).0, .other)
+    }
+
+    // QA (P3-11/P3-13 review): 16 steps made a field deep in a real page count as "editing", which blocks learning.
+    func testDeepTextFieldInAChromiumPageIsInPageNotEditing() {
+        let t = FakeAXTree()
+        let window = t.add("AXWindow", subrole: "AXStandardWindow")
+        var parent = t.add("AXWebArea", under: window, url: "https://mail.example.com/compose")
+        for _ in 0..<24 { parent = t.add("AXGroup", under: parent) }
+        t.main = window
+        t.focused = t.add(AXRoleName.textArea, under: parent)
+        var r = BrowserAddressReader<FakeAXTree>(request: request(.chromium), siteReader: siteReader)
+        let o = r.read(t, now: 0).observation
+        XCTAssertEqual(o.pageState, .page)
+        XCTAssertEqual(o.site, site("mail.example.com", "example.com"))
+    }
+
+    // QA: an iframe's own web area (and AXURL) never wins over the page's: the outermost web area is the page.
+    func testInnerFrameWithItsOwnURLReadsTheOuterPage() {
+        for engine in [BrowserEngine.chromium, .gecko] {
+            for frameURL in ["https://ads.example.net/frame", "about:blank"] {
+                let t = FakeAXTree()
+                let window = t.add("AXWindow", subrole: "AXStandardWindow")
+                let page = t.add("AXWebArea", under: window, url: "https://www.example.com/article", area: 1_000_000)
+                let group = t.add("AXGroup", under: page)
+                let frame = t.add("AXWebArea", under: group, url: frameURL, area: 10_000)
+                t.main = window
+                t.focused = t.add(AXRoleName.textArea, under: t.add("AXGroup", under: frame))
+                var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
+                let o = r.read(t, now: 0).observation
+                XCTAssertEqual(o, BrowserObservation(site: site("www.example.com", "example.com"), pageState: .page,
+                                                     isPrivate: nil, via: .axURL), "\(engine) \(frameURL)")
+                XCTAssertFalse(t.calls.contains(.url(frame)), "\(engine) \(frameURL)")
+                XCTAssertEqual(r.windows[0].webArea, page)
+                // The next read stops at the known page web area: the frame is passed, never read.
+                t.resetCalls()
+                XCTAssertEqual(r.read(t, now: 1).observation.site, site("www.example.com", "example.com"))
+                XCTAssertFalse(t.calls.contains(.url(frame)))
+            }
+        }
     }
 
     func testFocusedTextFieldOutsidePageIsEditing() {

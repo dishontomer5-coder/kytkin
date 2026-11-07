@@ -2,9 +2,10 @@
 // unknown engines (001 §14.3.3; R3b §2–§4). The page address is the `AXURL` of the window's content `AXWebArea`.
 //
 // One read, after the reader's prelude (window W = AXMainWindow, never Chrome's popup focused window; focus class):
-//   1. Focus is in a web area that belongs to W → read its AXURL. Before caching a walked-up web area that isn't
-//      W's cached one, walk AXParent up from it until W: focus can sit in another window's web area (devtools,
-//      picture-in-picture), whose `devtools://` page must not become W's address.
+//   1. Focus is in a web area that belongs to W → read its AXURL. The prelude's walk takes the outermost web area
+//      (not an iframe's) and usually proves it's in W; if not, walk AXParent up from it until W before caching:
+//      focus can sit in another window's web area (devtools, picture-in-picture), whose `devtools://` page must
+//      not become W's address.
 //   2. Else W's cached web area → AXURL. A stale handle (`invalidElement`) is dropped and the scan below runs at once.
 //   3. Else scan W breadth-first (≤ 400 nodes, never into a web area, ≤ 1 full scan per window per 2 s unless the
 //      window is new or its handles were dropped): take the web area holding focus, else the largest (R3b: Chrome
@@ -38,7 +39,7 @@ struct WebAreaReadStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
 
         // 1. Focus in a web area of this window.
         if let focusArea = prelude.webAreaFromFocus {
-            var owned = window.webArea.map { tree.isSame($0, focusArea) } ?? false
+            var owned = prelude.webAreaInWindow || (window.webArea.map { tree.isSame($0, focusArea) } ?? false)
             if !owned { owned = try Self.belongs(focusArea, to: prelude.window, tree: tree) }
             if owned {
                 window.webArea = focusArea

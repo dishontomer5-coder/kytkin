@@ -6,9 +6,10 @@
 // One read:
 //   1. F = the app's focused element. W = its main window; else the focused window, only if its subrole is
 //      AXStandardWindow (Chrome's focused window can be a popup, R3b). No window → `.unknown`, sawWindow = false.
-//   2. Focus class: walk AXParent up from F (F itself, then ≤ 16 parents). An AXWebArea → in page (Zen's web area is
-//      reachable only this way). Else F's role is a text field, combo box, search field or text area → editing (an
-//      address bar, a find bar). Else other.
+//   2. Focus class: walk AXParent up from F (F itself, then ≤ 40 parents, stopping at W). An AXWebArea → in page,
+//      and the outermost one found is the page (an iframe's own web area isn't; Zen's web area is reachable only
+//      this way). Else F's role is a text field, combo box, search field or text area → editing (an address bar,
+//      a find bar). Else other.
 //   3. The window's cache entry (≤ 8 windows, most recent first, matched with `isSame`).
 //   4. The private flag, probed once per window (re-checked after `noteTrigger` of a window or title change). If it's
 //      true and the user ignores private windows → `(nil, .unknown, private)` without reading any address.
@@ -21,7 +22,10 @@
 /// stored statics.
 enum BrowserReadLimits {
     static let cachedWindows = 8
-    static let focusWalkSteps = 16
+    /// Parents walked up from the focused element (QA P3-11/P3-13: was 16, which made a text field deep in a real
+    /// page, like a web-mail compose box, count as "editing" and blocked learning there). The walk ends at the
+    /// window, so a shallow toolbar field costs only its own depth.
+    static let focusWalkSteps = 40
     static let scanNodes = 400
     /// At most one full scan per window per 2 s, unless the window changed (§14.3.3).
     static let fullScanIntervalNanos: UInt64 = 2_000_000_000
@@ -38,13 +42,25 @@ struct BrowserReadPrelude<Node> {
     let focused: Node?
     let window: Node
     let focusClass: FocusClass
-    /// The AXWebArea that contains F (set exactly when `focusClass == .inPage`).
+    /// The outermost AXWebArea that contains F (set exactly when `focusClass == .inPage`).
     let webAreaFromFocus: Node?
+    /// The focus walk proved `webAreaFromFocus` sits in `window` (it reached the window, or the window's known top
+    /// web area). False also when the walk ran out of steps: the strategy may still check.
+    let webAreaInWindow: Bool
+}
+
+/// The focus walk's result (prelude step 2).
+struct FocusWalk<Node> {
+    let focusClass: FocusClass
+    let webArea: Node?
+    let webAreaInWindow: Bool
 }
 
 /// One window's cache entry. The strategies fill `webArea`, `addressBar` and `lastFullScanAt`.
 struct BrowserWindowState<Node> {
     let window: Node
+    /// A top-level web area of this window (never an iframe's): set by the prelude when the focus walk proves it,
+    /// and by `WebAreaReadStrategy`. Gecko uses it only as the focus walk's stop point.
     var webArea: Node?
     var addressBar: Node?
     /// The last site a `.page` read gave in this window (nil after `.notWebPage`).
@@ -165,7 +181,10 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         sawWindow = true
         moveToFront(window, tree: tree)
 
-        let (focusClass, webArea) = try Self.classifyFocus(focused, tree: tree)
+        let walk = try Self.walkFocus(focused, window: window, knownTopWebArea: windows[0].webArea, tree: tree)
+        if walk.webAreaInWindow, let top = walk.webArea {
+            windows[0].webArea = top   // a top-level web area of this window: the next walk may stop at it
+        }
 
         let isPrivate: Bool?
         if let cached = windows[0].isPrivate {
@@ -181,8 +200,8 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             return BrowserObservation(site: nil, pageState: .unknown, isPrivate: true, via: .kept)   // D12: not read
         }
 
-        let prelude = BrowserReadPrelude(focused: focused, window: window, focusClass: focusClass,
-                                         webAreaFromFocus: webArea)
+        let prelude = BrowserReadPrelude(focused: focused, window: window, focusClass: walk.focusClass,
+                                         webAreaFromFocus: walk.webArea, webAreaInWindow: walk.webAreaInWindow)
         let outcome = try strategy.read(tree, prelude: prelude, window: &windows[0], siteReader: siteReader, now: now)
         return Self.observation(from: outcome, window: &windows[0], isPrivate: isPrivate)
     }
@@ -195,18 +214,48 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         return focused
     }
 
-    static func classifyFocus<T: AXNodeReading>(_ focused: T.Node?,
+    static func classifyFocus<T: AXNodeReading>(_ focused: T.Node?, window: T.Node? = nil,
                                                 tree: T) throws(AXReadError) -> (FocusClass, T.Node?) {
-        guard let focused else { return (.other, nil) }
+        let walk = try walkFocus(focused, window: window, knownTopWebArea: nil, tree: tree)
+        return (walk.focusClass, walk.webArea)
+    }
+
+    /// QA (P3-11/P3-13 review): the walk keeps going past the first web area and returns the **outermost** one: an
+    /// iframe has its own AXWebArea and AXURL (an ad, an embedded video, the `about:blank` frame many rich-text
+    /// editors type into), and the page's address is the top document's. It ends (with `isSame`, no AX call) at
+    /// `window`, since nothing above it is a page, or at `knownTopWebArea`, this window's web area from an earlier
+    /// read that is known to be top-level, so a steady in-page read costs what it did before. Else at the top or
+    /// after `focusWalkSteps` parents.
+    static func walkFocus<T: AXNodeReading>(_ focused: T.Node?, window: T.Node?, knownTopWebArea: T.Node?,
+                                            tree: T) throws(AXReadError) -> FocusWalk<T.Node> {
+        guard let focused else { return FocusWalk(focusClass: .other, webArea: nil, webAreaInWindow: false) }
         var node: T.Node? = focused
         var steps = 0
+        var outermost: T.Node?
+        var inWindow = false
+        var focusedRole: String?
         while let n = node, steps <= BrowserReadLimits.focusWalkSteps {
-            if try tree.string(.role, of: n) == AXRoleName.webArea { return (.inPage, n) }
+            if let window, tree.isSame(n, window) {
+                inWindow = true
+                break
+            }
+            if let top = knownTopWebArea, tree.isSame(n, top) {
+                outermost = n
+                inWindow = true
+                break
+            }
+            let role = try tree.string(.role, of: n)
+            if steps == 0 { focusedRole = role }
+            if role == AXRoleName.webArea { outermost = n }
             node = try tree.parent(of: n)
             steps += 1
         }
-        if let role = try tree.string(.role, of: focused), AXRoleName.editing.contains(role) { return (.editing, nil) }
-        return (.other, nil)
+        if let outermost { return FocusWalk(focusClass: .inPage, webArea: outermost, webAreaInWindow: inWindow) }
+        // F's role from the walk's first step (nil only if F is the window itself: not a field).
+        if let focusedRole, AXRoleName.editing.contains(focusedRole) {
+            return FocusWalk(focusClass: .editing, webArea: nil, webAreaInWindow: false)
+        }
+        return FocusWalk(focusClass: .other, webArea: nil, webAreaInWindow: false)
     }
 
     private static func observation(from outcome: BrowserReadOutcome, window: inout BrowserWindowState<Tree.Node>,

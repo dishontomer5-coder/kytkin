@@ -375,9 +375,10 @@ final class WebAreaReadStrategyTests: XCTestCase {
         arc.tree.resetCalls()
         _ = r.read(arc.tree, now: 1)
         let second = arc.tree.calls.count
-        // First: 2 app calls + focus walk (5 roles, 4 parents) + ownership walk (3 parents) + AXURL.
-        XCTAssertEqual(first, 15)
-        XCTAssertEqual(second, 12, "the ownership walk runs only before caching")
+        // First: 2 app calls + focus walk on to the window (7 roles, 7 parents; it proves ownership, so no second
+        // walk) + AXURL.
+        XCTAssertEqual(first, 17)
+        XCTAssertEqual(second, 11, "the walk stops at the cached web area: 4 roles, 4 parents")
     }
 
     func testChromeFirstReadWithFullScanStaysSmall() {
