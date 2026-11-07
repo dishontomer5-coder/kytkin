@@ -34,10 +34,26 @@ struct ReplacementCapabilities: Sendable {
     }
 
     /// The method for an app: user override, else seed, else `.auto`. An empty bundle ID is `.auto`.
+    /// P2-25 QA (001 §12 T1): a seeded terminal stays `.terminal` whatever the override says, except `.disabled`.
+    /// A terminal's selection is display only, so any other method would type the "converted" selection at the
+    /// shell prompt; Settings → Apps doesn't offer those methods there, and a hand-edited file can't either.
     func method(for bundleID: String) -> MethodHint {
         let k = Self.key(bundleID)
         guard !k.isEmpty else { return .auto }
-        if let o = overrides[k] { return o }
+        let seed = seedMethod(forKey: k)
+        if let o = overrides[k] {
+            return seed == .terminal && o != .disabled ? .terminal : o
+        }
+        return seed
+    }
+
+    /// The shipped default for an app, ignoring any override (Settings → Apps "Default (…)").
+    func seedMethod(for bundleID: String) -> MethodHint {
+        let k = Self.key(bundleID)
+        return k.isEmpty ? .auto : seedMethod(forKey: k)
+    }
+
+    private func seedMethod(forKey k: String) -> MethodHint {
         if let s = exactSeeds[k] { return s }
         // Longest prefix wins, so a more specific family seed can refine a broader one.
         return prefixSeeds.filter { k.hasPrefix($0.prefix) }.max { $0.prefix.count < $1.prefix.count }?.hint ?? .auto

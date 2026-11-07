@@ -468,8 +468,11 @@ final class ConvertControllerTests: XCTestCase {
         XCTAssertEqual(out, .noop(.replacement(.refused(.disabledForApp))))
         sut.setMethodHintOverrides([:])
         XCTAssertEqual(sut.capabilities.method(for: app), .auto)
+        sut.setMethodHintOverrides(["com.apple.Notes": .keysOnly])
+        XCTAssertEqual(sut.capabilities.method(for: "com.apple.Notes"), .keysOnly, "an override beats the seed")
+        // P2-25 QA (001 §12 T1): except in a terminal, where only "off" overrides the terminal class.
         sut.setMethodHintOverrides(["com.apple.Terminal": .auto])
-        XCTAssertEqual(sut.capabilities.method(for: "com.apple.Terminal"), .auto, "an override beats the seed")
+        XCTAssertEqual(sut.capabilities.method(for: "com.apple.Terminal"), .terminal)
     }
 
     // MARK: - Privacy

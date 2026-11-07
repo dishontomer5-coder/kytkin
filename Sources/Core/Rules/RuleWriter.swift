@@ -7,6 +7,9 @@
 //   pin    → the winning rule for the scope (any origin) becomes pinned with the new source (same id, label kept);
 //            otherwise a new pinned rule is added.
 //   forget → every rule of the scope is removed.
+//   unpin  → (P2-25, Settings → Rules) the winning rule for the scope becomes learned (same id, source and label), so
+//            learning may update it again; a scope with no rule or a learned one is left alone.
+//   forgetAllLearned → (P2-25) every learned rule is removed; each scope keeps only its pinned winner (pins stay).
 // Pure; the caller writes the result with `PreferencesStore.update`.
 
 import Foundation
@@ -40,6 +43,30 @@ enum RuleWriter {
     static func forget(_ scope: RuleScope, in rules: [Rule]) -> [Rule] {
         guard let key = RuleEngine.normalized(scope) else { return rules }
         return rules.filter { RuleEngine.normalized($0.scope) != key }
+    }
+
+    /// P2-25: Settings → Rules "Unpin".
+    static func unpin(_ scope: RuleScope, in rules: [Rule], now: Date) -> [Rule] {
+        guard let existing = RuleEngine(rules: rules).rule(for: scope), existing.origin == .pinned else { return rules }
+        var updated = existing
+        updated.origin = .learned
+        updated.updatedAt = now
+        return replacingScope(of: existing.scope, in: rules, with: updated)
+    }
+
+    /// P2-25: Settings → Rules "Forget all learned rules". Per normalized scope only the winner survives, and only if
+    /// it is pinned, so duplicates heal here too (S3). A rule that can never match (empty key) is dropped if learned
+    /// and kept if pinned (it is the user's own edit).
+    static func forgetAllLearned(in rules: [Rule]) -> [Rule] {
+        let engine = RuleEngine(rules: rules)
+        var kept = Set<RuleScope>()
+        return rules.filter { rule in
+            guard let key = RuleEngine.normalized(rule.scope) else { return rule.origin == .pinned }
+            guard let winner = engine.rule(for: key), winner.id == rule.id, winner.origin == .pinned else {
+                return false
+            }
+            return kept.insert(key).inserted
+        }
     }
 
     /// `rules` with every rule of `scope` removed and `rule` put where the first of them was (order kept).

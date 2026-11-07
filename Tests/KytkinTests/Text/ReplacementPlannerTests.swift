@@ -113,6 +113,22 @@ final class ReplacementPlannerTests: XCTestCase {
         XCTAssertEqual(plan(.convertSelection, focus: field(selection: "akuo"), caps: c), .refuse(.terminalSelection))
     }
 
+    /// P2-25 QA (001 §12 T1): Settings → Apps (or a hand-edited file) setting a terminal to another method must not
+    /// re-enable typing a selection at the shell prompt, nor AX or paste there.
+    func testATerminalOverriddenToAnotherMethodStillRefusesSelection() {
+        for hint in [MethodHint.auto, .keysOnly, .noUnicode, .preferPaste] {
+            let c = ReplacementCapabilities(overrides: ["com.apple.Terminal": hint])
+            XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(selection: "akuo"),
+                                caps: c, paste: true), .refuse(.terminalSelection), "\(hint)")
+            XCTAssertEqual(plan(.convertRun, bundle: "com.apple.Terminal", snap: snapshot(), typed: 4,
+                                focus: field(), caps: c, paste: true),
+                           .steps([.backspaceAndType(count: 4)]), "\(hint): no AX read or write")
+        }
+        let off = ReplacementCapabilities(overrides: ["com.apple.Terminal": .disabled])
+        XCTAssertEqual(plan(.convertSelection, bundle: "com.apple.Terminal", focus: field(selection: "akuo"),
+                            caps: off), .refuse(.disabledForApp))
+    }
+
     func testTerminalLastWordIsBackspaceAndTypeOnly() {
         XCTAssertEqual(plan(.convertRun, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
                             focus: field()), .steps([.backspaceAndType(count: 4)]))

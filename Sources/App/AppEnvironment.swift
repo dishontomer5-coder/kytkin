@@ -119,8 +119,24 @@ import AppKit
         // P2-23: SMAppServiceLoginItems only reads the status here; register/unregister run on the user's toggle.
         let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
                                            sources: { switcher.sources(includeDisabled: false) })
+        // P2-25: Rules, Convert and Apps. Names come from LaunchServices; running apps only when Settings opens.
+        let rules = RulesSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
+                                       sources: { switcher.sources(includeDisabled: true) })
+        let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
+                                     runningApps: Self.runningApps,
+                                     ownBundleID: Bundle.main.bundleIdentifier ?? "")
         return SettingsWindowController(general: general,
-                                        about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:]))
+                                        about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:]),
+                                        tabs: .init(rules: rules, convert: ConvertSettingsModel(store: store),
+                                                    apps: apps))
+    }
+
+    /// P2-25: regular (Dock) apps that are running, for Settings → Apps "Add Running App".
+    private static func runningApps() -> [AppCandidate] {
+        NSWorkspace.shared.runningApplications.compactMap { app in
+            guard app.activationPolicy == .regular, let id = app.bundleIdentifier else { return nil }
+            return AppCandidate(bundleID: id, name: app.localizedName ?? id)
+        }
     }
 
     func start() {
