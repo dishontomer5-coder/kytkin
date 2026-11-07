@@ -133,9 +133,9 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
     /// The strategy per engine. P3-11 and P3-13 replace their lines.
     static func defaultStrategy(for engine: BrowserEngine) -> any BrowserReadStrategy<Latched> {
         switch engine {
-        case .chromium: UnsupportedEngineStrategy<Latched>()   // P3-11
-        case .webkit: UnsupportedEngineStrategy<Latched>()     // P3-11
-        case .unknown: UnsupportedEngineStrategy<Latched>()    // P3-11
+        case .chromium: WebAreaReadStrategy<Latched>(engine: .chromium)   // P3-11
+        case .webkit: WebAreaReadStrategy<Latched>(engine: .webkit)       // P3-11: unverified, no address field
+        case .unknown: WebAreaReadStrategy<Latched>(engine: .unknown)     // P3-11: best effort
         case .gecko: UnsupportedEngineStrategy<Latched>()      // P3-13
         }
     }

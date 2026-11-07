@@ -326,10 +326,10 @@ final class BrowserAddressReaderTests: XCTestCase {
         XCTAssertTrue(state.mayFullScan(now: 1_000 + BrowserReadLimits.fullScanIntervalNanos))
     }
 
-    // MARK: Default strategies (until P3-11/P3-13)
+    // MARK: Default strategies (until P3-13; P3-11's are tested in WebAreaReadStrategyTests)
 
     func testEveryEngineHasAStrategyThatReadsNothingYet() {
-        for engine in [BrowserEngine.chromium, .gecko, .webkit, .unknown] {
+        for engine in [BrowserEngine.gecko] {
             let arc = BrowserFixtures.arc()
             var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
             let (o, sawWindow) = r.read(arc.tree, now: 0)
