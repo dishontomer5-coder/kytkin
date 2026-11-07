@@ -1,7 +1,7 @@
-// P3-6: The frame every per-engine read plugs into (001 §14.2, §14.3.3). P3-6 builds the common prelude, the
-// per-window cache, the private-window gate (D12), the timeout latch and the "kept site" rule; the engine strategies
-// (which element holds the address) come in P3-11 (Chromium, WebKit, unknown) and P3-13 (Gecko), and the
-// private-window probes in P3-16. Until then every engine uses `UnsupportedEngineStrategy` (always `.unknown`).
+// P3-6: The frame every per-engine read plugs into (001 §14.2, §14.3.3): the common prelude, the per-window cache,
+// the private-window gate (D12), the timeout latch and the "kept site" rule. The engine strategies (which element
+// holds the address) are `WebAreaReadStrategy` (P3-11: Chromium, WebKit, unknown) and `GeckoReadStrategy` (P3-13).
+// The private-window probes come in P3-16; until then the probe answers nil (not private).
 //
 // One read:
 //   1. F = the app's focused element. W = its main window; else the focused window, only if its subrole is
@@ -96,14 +96,6 @@ protocol BrowserReadStrategy<Tree> {
               siteReader: SiteReader, now: UInt64) throws(AXReadError) -> BrowserReadOutcome
 }
 
-/// Placeholder until P3-11/P3-13: reads nothing, always `.unknown` (editing while a text field has focus).
-struct UnsupportedEngineStrategy<Tree: AXNodeReading>: BrowserReadStrategy {
-    func read(_ tree: Tree, prelude: BrowserReadPrelude<Tree.Node>, window: inout BrowserWindowState<Tree.Node>,
-              siteReader: SiteReader, now: UInt64) throws(AXReadError) -> BrowserReadOutcome {
-        prelude.focusClass == .editing ? .editingKept : .unknown
-    }
-}
-
 /// P3-16 plugs the per-engine private-window probes in here; it returns only a `Bool?` (§14.4).
 typealias PrivateWindowProbe<Tree: AXNodeReading> = (Tree, Tree.Node) throws(AXReadError) -> Bool?
 
@@ -130,13 +122,13 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         self.privateProbe = privateProbe
     }
 
-    /// The strategy per engine. P3-11 and P3-13 replace their lines.
+    /// The strategy per engine: the web-area search (P3-11) or the Gecko walk + address bar (P3-13).
     static func defaultStrategy(for engine: BrowserEngine) -> any BrowserReadStrategy<Latched> {
         switch engine {
         case .chromium: WebAreaReadStrategy<Latched>(engine: .chromium)   // P3-11
         case .webkit: WebAreaReadStrategy<Latched>(engine: .webkit)       // P3-11: unverified, no address field
         case .unknown: WebAreaReadStrategy<Latched>(engine: .unknown)     // P3-11: best effort
-        case .gecko: UnsupportedEngineStrategy<Latched>()      // P3-13
+        case .gecko: GeckoReadStrategy<Latched>()                         // P3-13
         }
     }
 

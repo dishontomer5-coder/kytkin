@@ -326,20 +326,31 @@ final class BrowserAddressReaderTests: XCTestCase {
         XCTAssertTrue(state.mayFullScan(now: 1_000 + BrowserReadLimits.fullScanIntervalNanos))
     }
 
-    // MARK: Default strategies (until P3-13; P3-11's are tested in WebAreaReadStrategyTests)
+    // MARK: Default strategies (P3-11: WebAreaReadStrategyTests; P3-13: GeckoReadStrategyTests)
 
-    func testEveryEngineHasAStrategyThatReadsNothingYet() {
-        for engine in [BrowserEngine.gecko] {
+    func testEveryEngineHasARealStrategy() {
+        typealias R = BrowserAddressReader<FakeAXTree>
+        typealias L = LatchedAXTree<FakeAXTree>
+        for engine in [BrowserEngine.chromium, .webkit, .unknown] {
+            XCTAssertEqual((R.defaultStrategy(for: engine) as? WebAreaReadStrategy<L>)?.engine, engine, "\(engine)")
+        }
+        XCTAssertTrue(R.defaultStrategy(for: .gecko) is GeckoReadStrategy<L>)
+        // Every engine reads Arc's page from the web area holding focus.
+        for engine in [BrowserEngine.chromium, .webkit, .unknown, .gecko] {
             let arc = BrowserFixtures.arc()
             var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
-            let (o, sawWindow) = r.read(arc.tree, now: 0)
-            XCTAssertTrue(sawWindow)
-            XCTAssertEqual(o, .unknown(), "\(engine)")
-            XCTAssertFalse(arc.tree.calls.contains { if case .url = $0 { true } else { false } })
+            XCTAssertEqual(r.read(arc.tree, now: 0).observation.site, site("example.org", "example.org"), "\(engine)")
+        }
+    }
+
+    func testNoEngineReadsAFocusedAddressBarOrTheChromiumOmnibox() {
+        for engine in [BrowserEngine.chromium, .webkit, .unknown, .gecko] {
             let zen = BrowserFixtures.zen(focus: .urlbar)
-            XCTAssertEqual(r.read(zen.tree, now: 1).observation.pageState, .editingAddress)
+            var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
+            XCTAssertEqual(r.read(zen.tree, now: 1).observation.pageState, .editingAddress, "\(engine)")
             XCTAssertFalse(zen.tree.calls.contains(.string(.value, zen.urlbar)), "a focused bar is never read (D2)")
-            // QA: the Chromium omnibox is never read, focused (D2) or not (D16).
+            // QA: the Chromium omnibox is never read, focused (D2) or not (D16). Gecko's description fallback
+            // takes only a combo box, and Chrome's omnibox is a text field.
             for focused in [true, false] {
                 let chrome = BrowserFixtures.chrome(omniboxFocused: focused)
                 var c = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
