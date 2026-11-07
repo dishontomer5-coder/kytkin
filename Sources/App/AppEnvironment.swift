@@ -10,11 +10,12 @@ import AppKit
 @MainActor final class AppEnvironment {
     let store: PreferencesStore
     let switcher: InputSourceSwitcher
-    let layoutMaps: UCKeyTranslateLayoutMapProvider   // P2-21/P2-24 read converters from it
+    let layoutMaps: UCKeyTranslateLayoutMapProvider   // P2-21 (ConvertDispatcher), P2-24 read it
     let contextMonitor: ContextMonitor
     let permissions: PermissionsManager
     let conflicts: ConflictDetector
     let keyWatcher: KeyWatcher
+    let convert: ConvertDispatcher
     let controller: AppController
     let statusItem: StatusItemController
 
@@ -39,9 +40,20 @@ import AppKit
             onSignal: { signal in MainActor.assumeIsolated { box.controller?.keySignal(signal) } },
             onStatus: { status in MainActor.assumeIsolated { box.controller?.keyWatcherStatusDidChange(status) } })
 
+        // P2-21: double-Shift convert on @TextActor (001 §3 (c)). The text replacer is created on first use, on
+        // @TextActor (it holds AX elements). The after-convert switch hops back to main, to AppController.
+        let convertController = ConvertController(
+            keyWatcher: keyWatcher, clock: clock,
+            beep: { Task { @MainActor in NSSound.beep() } },
+            makeReplacer: { TextReplacer() },
+            switchLanguage: { target, keepsBuffer in
+                await MainActor.run { box.controller?.switchAfterConvert(to: target, keepsBuffer: keepsBuffer) ?? false }
+            })
+        convert = ConvertDispatcher(controller: convertController, maps: layoutMaps)
+
         controller = AppController(switcher: switcher, context: contextMonitor, store: store,
                                    permissions: permissions, conflicts: conflicts, keyWatcher: keyWatcher,
-                                   ticker: MainRunLoopTicker(), clock: clock)
+                                   ticker: MainRunLoopTicker(), convert: convert, clock: clock)
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
         wire()
