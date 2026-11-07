@@ -38,6 +38,8 @@ import Observation
     private(set) var keyWatcherStatus = KeyWatcherStatus()
     private(set) var doubleShiftCount = 0
     private(set) var isStarted = false
+    /// QA (P2-52 item 2): inside `start()`, so the launch's own context report doesn't fire the activation retry.
+    private var launching = false
 
     /// Something the menu-bar label or menu shows changed. Set by the composition root only.
     var onDisplayChange: (@MainActor () -> Void)?
@@ -112,6 +114,8 @@ import Observation
     func start() {
         guard !isStarted else { return }
         isStarted = true
+        launching = true
+        defer { launching = false }
         conflicts.start()
         permissions.start()
         applyPreferences(force: true)
@@ -464,8 +468,13 @@ import Observation
     }
 
     /// P2-52 item 2: the one automatic retry after a below-desired first start (TapModePolicy decides; never again).
+    /// QA: not for the frontmost app `context.start()` reports from inside `start()`: that comes right after the first
+    /// start timed out, so the retry would block main a second time at once, on a system that is still busy. Not after
+    /// a watchdog downgrade (B4, never fought) or while only a relaunch can help ("Quit & Reopen"); it stays armed.
     private func retryTapAfterLaunchTimeout() {
-        guard isStarted, let action = policy.activationRetry(desired: desiredTapMode()) else { return }
+        guard isStarted, !launching, !keyWatcherStatus.degradedByWatchdog,
+              !policy.showsQuitAndReopen(needsRelaunch: permissions.status.inputMonitoringNeedsRelaunch),
+              let action = policy.activationRetry(desired: desiredTapMode()) else { return }
         apply(action)                         // blocks main ≤ 1–2 s, once per run
         recompute(grantsChanged: false)
     }

@@ -683,6 +683,53 @@ final class AppControllerTests: XCTestCase {
         XCTAssertTrue(sut.menuState.keyboardBelowDesired)
     }
 
+    /// QA: the real monitor reports the frontmost app from inside `start()`, right after the first start timed out.
+    /// That report must not fire the retry (two blocking starts back to back at launch); the next real one does.
+    func testTheLaunchContextReportDoesNotFireTheRetry() {
+        make(start: false)
+        monitor.emitOnStart = Context(bundleID: notes, pid: 10, generation: 1)
+        watcher.startAnswer = .off
+        sut.start()
+        XCTAssertEqual(watcher.starts, [.active], "one start at launch, not two back to back")
+        XCTAssertTrue(sut.menuState.keyboardBelowDesired)
+        monitor.activate("com.apple.Safari", pid: 11)
+        XCTAssertEqual(watcher.starts, [.active, .active], "the retry waits for the next real activation")
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active, .active])
+    }
+
+    /// QA: a watchdog downgrade (B4) before the next activation is never fought by the automatic retry.
+    func testTheRetryNeverFightsAWatchdogDowngrade() {
+        make(start: false)
+        watcher.startAnswer = .listenOnly                    // the first start came back below `.active`
+        sut.start()
+        XCTAssertTrue(sut.policy.launchRetryArmed)
+        var status = KeyWatcherStatus()
+        status.health.mode = .off
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active], "no automatic start after a watchdog downgrade")
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardSlowedDown(canRestart: true)])
+    }
+
+    /// QA: while only a relaunch can help ("Quit & Reopen"), the retry would block main for nothing.
+    func testNoRetryWhileOnlyARelaunchCanHelp() {
+        make(accessibility: .denied, inputMonitoring: .granted, start: false)
+        watcher.startAnswer = .off
+        permissions.statusOnStart = PermissionStatus(grants: PermissionGrants(accessibility: .denied,
+                                                                             inputMonitoring: .granted),
+                                                     inputMonitoringNeedsRelaunch: true)
+        sut.start()
+        XCTAssertTrue(sut.menuState.showsQuitAndReopen)
+        XCTAssertTrue(sut.policy.launchRetryArmed)
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.listenOnly], "no retry: Quit & Reopen is the fix")
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState).filter {
+            if case .keyboardFeaturesOff = $0 { return true } else { return false }
+        }, [], "Quit & Reopen takes precedence")
+    }
+
     func testASuccessfulRetryClearsTheWarning() {
         makeWithLaunchTimeout()
         XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
