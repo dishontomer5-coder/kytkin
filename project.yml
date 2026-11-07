@@ -23,6 +23,10 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      # P3-2: the bundled Public Suffix List (MPL-2.0, unmodified) and its license text, copied into
+      # Contents/Resources. Refreshed only by scripts/update-psl; the app never downloads it.
+      - path: Resources/PublicSuffixList
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin
@@ -74,6 +78,10 @@ targets:
         type: folder
         buildPhase: resources
       - path: Sources/Core
+      # P3-2: the test bundle carries its own copy of the list, so `PublicSuffixList.bundled` (which looks in
+      # the bundle holding the Core code) finds it in tests exactly as it does in the app.
+      - path: Resources/PublicSuffixList/public_suffix_list.dat
+        buildPhase: resources
       # P2-15: the two tier-0 context adapters are tested with fake notifications on a private
       # NotificationCenter (never the real workspace one), so they're compiled in too. Listed one by
       # one on purpose: Phase 3 AX adapters landing in System/Context must not slip into the tests.

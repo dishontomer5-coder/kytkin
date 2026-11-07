@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# P3-2: Refreshes the bundled Public Suffix List (MPL-2.0) and its official test vectors.
+# This is the ONLY place Kytkin touches the network for the PSL, and only when a developer runs it.
+# The app never downloads the list at runtime (design.md: bundled data only).
+#
+#   ./scripts/update-psl          download the current list, then commit the changed files
+#
+# What it writes (all unmodified copies, so the MPL-2.0 file-level terms are simple to follow):
+#   Resources/PublicSuffixList/public_suffix_list.dat   the list, from publicsuffix.org
+#   Resources/PublicSuffixList/LICENSE-MPL-2.0.txt      the MPL-2.0 text, from the PSL repository at the same commit
+#   Tests/KytkinTests/Fixtures/psl/test_psl.txt         official test vectors, same commit (public domain)
+# Then it prints the list's VERSION and COMMIT so THIRD_PARTY_NOTICES.md can be updated.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+LIST_URL="https://publicsuffix.org/list/public_suffix_list.dat"
+REPO_RAW="https://raw.githubusercontent.com/publicsuffix/list"
+DEST_DIR="Resources/PublicSuffixList"
+TEST_DIR="Tests/KytkinTests/Fixtures/psl"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+curl -fsSL --proto '=https' "$LIST_URL" -o "$tmp/public_suffix_list.dat"
+
+# Sanity checks before replacing anything: both section markers and a sane size.
+grep -q '===BEGIN ICANN DOMAINS===' "$tmp/public_suffix_list.dat"
+grep -q '===BEGIN PRIVATE DOMAINS===' "$tmp/public_suffix_list.dat"
+size=$(wc -c <"$tmp/public_suffix_list.dat" | tr -d ' ')
+if (( size < 100000 )); then echo "error: list is suspiciously small ($size bytes)" >&2; exit 1; fi
+
+version="$(sed -nE 's#^// VERSION: (.*)$#\1#p' "$tmp/public_suffix_list.dat" | head -1)"
+commit="$(sed -nE 's#^// COMMIT: ([0-9a-f]+).*$#\1#p' "$tmp/public_suffix_list.dat" | head -1)"
+ref="${commit:-main}"
+
+curl -fsSL --proto '=https' "$REPO_RAW/$ref/tests/test_psl.txt" -o "$tmp/test_psl.txt"
+curl -fsSL --proto '=https' "$REPO_RAW/$ref/LICENSE" -o "$tmp/LICENSE"
+grep -q 'Mozilla Public License' "$tmp/LICENSE"
+grep -q 'checkPublicSuffix' "$tmp/test_psl.txt"
+
+mkdir -p "$DEST_DIR" "$TEST_DIR"
+mv "$tmp/public_suffix_list.dat" "$DEST_DIR/public_suffix_list.dat"
+mv "$tmp/LICENSE" "$DEST_DIR/LICENSE-MPL-2.0.txt"
+mv "$tmp/test_psl.txt" "$TEST_DIR/test_psl.txt"
+
+echo "✅ Public Suffix List updated ($size bytes)"
+echo "   VERSION: ${version:-unknown}"
+echo "   COMMIT:  ${commit:-unknown (test vectors and license taken from main)}"
+echo "   Now update the date and commit in THIRD_PARTY_NOTICES.md, run ./scripts/build.sh test, and commit."

@@ -19,3 +19,6 @@ repository when working on Kytkin.
 ## License
 
 [MIT](LICENSE)
+
+Kytkin bundles the [Public Suffix List](https://publicsuffix.org/) (MPL-2.0), unmodified. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
