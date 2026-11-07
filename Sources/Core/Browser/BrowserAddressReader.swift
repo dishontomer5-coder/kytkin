@@ -116,6 +116,9 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
     private let privateProbe: PrivateWindowProbe<Latched>
     /// Most recently read first.
     private(set) var windows: [BrowserWindowState<Tree.Node>] = []
+    /// P3-10: with a clock, a read also stops once it has run for `AXReadLatch.readBudgetNanos` (B13: a slow browser
+    /// that answers each call just under the 0.25 s timeout). The AX thread sets it; nil = first-timeout rule only.
+    var deadlineClock: (any Clock)?
 
     init(request: BrowserWatchRequest, siteReader: SiteReader) {
         self.init(request: request, siteReader: siteReader, strategy: Self.defaultStrategy(for: request.engine),
@@ -151,7 +154,8 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
     }
 
     mutating func read(_ tree: Tree, now: UInt64) -> (observation: BrowserObservation, sawWindow: Bool) {
-        let latched = LatchedAXTree(tree, latch: AXReadLatch())
+        let latch = deadlineClock.map { AXReadLatch(clock: $0, startedAt: now) } ?? AXReadLatch()
+        let latched = LatchedAXTree(tree, latch: latch)
         var sawWindow = false
         do {
             let o = try readThrowing(latched, now: now, sawWindow: &sawWindow)

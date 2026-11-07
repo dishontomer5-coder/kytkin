@@ -101,6 +101,16 @@ targets:
       # call it read-only. Listed one by one, like P2-15.
       - path: Sources/System/Platform/ConflictDetector.swift
       - path: Sources/System/Platform/PerDocumentInputReader.swift
+      # P3-10: the AX thread, the watcher's hop logic, the engine (attach/detach/scheduler plumbing), the run-loop
+      # timer and the AX error mapping are tested with a fake tree, a fake observer and a fake timer. Listed one by
+      # one on purpose: AXElementTree, FrontmostObserver and BrowserWatcher+Live talk to real apps and must never be
+      # compiled into the tests.
+      - path: Sources/System/Browser/AXThread.swift
+      - path: Sources/System/Browser/AXReadError+AXError.swift
+      - path: Sources/System/Browser/BrowserWatchSeams.swift
+      - path: Sources/System/Browser/BrowserWatchEngine.swift
+      - path: Sources/System/Browser/BrowserWatcher.swift
+      - path: Sources/System/Browser/RunLoopDeadlineTimer.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
