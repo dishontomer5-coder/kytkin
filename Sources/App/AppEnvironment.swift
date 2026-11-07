@@ -200,7 +200,8 @@ import AppKit
                 BrowserInventorySnapshot(installedCatalog: BrowserInventory.installedCatalogBrowsers(),
                                          webLinkHandlers: controller.refreshWebLinkHandlers())
             },
-            support: { controller.browserSupport(for: $0) })
+            support: { controller.browserSupport(for: $0) },
+            automation: automation)   // P3-7: the toggle, its state, Ask / Open System Settings; silent refresh
         let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                      runningApps: Self.runningApps,
                                      ownBundleID: Bundle.main.bundleIdentifier ?? "")

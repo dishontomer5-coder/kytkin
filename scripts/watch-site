@@ -13,7 +13,10 @@ cd "$(dirname "$0")/.."
 BIN="build/tools/watch-site"
 mkdir -p "$(dirname "$BIN")"
 
-SOURCES=(Tools/watch-site/main.swift Sources/System/Browser/*.swift)
+# P3-7 QA: System/Browser's Apple Event sender calls the silent permission check, so its file is compiled in too.
+# The tool never sends one: every request it makes has `appleScript: nil`, so the send gate stays closed.
+SOURCES=(Tools/watch-site/main.swift Sources/System/Browser/*.swift
+         Sources/System/Permissions/SystemAutomationPermission.swift)
 while IFS= read -r -d '' f; do SOURCES+=("$f"); done < <(find Sources/Core -name '*.swift' -type f -print0)
 
 xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -module-name WatchSite -o "$BIN" "${SOURCES[@]}"

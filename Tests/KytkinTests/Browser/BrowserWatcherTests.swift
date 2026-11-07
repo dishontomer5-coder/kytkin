@@ -16,11 +16,13 @@ final class ManualAXExecutor: AXThreadExecuting, @unchecked Sendable { // @unche
     }
 
     func drain() {
-        while true {
+        // QA (P3-7): bounded, so blocks that keep re-queueing fail loudly instead of hanging the test run.
+        for _ in 0..<10_000 {
             let next: (@Sendable () -> Void)? = lock.withLock { blocks.isEmpty ? nil : blocks.removeFirst() }
             guard let next else { return }
             next()
         }
+        XCTFail("drain: blocks kept re-queueing")
     }
 }
 

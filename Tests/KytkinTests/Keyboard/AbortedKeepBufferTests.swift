@@ -40,7 +40,9 @@ final class AbortedKeepBufferTests: XCTestCase {
             return p.handle(F.key(d, command: true)).1
         case .fullFIFO:
             var last: KeySignal?
-            while p.heldCount < 32 { last = p.handle(F.key(d)).1 }
+            var n = 0   // QA (P3-7): bounded, so a regression fails instead of hanging the test run
+            while p.heldCount < 32, n < 1_000 { last = p.handle(F.key(d)).1; n += 1 }
+            XCTAssertEqual(p.heldCount, 32, "the FIFO fills")
             return last
         }
     }

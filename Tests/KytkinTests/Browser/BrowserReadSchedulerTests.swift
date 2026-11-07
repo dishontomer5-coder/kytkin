@@ -113,7 +113,10 @@ final class BrowserReadSchedulerTests: XCTestCase {
         let t0 = now
         var times: [UInt64] = []
         runNext(result: .unknown(), sawWindow: false)
-        while let t = runNext(within: 1_900 * ms, result: .unknown(), sawWindow: false) { times.append(t - t0) }
+        // QA (P3-7): bounded, so a scheduler regression fails instead of hanging the test run.
+        while times.count < 20, let t = runNext(within: 1_900 * ms, result: .unknown(), sawWindow: false) {
+            times.append(t - t0)
+        }
         XCTAssertEqual(times, [250 * ms, 500 * ms, 1_000 * ms, 2_000 * ms])
         // Then only the poll.
         XCTAssertEqual(s.nextDeadlineNanos, now + 2_000 * ms)
