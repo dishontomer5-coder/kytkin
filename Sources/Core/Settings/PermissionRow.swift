@@ -8,8 +8,10 @@
 //   - "Open System Settings" for both notDetermined and denied (P2-46): a notDetermined permission may still have
 //     been denied in an earlier run, and then only System Settings can turn it on.
 //   - "Quit & Reopen" on the Input Monitoring row only while `TapModePolicy.showsQuitAndReopen` says so (P2-46).
-//   - Input Monitoring is "not needed" while Accessibility is allowed (the active tap covers it): no buttons, so
-//     the user isn't asked for a second permission for nothing.
+//   - Input Monitoring is "not needed" while Accessibility is allowed AND the keyboard watcher reached the mode
+//     Kytkin wants (the active tap covers it): no buttons, so the user isn't asked for a second permission for
+//     nothing. QA (P2-26): whether Accessibility alone allows the tap on every Mac is still open (P1-17, 001 §6.1
+//     step 4), so if the tap stays below the wanted mode the row offers Input Monitoring as the fallback.
 
 import Foundation
 
@@ -44,16 +46,17 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
 
     /// - Parameters:
     ///   - state: the permission as last read.
-    ///   - accessibilityGranted: used by the Input Monitoring row only.
+    ///   - accessibilityCoversIt: Accessibility is allowed and the tap reached the wanted mode (Input Monitoring
+    ///     row only; see the button rules above).
     ///   - showsQuitAndReopen: `TapModePolicy.showsQuitAndReopen` (Input Monitoring row only).
     ///   - appName: the name in System Settings' list ("Kytkin Dev" for Debug builds).
-    static func make(_ pane: PermissionPane, state: PermissionState, accessibilityGranted: Bool,
+    static func make(_ pane: PermissionPane, state: PermissionState, accessibilityCoversIt: Bool,
                      showsQuitAndReopen: Bool, appName: String) -> PermissionRow {
         switch pane {
         case .accessibility:
             return accessibility(state: state, appName: appName)
         case .inputMonitoring:
-            return inputMonitoring(state: state, accessibilityGranted: accessibilityGranted,
+            return inputMonitoring(state: state, accessibilityCoversIt: accessibilityCoversIt,
                                    showsQuitAndReopen: showsQuitAndReopen, appName: appName)
         }
     }
@@ -64,19 +67,21 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
             pane: .accessibility, title: "Accessibility", status: status, statusText: text(for: status),
             enables: "Lets Kytkin fix text you typed in the wrong language when you press Shift twice.",
             withoutIt: status == .granted ? nil
-                : "Without it, pressing Shift twice only switches the language and can't fix text. "
-                    + "Switching the language for each app still works.",
+                // QA (P2-26): without Accessibility, Shift twice only switches the language if Input Monitoring
+                // is allowed (001 §6.2); with neither it does nothing.
+                : "Without it, pressing Shift twice can't fix text (with Input Monitoring it still switches the "
+                    + "language). Switching the language for each app still works.",
             hint: requestHint(state: state, pane: "Accessibility", appName: appName),
             showsGrant: showsButtons(state), grantTitle: "Allow Accessibility…",
             showsOpenSettings: showsButtons(state), showsQuitAndReopen: false)
     }
 
-    private static func inputMonitoring(state: PermissionState, accessibilityGranted: Bool,
+    private static func inputMonitoring(state: PermissionState, accessibilityCoversIt: Bool,
                                         showsQuitAndReopen: Bool, appName: String) -> PermissionRow {
         let status: Status
         if showsQuitAndReopen, state == .granted {
             status = .needsRelaunch
-        } else if state != .granted, state != .unknown, accessibilityGranted {
+        } else if state != .granted, state != .unknown, accessibilityCoversIt {
             status = .notNeeded
         } else {
             status = baseStatus(state)

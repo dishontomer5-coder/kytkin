@@ -75,13 +75,15 @@ final class PermissionsSettingsModelTests: XCTestCase {
     func testEachRowSaysWhatItEnablesAndWhatIsLost() {
         set { $0.accessibility = .notDetermined; $0.inputMonitoring = .notDetermined }
         XCTAssertTrue(row(.accessibility).enables.contains("fix text"))
-        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("only switches the language"))
+        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("can't fix text"))
+        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("with Input Monitoring"),
+                      "QA: with neither permission Shift twice does nothing, so the toggle is conditional")
         XCTAssertTrue(row(.inputMonitoring).enables.contains("never saved"))
         XCTAssertTrue(try XCTUnwrap(row(.inputMonitoring).withoutIt).contains("does nothing"))
     }
 
     func testAccessibilityGrantedMakesInputMonitoringNotNeeded() {
-        set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined }
+        set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined; $0.tapMode = .active }
         let ax = row(.accessibility)
         XCTAssertEqual(ax.status, .granted)
         XCTAssertEqual(ax.statusText, "Allowed")
@@ -91,6 +93,37 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertEqual(im.status, .notNeeded)
         XCTAssertFalse(im.showsGrant || im.showsOpenSettings || im.showsQuitAndReopen,
                        "no second permission asked for nothing")
+    }
+
+    /// QA (P2-26): "Accessibility covers it" is only true once the active tap runs. Whether Accessibility alone
+    /// allows it on every Mac is still open (P1-17), so a tap stuck below the wanted mode keeps the fallback offered.
+    func testInputMonitoringIsOfferedWhileTheTapIsStuckBelowWhatAccessibilityShouldGive() {
+        set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined; $0.tapMode = .off }
+        var im = row(.inputMonitoring)
+        XCTAssertEqual(im.status, .notGranted)
+        XCTAssertTrue(im.showsGrant && im.showsOpenSettings, "001 §6.1 step 4: offer Input Monitoring")
+        XCTAssertNotEqual(im.statusText, "Not needed (Accessibility covers it)")
+
+        set { $0.tapMode = .listenOnly }
+        XCTAssertEqual(row(.inputMonitoring).status, .notGranted)
+
+        set { $0.tapMode = .active }
+        im = row(.inputMonitoring)
+        XCTAssertEqual(im.status, .notNeeded)
+        XCTAssertFalse(im.showsGrant || im.showsOpenSettings)
+    }
+
+    func testInputMonitoringNotNeededWhenNoTypingFeatureWantsATap() {
+        set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined; $0.tapMode = .off; $0.enabled = false }
+        store.update { $0.general.enabled = false }
+        XCTAssertEqual(sut.desiredTapMode, .off)
+        XCTAssertEqual(row(.inputMonitoring).status, .notNeeded)
+    }
+
+    func testAWatchdogSlowDownDoesNotBringTheInputMonitoringRowBack() {
+        set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined; $0.tapMode = .listenOnly
+              $0.degradedByWatchdog = true }
+        XCTAssertEqual(row(.inputMonitoring).status, .notNeeded)
     }
 
     func testInputMonitoringNeedsARestartOnlyWhileThePolicySaysSo() {

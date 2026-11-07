@@ -5,8 +5,8 @@
 // - Shown at launch only while `general.onboardingSeen` is false, and never with read-only preferences (the flag
 //   couldn't be saved, so it would come back on every launch). `begin` marks it seen as soon as it shows, so quitting
 //   half-way doesn't bring it back: it never steals focus twice. Settings → General → "Show Welcome Again" reopens it.
-// - Language pair (P2-62): on the first launch, if the saved pair has a problem (a layout not turned on, missing…),
-//   it is replaced by `DefaultLanguagePair.suggest` from the layouts actually turned on. The user can change it on
+// - Language pair (P2-62): on the first launch, if the saved pair is still the shipped default and has a problem (a
+//   layout not turned on, missing…), it is replaced by `DefaultLanguagePair.suggest` from the layouts actually turned on. The user can change it on
 //   that step (the same pickers and checks as Settings → Languages). Reopened later, it never changes the pair itself.
 // - Accessibility: `grantAccessibility()` is the ONLY place the request API is called, from the button's click.
 //   Then the step waits (the poll runs every 1 s while the window is visible) and turns to "done" once granted.
@@ -136,8 +136,11 @@ import Observation
     }
 
     /// P2-62: replace a saved pair that has a problem with one built from the turned-on layouts.
+    /// QA (P2-26): only while the saved pair is still the shipped default. Existing installs also see the welcome
+    /// once, and a pair the user chose (e.g. an "Other installed (convert only)" layout, which P2-24 allows and
+    /// warns about) must never be replaced behind their back.
     private func pickDefaultPairIfNeeded() {
-        guard languages.isEditable, !languages.pairWarnings.isEmpty,
+        guard languages.isEditable, languages.pair == .default, !languages.pairWarnings.isEmpty,
               let suggestion = DefaultLanguagePair.suggest(enabled: languages.systemLayouts),
               suggestion != languages.pair else { return }
         languages.choose(suggestion)

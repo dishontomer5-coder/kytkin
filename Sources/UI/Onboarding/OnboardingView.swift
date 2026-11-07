@@ -83,8 +83,9 @@ struct OnboardingView: View {
             Text("To fix text when you press Shift twice, Kytkin needs the Accessibility permission. macOS asks "
                  + "you once.")
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Without it, Kytkin still switches the language for each app, and Shift twice only switches the "
-                 + "language.")
+            // QA (P2-26): with no Input Monitoring either, Shift twice does nothing (001 §6.2), so don't promise it.
+            Text("Without it, Kytkin still switches the language for each app, but pressing Shift twice can't fix "
+                 + "text.")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             accessibilityStatus

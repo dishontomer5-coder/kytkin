@@ -256,6 +256,22 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(store.prefs.languagePair, .default)
     }
 
+    /// QA (P2-26): existing installs see the welcome once too (firstLaunch = true); a pair the user chose, even one
+    /// with a warning (a convert-only layout P2-24 allows), is never replaced.
+    func testFirstLaunchNeverReplacesAPairTheUserChose() {
+        let layouts = FakeSystemLayouts.standard()
+        layouts.infos = [FakeSystemLayouts.info(IDs.abc, "ABC"),
+                         FakeSystemLayouts.info(IDs.hebrew, "Hebrew"),
+                         FakeSystemLayouts.info(IDs.hebrewQWERTY, "Hebrew-QWERTY", enabled: false)]
+        let chosen = LanguagePair(a: IDs.abc, b: IDs.hebrewQWERTY)
+        var prefs = Preferences()
+        prefs.languagePair = chosen
+        make(prefs, layouts: layouts)
+        XCTAssertFalse(languages.pairWarnings.isEmpty, "the chosen pair has a warning (convert only)")
+        sut.begin(firstLaunch: true)
+        XCTAssertEqual(store.prefs.languagePair, chosen)
+    }
+
     func testReopeningNeverChangesThePairByItself() {
         let layouts = FakeSystemLayouts.standard()
         layouts.infos = [FakeSystemLayouts.info(IDs.abc, "ABC"),

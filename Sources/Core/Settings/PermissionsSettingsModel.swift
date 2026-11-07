@@ -50,13 +50,22 @@ import Observation
     // MARK: - Rows
 
     var rows: [PermissionRow] {
-        let ax = state.accessibility == .granted
+        let covers = Self.accessibilityCoversInputMonitoring(state: state, desired: desiredTapMode)
         return [
-            PermissionRow.make(.accessibility, state: state.accessibility, accessibilityGranted: ax,
+            PermissionRow.make(.accessibility, state: state.accessibility, accessibilityCoversIt: covers,
                                showsQuitAndReopen: false, appName: appName),
-            PermissionRow.make(.inputMonitoring, state: state.inputMonitoring, accessibilityGranted: ax,
+            PermissionRow.make(.inputMonitoring, state: state.inputMonitoring, accessibilityCoversIt: covers,
                                showsQuitAndReopen: state.showsQuitAndReopen, appName: appName),
         ]
+    }
+
+    /// QA (P2-26): Input Monitoring is "not needed" only while Accessibility is allowed and the tap is not below
+    /// the mode Kytkin wants. Whether Accessibility alone allows the active tap on every Mac is still open (P1-17),
+    /// so a tap stuck below it keeps Input Monitoring offered as the fallback (001 §6.1 step 4). A watchdog
+    /// slow-down is not a permission problem, so it doesn't bring the row back.
+    static func accessibilityCoversInputMonitoring(state: MenuState, desired: TapMode) -> Bool {
+        guard state.accessibility == .granted else { return false }
+        return TapModePolicy.rank(state.tapMode) >= TapModePolicy.rank(desired) || state.degradedByWatchdog
     }
 
     // MARK: - User clicks only
