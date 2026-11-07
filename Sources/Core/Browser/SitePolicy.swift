@@ -5,7 +5,8 @@
 //
 //   nil when: site rules are unavailable (Kytkin off or no Accessibility) · the bundled Public Suffix List is
 //   missing (D11: no registrable domains → site rules off entirely) · the app is Kytkin itself · the app is no
-//   browser (not in the catalog and not a web-link handler) · the user turned site rules off for that browser.
+//   browser (not in the catalog and not a web-link handler) · the user turned website rules off (P3-26: one global
+//   switch, `browsers.siteRulesOn`, for every browser).
 //
 // What the request carries for the private-window rules (§14.4): in a window known to be private, rules apply and
 // nothing is learned (RuleLearner, as built). With `ignorePrivateWindows` on, the reader also doesn't read the
@@ -16,7 +17,7 @@ struct BrowserWatchRequest: Sendable, Equatable {
     let alwaysPrivate: Bool
     /// prefs.browsers.ignorePrivateWindowsCompletely (§14.4).
     let ignorePrivateWindows: Bool
-    /// Set only when the user opted in AND Automation is granted (§14.7).
+    /// P3-26: set only when "Use Automation" is on (global) AND the browser has a dictionary AND macOS allowed it.
     let appleScript: AppleScriptDialect?
 
     /// The window's private flag after the catalog's say: Tor Browser is always private.
@@ -38,10 +39,10 @@ struct SitePolicy: Sendable, Equatable {
     let appleEventsBrowsers: Set<String>
     let webLinkHandlers: Set<String>
     let ownBundleIDPrefix: String
-    /// Bundle ID → site rules on/off; absent = on (§4.2 `browsers.siteRulesEnabled`).
-    let siteRulesEnabled: [String: Bool]
+    /// P3-26: the global "Use website rules" (`browsers.siteRulesOn`; an unresolved pre-P3-26 file is decided
+    /// against the web-link handlers, as AppController.start() resolves it).
+    let siteRulesOn: Bool
 
-    /// P3-9: `siteRulesEnabled` comes from `browsers.siteRulesEnabled` (§14.2); absent = on.
     init(availability: FeatureAvailability, browsers: Preferences.Browsers, suffixListLoaded: Bool,
          webLinkHandlers: Set<String>, ownBundleIDPrefix: String) {
         siteRulesAvailable = availability.siteRules
@@ -50,7 +51,13 @@ struct SitePolicy: Sendable, Equatable {
         appleEventsBrowsers = availability.appleEventsBrowsers
         self.webLinkHandlers = webLinkHandlers
         self.ownBundleIDPrefix = ownBundleIDPrefix
-        siteRulesEnabled = browsers.siteRulesEnabled
+        siteRulesOn = browsers.siteRulesOn(among: Self.browsers(webLinkHandlers, ownBundleIDPrefix: ownBundleIDPrefix))
+    }
+
+    /// P3-26: the browsers an old per-browser file is resolved against: the web-link handlers, Kytkin excluded.
+    static func browsers(_ webLinkHandlers: Set<String>, ownBundleIDPrefix: String) -> Set<String> {
+        let own = ownBundleIDPrefix.lowercased()
+        return webLinkHandlers.filter { !$0.isEmpty && (own.isEmpty || !$0.lowercased().hasPrefix(own)) }
     }
 
     /// nil = don't attach.
@@ -59,7 +66,7 @@ struct SitePolicy: Sendable, Equatable {
         // Case-insensitive, like ContextAssembler's own-app check (bundle IDs compare without case).
         guard ownBundleIDPrefix.isEmpty || !bundleID.lowercased().hasPrefix(ownBundleIDPrefix.lowercased())
         else { return nil }
-        guard siteRulesEnabled[bundleID] != false else { return nil }
+        guard siteRulesOn else { return nil }
         guard let engine = BrowserCatalog.engine(for: bundleID, opensWebLinks: webLinkHandlers.contains(bundleID))
         else { return nil }
         let known = BrowserCatalog.known[bundleID]

@@ -73,12 +73,13 @@ final class ContextMonitorBrowserTests: XCTestCase {
 
 
     private func policy(siteRules: Bool = true, on: Bool = true, ignorePrivate: Bool = false,
-                        suffixListLoaded: Bool = true, siteRulesEnabled: [String: Bool] = [:]) -> SitePolicy {
+                        suffixListLoaded: Bool = true, siteRulesOn: Bool = true,
+                        handlers: Set<String> = []) -> SitePolicy {
         var b = Preferences.Browsers()
         b.ignorePrivateWindowsCompletely = ignorePrivate
-        b.siteRulesEnabled = siteRulesEnabled
+        b.siteRulesOn = siteRulesOn   // P3-26: one global switch
         return SitePolicy(availability: browserAvailability(on: on, siteRules: siteRules), browsers: b,
-                          suffixListLoaded: suffixListLoaded, webLinkHandlers: [],
+                          suffixListLoaded: suffixListLoaded, webLinkHandlers: handlers,
                           ownBundleIDPrefix: KnownSwitchers.ownBundleIDPrefix)
     }
 
@@ -167,7 +168,7 @@ final class ContextMonitorBrowserTests: XCTestCase {
 
     func testBrowserWithSiteRulesOffIsNotWatched() {
         make()
-        monitor.setSitePolicy(policy(siteRulesEnabled: [zen: false]))
+        monitor.setSitePolicy(policy(siteRulesOn: false))
         source.onActivate?(zen, 20)
         XCTAssertEqual(browsers.calls, [])
         XCTAssertEqual(seen.last?.bundleID, zen)
@@ -192,8 +193,8 @@ final class ContextMonitorBrowserTests: XCTestCase {
         source.onActivate?(zen, 20)
         browsers.clear()
         monitor.setSitePolicy(policy())
-        // Another browser turned off: Zen's request is unchanged, so no re-read either.
-        monitor.setSitePolicy(policy(siteRulesEnabled: [chrome: false]))
+        // Another part of the policy changed (a new web-link handler): Zen's request is unchanged, so no re-read.
+        monitor.setSitePolicy(policy(handlers: ["com.example.NewBrowser"]))
         XCTAssertEqual(browsers.calls, [])
     }
 
@@ -312,7 +313,7 @@ final class ContextMonitorBrowserTests: XCTestCase {
         source.onActivate?(zen, 20)
         browsers.post(page(), pid: 20)
         source.onActivate?(own, 999)                                // Settings in front
-        monitor.setSitePolicy(policy(siteRulesEnabled: [zen: false]))
+        monitor.setSitePolicy(policy(siteRulesOn: false))
         clock.advance(byMilliseconds: 500)
         source.onActivate?(zen, 20)                                 // back to Zen
         let c = try XCTUnwrap(seen.last)

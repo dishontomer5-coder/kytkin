@@ -28,7 +28,7 @@ struct FeatureAvailability: Sendable, Equatable {
     let chatRules: Bool
     /// Auto-fix (P4): active tap + Accessibility, not under Secure Input.
     let autoFix: Bool
-    /// Browsers where the user opted into Apple Events and Automation is granted (P3).
+    /// Browsers macOS allowed Automation for, when the user turned on "Use Automation" (P3-26: one global switch).
     let appleEventsBrowsers: Set<String>
 
     static func compute(grants: PermissionGrants, tapMode: TapMode, secureInput: Bool,
@@ -49,7 +49,9 @@ struct FeatureAvailability: Sendable, Equatable {
         let learnDwell = on && settings.learnFromManualSwitches && !buffer
 
         // Apple Events don't need Accessibility; they are the fallback when AXURL fails (R3).
-        let browsers: Set<String> = on ? settings.appleEventsOptIn.filter { grants.automation[$0] == .granted } : []
+        // P3-26: one global switch; every browser macOS allowed. SitePolicy keeps only those with a dictionary.
+        let browsers: Set<String> = on && settings.useAutomation
+            ? Set(grants.automation.filter { $0.value == .granted }.keys) : []
 
         return FeatureAvailability(
             appSwitching: on,

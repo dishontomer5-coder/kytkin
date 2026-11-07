@@ -1,7 +1,8 @@
 // P3-15: Settings → Browsers & Sites logic (001 §14.8): which browsers are listed (installed catalog + best-effort
 // web-link handlers, never Kytkin), each BrowserSupport status in plain words, the Automation slot (none for Gecko),
-// the per-browser switch and the private-window switch (stored only when they differ), the missing-PSL notice, the
-// website-rule count, refresh re-reading the inventory (P3-22), and read-only preferences.
+// the missing-PSL notice, the website-rule count, refresh re-reading the inventory (P3-22), and read-only preferences.
+// P3-26: the global switches (website rules, private windows; Automation in BrowsersAutomationWiringTests) and the
+// "Browser" dropdown (its choices and its default: last browser in front, else first working, else first).
 
 import XCTest
 
@@ -17,11 +18,13 @@ final class BrowsersSettingsModelTests: XCTestCase {
     private var inventory = BrowserInventorySnapshot()
     private var inventoryReads = 0
     private var support: [String: BrowserSupport] = [:]
+    private var lastFront: String?
     private var sut: BrowsersSettingsModel!
 
     private func make(_ prefs: Preferences = Preferences(), readOnly: Bool = false, suffixListLoaded: Bool = true) {
         store = readOnly ? makeReadOnlyStore(prefs) : makeStore(prefs, clock: FakeClock())
-        let names = [zen: "Zen", chrome: "Google Chrome", safari: "Safari", edge: "Microsoft Edge", other: "Electronish"]
+        let names = [zen: "Zen", chrome: "Google Chrome", safari: "Safari", edge: "Microsoft Edge", other: "Electronish",
+                     "com.kagi.kagimacOS": "Orion"]
         sut = BrowsersSettingsModel(
             store: store, appName: { names[$0] }, suffixListLoaded: suffixListLoaded,
             ownBundleIDPrefix: "io.github.kytkin.",
@@ -29,7 +32,8 @@ final class BrowsersSettingsModelTests: XCTestCase {
                 self.inventoryReads += 1
                 return self.inventory
             },
-            support: { [unowned self] in self.support[$0] ?? .notSeenYet })
+            support: { [unowned self] in self.support[$0] ?? .notSeenYet },
+            lastFrontBrowser: { [unowned self] in self.lastFront })
     }
 
     private func row(_ id: String) throws -> BrowserRow {
@@ -97,8 +101,8 @@ final class BrowsersSettingsModelTests: XCTestCase {
         support = [zen: .cantRead, chrome: .cantRead]
         make()
         sut.refresh()
-        XCTAssertEqual(try row(chrome).statusHint, "Kytkin can't see the page address. Turn on Automation below.",
-                       "P3-24")
+        XCTAssertEqual(try row(chrome).statusHint,
+                       "Kytkin can't see the page address. Turn on \"Use Automation\" above.", "P3-24, P3-26")
         XCTAssertTrue(try XCTUnwrap(row(zen).statusHint).contains("Not supported yet"))
         XCTAssertFalse(try XCTUnwrap(row(zen).statusHint).contains("Automation"))
     }
@@ -106,11 +110,13 @@ final class BrowsersSettingsModelTests: XCTestCase {
     func testOffSaysWhy() throws {
         inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome])
         var prefs = Preferences()
-        prefs.browsers.siteRulesEnabled[zen] = false
+        prefs.browsers.siteRulesOn = false
         support = [zen: .off, chrome: .off]
         make(prefs)
         sut.refresh()
-        XCTAssertEqual(try row(zen).statusHint, "Website rules are off.")
+        XCTAssertEqual(try row(zen).statusHint, "Website rules are off.", "P3-26: the global switch")
+        XCTAssertEqual(try row(chrome).statusHint, "Website rules are off.")
+        sut.siteRulesOn = true
         XCTAssertEqual(try row(chrome).statusHint, "Kytkin is off or paused.")
     }
 
@@ -138,27 +144,43 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertEqual(try row("company.thebrowser.Browser").automation, .available(off))
         XCTAssertNil(try row(zen).automationState)
         XCTAssertNil(try row("com.kagi.kagimacOS").automationState, "Orion: no toggle")
-        XCTAssertEqual(try row(zen).automation, .notAvailable("Automation isn't available for Firefox-based browsers."),
-                       "no Automation toggle for Gecko")
+        XCTAssertEqual(try row(zen).automation,
+                       .notAvailable("Automation isn't available for Zen: Firefox-based browsers don't support it."),
+                       "no Automation for Gecko (P3-26: named)")
         XCTAssertEqual(try row("com.kagi.kagimacOS").automation,
-                       .notAvailable("Automation isn't available for this browser."))
-        XCTAssertEqual(try row(other).automation, .notAvailable("Automation isn't available for this browser."))
+                       .notAvailable("Automation isn't available for Orion."))
+        XCTAssertEqual(try row(other).automation, .notAvailable("Automation isn't available for Electronish."))
     }
 
     // MARK: - Switches
 
-    func testSiteRulesSwitchStoresOnlyOff() throws {
-        inventory = BrowserInventorySnapshot(installedCatalog: [zen])
+    func testSiteRulesSwitchIsGlobal() {
+        inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome])
         make()
         sut.refresh()
-        XCTAssertTrue(try row(zen).siteRulesOn, "absent = on")
-        sut.setSiteRulesEnabled(false, for: zen)
-        XCTAssertEqual(store.prefs.browsers.siteRulesEnabled, [zen: false])
-        XCTAssertFalse(try row(zen).siteRulesOn)
-        sut.setSiteRulesEnabled(true, for: zen)
-        XCTAssertEqual(store.prefs.browsers.siteRulesEnabled, [:], "on is the default: the entry goes")
-        sut.setSiteRulesEnabled(false, for: "")
-        XCTAssertEqual(store.prefs.browsers.siteRulesEnabled, [:])
+        XCTAssertTrue(sut.siteRulesOn, "on by default")
+        sut.siteRulesOn = false
+        XCTAssertFalse(store.prefs.browsers.siteRulesOn, "P3-26: one switch for every browser")
+        XCTAssertFalse(sut.siteRulesOn)
+        sut.siteRulesOn = true
+        XCTAssertTrue(store.prefs.browsers.siteRulesOn)
+    }
+
+    func testAnOldFilesPerBrowserSwitchesShowAsTheGlobalOne() {
+        // P3-26: not resolved yet (AppController.start() normally has): decided against the browsers listed here.
+        inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome])
+        var prefs = Preferences()
+        prefs.browsers.legacySiteRulesOff = [zen]
+        make(prefs)
+        sut.refresh()
+        XCTAssertTrue(sut.siteRulesOn, "Chrome still had them on")
+        prefs.browsers.legacySiteRulesOff = [zen, chrome]
+        make(prefs)
+        sut.refresh()
+        XCTAssertFalse(sut.siteRulesOn, "every listed browser had them off")
+        sut.siteRulesOn = true
+        XCTAssertEqual(store.prefs.browsers.legacySiteRulesOff, [], "the user's choice settles the old switches")
+        XCTAssertTrue(store.prefs.browsers.siteRulesOn)
     }
 
     func testPrivateWindowsSwitch() {
@@ -176,9 +198,49 @@ final class BrowsersSettingsModelTests: XCTestCase {
         sut.refresh()
         XCTAssertFalse(sut.isEditable)
         XCTAssertFalse(sut.notices.isEmpty, "the notice says why")
-        sut.setSiteRulesEnabled(false, for: zen)
+        sut.siteRulesOn = false
+        sut.setUseAutomation(true)
         sut.ignorePrivateWindows = true
         XCTAssertEqual(store.prefs.browsers, Preferences.Browsers())
+    }
+
+    // MARK: - The dropdown (P3-26)
+
+    func testDropdownDefaultsToTheLastBrowserInFront() throws {
+        inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome, safari])
+        support = [safari: .works]
+        lastFront = zen
+        make()
+        sut.refresh()
+        XCTAssertEqual(sut.selectedRow?.bundleID, zen, "the browser most recently in front")
+        lastFront = "com.example.NotListed"
+        XCTAssertEqual(sut.selectedRow?.bundleID, safari, "unknown last browser: the first working one")
+        lastFront = nil
+        support = [:]
+        sut.refresh()
+        XCTAssertEqual(sut.selectedRow?.bundleID, chrome, "none working: the first listed")
+    }
+
+    func testDropdownChoiceIsUIStateOnly() throws {
+        inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome])
+        lastFront = chrome
+        make()
+        sut.refresh()
+        let before = store.prefs
+        sut.selectedBrowserID = zen
+        XCTAssertEqual(sut.selectedRow?.bundleID, zen, "the user's choice beats the default")
+        XCTAssertEqual(sut.selectedRow?.automation,
+                       .notAvailable("Automation isn't available for Zen: Firefox-based browsers don't support it."))
+        XCTAssertEqual(store.prefs, before, "never stored")
+        inventory = BrowserInventorySnapshot(installedCatalog: [chrome])
+        sut.refresh()
+        XCTAssertEqual(sut.selectedRow?.bundleID, chrome, "a choice that is no longer listed falls back")
+    }
+
+    func testDropdownIsEmptyWithoutBrowsers() {
+        make()
+        sut.refresh()
+        XCTAssertNil(sut.selectedRow)
     }
 
     // MARK: - Texts and counts
@@ -210,7 +272,9 @@ final class BrowsersSettingsModelTests: XCTestCase {
 
     func testTheOwnersNotesAreThere() {
         XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("Safari"))
-        XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains(BrowsersSettingsModel.siteRulesToggleTitle))
+        XCTAssertEqual(BrowsersSettingsModel.skipNote,
+                       "Some browsers don't support every option; Kytkin skips what a browser can't do.")
+        XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Use Automation when a browser can't be read")
         XCTAssertTrue(BrowsersSettingsModel.groupingText.contains("gov.il"))
         XCTAssertTrue(BrowsersSettingsModel.privateExplanation.contains("doesn't read their address"))
         XCTAssertEqual(BrowsersSettingsModel.privateToggleTitle, "Don't use website rules in private windows")

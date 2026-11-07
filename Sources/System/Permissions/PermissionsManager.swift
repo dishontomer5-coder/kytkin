@@ -143,12 +143,20 @@ import Observation
         }
     }
 
-    /// User click only (the Automation toggle turned on, or the row's "Ask").
+    /// User click only (the Automation switch turned on, or the dropdown's "Ask"). P3-26: one question at a time;
+    /// a request made while another is on screen waits for its answer (the tracker's queue).
     func requestAutomation(for bundleID: String) {
+        guard automationRequester != nil else { return }
+        guard automationTracker.beginRequest(bundleID, now: clock.nowNanos) else { return }
+        ask(bundleID)
+    }
+
+    private func ask(_ bundleID: String) {
         guard let automationRequester else { return }
-        automationTracker.beginRequest(bundleID, now: clock.nowNanos)
         background({ automationRequester.ask(bundleID: bundleID) }) { [weak self] result in
-            self?.automationAnswered(bundleID, result)
+            guard let self else { return }
+            self.automationAnswered(bundleID, result)
+            if let next = self.automationTracker.finishRequest(bundleID) { self.ask(next) }
         }
     }
 

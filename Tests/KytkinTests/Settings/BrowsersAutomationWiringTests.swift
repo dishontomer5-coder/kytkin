@@ -1,25 +1,34 @@
 // P3-7 QA: Settings → Browsers & Sites wired to the Automation controller (001 §14.7–14.8). The rows show the
-// controller's state and button; the toggle, Ask and Open System Settings are passed through only as clicks (a
-// repeated set, a Gecko/Orion row, read-only preferences or a disabled Ask never reach it); `refresh()` asks only
-// for silent checks of the opted-in browsers listed; "Can't read this browser" points to the toggle (P3-24).
-// End to end with the real BrowserAutomationController over RecordingPermissions: opening Settings never prompts.
+// controller's state and button; the switch, Ask and Open System Settings are passed through only as clicks (a
+// repeated set, read-only preferences or a disabled Ask never reach it); `refresh()` asks only for silent checks;
+// "Can't read this browser" points to Automation (P3-24).
+// P3-26: one global "Use Automation" switch. Turning it on asks macOS (from that click only) for the running browsers
+// that support it and aren't allowed yet, in a stable order; turning it off only stores the choice; Zen, Firefox and
+// Orion are ignored. End to end with the real BrowserAutomationController over RecordingPermissions: opening
+// Settings never prompts.
 
 import XCTest
 
 @MainActor
 private final class FakeAutomation: AutomationControlling {
     enum Call: Equatable {
-        case set(Bool, String), ask(String), openSettings, refresh([String])
+        case setGlobal(Bool), ask(String), openSettings, refresh([String])
     }
 
     var calls: [Call] = []
     var states: [String: BrowserAutomationState] = [:]
+    /// Mirrors the real controller: the switch writes the preference.
+    var store: PreferencesStore?
 
     func automationState(for bundleID: String) -> BrowserAutomationState {
-        states[bundleID] ?? BrowserAutomationState.make(bundleID: bundleID, optedIn: false, permission: nil,
-                                                       browserIsRunning: false)
+        states[bundleID] ?? BrowserAutomationState.make(bundleID: bundleID,
+                                                       optedIn: store?.prefs.browsers.useAutomation ?? false,
+                                                       permission: nil, browserIsRunning: false)
     }
-    func setAutomationEnabled(_ on: Bool, for bundleID: String) { calls.append(.set(on, bundleID)) }
+    func setUseAutomation(_ on: Bool) {
+        calls.append(.setGlobal(on))
+        store?.update { $0.browsers.useAutomation = on }
+    }
     func askAutomation(for bundleID: String) { calls.append(.ask(bundleID)) }
     func openAutomationSettings() { calls.append(.openSettings) }
     func refreshAutomation(for bundleIDs: [String]) { calls.append(.refresh(bundleIDs)) }
@@ -40,16 +49,16 @@ final class BrowsersAutomationWiringTests: XCTestCase {
     private var inventory = BrowserInventorySnapshot()
     private var sut: BrowsersSettingsModel!
 
-    private func make(_ prefs: Preferences = Preferences(), readOnly: Bool = false,
-                      automation: (any AutomationControlling)? = nil) {
+    private func make(_ prefs: Preferences = Preferences(), readOnly: Bool = false) {
         store = readOnly ? makeReadOnlyStore(prefs) : makeStore(prefs, clock: FakeClock())
         fake = FakeAutomation()
-        let names = [safari: "Safari", chrome: "Google Chrome", arc: "Arc"]
+        fake.store = store
+        let names = [safari: "Safari", chrome: "Google Chrome", arc: "Arc", zen: "Zen"]
         sut = BrowsersSettingsModel(store: store, appName: { names[$0] }, suffixListLoaded: true,
                                     ownBundleIDPrefix: "io.github.kytkin.",
                                     inventory: { [unowned self] in inventory },
                                     support: { [unowned self] in support[$0] ?? .notSeenYet },
-                                    automation: automation ?? fake)
+                                    automation: fake)
     }
 
     private func row(_ id: String) throws -> BrowserRow {
@@ -62,7 +71,7 @@ final class BrowsersAutomationWiringTests: XCTestCase {
 
     // MARK: - Rows
 
-    func testZenFirefoxAndOrionHaveNoToggle() throws {
+    func testZenFirefoxAndOrionSayAutomationIsNotAvailable() throws {
         inventory = BrowserInventorySnapshot(installedCatalog: [zen, firefox, orion, chrome])
         make()
         sut.refresh()
@@ -73,9 +82,8 @@ final class BrowsersAutomationWiringTests: XCTestCase {
             XCTAssertTrue(text.hasPrefix("Automation isn't available"), id)
         }
         XCTAssertNotNil(try row(chrome).automationState)
-        sut.setAutomationEnabled(true, for: zen)
-        sut.setAutomationEnabled(true, for: orion)
-        XCTAssertFalse(fake.calls.contains { if case .set = $0 { true } else { false } }, "no toggle → no call")
+        sut.askAutomation(for: zen)
+        XCTAssertTrue(fake.calls.isEmpty, "no Ask for Zen")
     }
 
     func testRowsShowTheControllersStateAndButton() throws {
@@ -95,38 +103,36 @@ final class BrowsersAutomationWiringTests: XCTestCase {
     func testWithoutAControllerTheStoredChoiceShowsAndNothingIsCalled() throws {
         inventory = BrowserInventorySnapshot(installedCatalog: [chrome])
         var prefs = Preferences()
-        prefs.browsers.appleEventsOptIn[chrome] = true
+        prefs.browsers.useAutomation = true
         store = makeStore(prefs, clock: FakeClock())
         sut = BrowsersSettingsModel(store: store, appName: { _ in nil }, suffixListLoaded: true,
                                     ownBundleIDPrefix: "", inventory: { [unowned self] in inventory },
                                     support: { _ in .notSeenYet })
         sut.refresh()
         XCTAssertEqual(try row(chrome).automationState?.status, .notAsked)
-        sut.setAutomationEnabled(false, for: chrome)
-        XCTAssertEqual(store.prefs.browsers.appleEventsOptIn, [chrome: true], "no controller: nothing written")
+        sut.setUseAutomation(false)
+        XCTAssertTrue(store.prefs.browsers.useAutomation, "no controller: nothing written")
     }
 
     // MARK: - Clicks
 
-    func testToggleIsPassedThroughOnlyWhenItChanges() {
+    func testGlobalSwitchIsPassedThroughOnlyWhenItChanges() {
         inventory = BrowserInventorySnapshot(installedCatalog: [chrome])
         make()
-        sut.setAutomationEnabled(false, for: chrome)
+        sut.setUseAutomation(false)
         XCTAssertTrue(fake.calls.isEmpty, "already off")
-        sut.setAutomationEnabled(true, for: chrome)
-        XCTAssertEqual(fake.calls, [.set(true, chrome)])
-        fake.states[chrome] = state(.checking)
-        sut.setAutomationEnabled(true, for: chrome)
-        XCTAssertEqual(fake.calls, [.set(true, chrome)], "a repeated set never asks macOS again")
-        sut.setAutomationEnabled(false, for: chrome)
-        XCTAssertEqual(fake.calls, [.set(true, chrome), .set(false, chrome)])
-        sut.setAutomationEnabled(true, for: "")
-        XCTAssertEqual(fake.calls.count, 2)
+        sut.setUseAutomation(true)
+        XCTAssertEqual(fake.calls, [.setGlobal(true)])
+        XCTAssertTrue(sut.useAutomation)
+        sut.setUseAutomation(true)
+        XCTAssertEqual(fake.calls, [.setGlobal(true)], "a repeated set never asks macOS again")
+        sut.setUseAutomation(false)
+        XCTAssertEqual(fake.calls, [.setGlobal(true), .setGlobal(false)])
     }
 
-    func testReadOnlyPreferencesDisableTheToggle() {
+    func testReadOnlyPreferencesDisableTheSwitch() {
         make(readOnly: true)
-        sut.setAutomationEnabled(true, for: chrome)
+        sut.setUseAutomation(true)
         XCTAssertTrue(fake.calls.isEmpty)
     }
 
@@ -147,45 +153,52 @@ final class BrowsersAutomationWiringTests: XCTestCase {
 
     // MARK: - Refresh (silent)
 
-    func testRefreshChecksOnlyListedOptedInBrowsers() {
+    func testRefreshChecksListedBrowsersThatSupportItWhileTheSwitchIsOn() {
         inventory = BrowserInventorySnapshot(installedCatalog: [chrome, arc, zen])
         var prefs = Preferences()
-        prefs.browsers.appleEventsOptIn = [chrome: true, safari: true, arc: false]
+        prefs.browsers.useAutomation = true
         make(prefs)
         sut.refresh()
-        XCTAssertEqual(fake.calls, [.refresh([chrome])], "Safari isn't installed, Arc is off: not checked")
+        XCTAssertEqual(fake.calls, [.refresh([chrome, arc])], "Safari isn't installed, Zen has no Automation")
         make()
         sut.refresh()
-        XCTAssertTrue(fake.calls.isEmpty, "nothing opted in: no check at all")
+        XCTAssertTrue(fake.calls.isEmpty, "switch off: no check at all")
     }
 
     // MARK: - P3-24: "Can't read this browser"
 
-    func testCantReadPointsToTheAutomationToggle() throws {
+    func testCantReadPointsToAutomation() throws {
         inventory = BrowserInventorySnapshot(installedCatalog: [chrome, arc, safari, zen])
         support = [chrome: .cantRead, arc: .cantRead, safari: .cantRead, zen: .cantRead]
         make()
         fake.states = [arc: state(.notAsked), safari: state(.allowed)]
         sut.refresh()
-        XCTAssertEqual(try row(chrome).statusHint, "Kytkin can't see the page address. Turn on Automation below.")
+        XCTAssertEqual(try row(chrome).statusHint,
+                       "Kytkin can't see the page address. Turn on \"Use Automation\" above.")
         XCTAssertEqual(try row(arc).statusHint, "Kytkin can't see the page address. Allow Automation below.")
         XCTAssertEqual(try row(safari).statusHint, "Kytkin can't see the page address, even with Automation.")
         XCTAssertEqual(try row(zen).statusHint, "Kytkin can't see the page address here. Not supported yet.")
     }
 
-    // MARK: - End to end with the real controller: opening Settings never prompts
+    // MARK: - End to end with the real controller
+
+    private func makeReal(_ prefs: Preferences = Preferences(), running: Set<String>,
+                          permissions: RecordingPermissions) -> BrowserAutomationController {
+        store = makeStore(prefs, clock: FakeClock())
+        let controller = BrowserAutomationController(store: store, permissions: permissions,
+                                                     isRunning: { running.contains($0) })
+        sut = BrowsersSettingsModel(store: store, appName: { $0 == "com.apple.Safari" ? "Safari" : nil },
+                                    suffixListLoaded: true, ownBundleIDPrefix: "", inventory: { [unowned self] in inventory },
+                                    support: { _ in .notSeenYet }, automation: controller)
+        return controller
+    }
 
     func testOpeningSettingsWithTheRealControllerOnlyChecksSilently() throws {
         let permissions = RecordingPermissions()
         var prefs = Preferences()
-        prefs.browsers.appleEventsOptIn = [chrome: true]
-        store = makeStore(prefs, clock: FakeClock())
-        let controller = BrowserAutomationController(store: store, permissions: permissions,
-                                                     isRunning: { $0 == self.chrome })
+        prefs.browsers.useAutomation = true
         inventory = BrowserInventorySnapshot(installedCatalog: [chrome, zen])
-        sut = BrowsersSettingsModel(store: store, appName: { _ in nil }, suffixListLoaded: true,
-                                    ownBundleIDPrefix: "", inventory: { [unowned self] in inventory },
-                                    support: { _ in .notSeenYet }, automation: controller)
+        _ = makeReal(prefs, running: [chrome], permissions: permissions)
         sut.refresh()
         _ = sut.rows
         XCTAssertEqual(permissions.calls, [.refreshAutomation([chrome])])
@@ -197,8 +210,46 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         XCTAssertEqual(permissions.calls.last, .requestAutomation(chrome), "the click asks")
         permissions.set(automation: chrome, .granted)
         XCTAssertEqual(try row(chrome).automationStatusText, "Allowed")
-        sut.setAutomationEnabled(false, for: chrome)
-        XCTAssertEqual(store.prefs.browsers.appleEventsOptIn, [:])
-        XCTAssertEqual(try row(chrome).automationStatusText, "Off")
+        sut.setUseAutomation(false)
+        XCTAssertFalse(store.prefs.browsers.useAutomation)
+        XCTAssertEqual(try row(chrome).automationStatusText, "Off (\"Use Automation\" is off above)")
+    }
+
+    func testTurningTheSwitchOnAsksOnlyRunningBrowsersThatAreNotAllowed() throws {
+        let permissions = RecordingPermissions()
+        permissions.set(automation: arc, .granted)
+        inventory = BrowserInventorySnapshot(installedCatalog: [chrome, arc, safari, zen, firefox, orion])
+        // Running: Chrome, Arc (already allowed), Zen, Firefox, Orion (no Automation). Safari is not running.
+        _ = makeReal(running: [chrome, arc, zen, firefox, orion], permissions: permissions)
+        sut.refresh()
+        XCTAssertTrue(permissions.calls.isEmpty, "switch off: no check")
+        sut.setUseAutomation(true)
+        XCTAssertTrue(store.prefs.browsers.useAutomation)
+        XCTAssertEqual(permissions.promptingCalls, [.requestAutomation(chrome)],
+                       "only the running browser that supports it and isn't allowed yet")
+        XCTAssertEqual(try row(safari).automationStatusText, "Not asked yet. Open Safari, then click Ask.",
+                       "the others: open it, then Ask")
+        XCTAssertEqual(try row(arc).automationStatusText, "Allowed")
+        sut.setUseAutomation(true)
+        XCTAssertEqual(permissions.promptingCalls.count, 1, "a repeated set never asks again")
+    }
+
+    func testSeveralRunningBrowsersAreAskedInAStableOrder() {
+        let permissions = RecordingPermissions()
+        _ = makeReal(running: [safari, chrome, arc], permissions: permissions)
+        sut.setUseAutomation(true)
+        // PermissionsManager shows these one at a time (AutomationPermissionTracker's queue).
+        XCTAssertEqual(permissions.promptingCalls, [.requestAutomation(chrome), .requestAutomation(arc),
+                                                    .requestAutomation(safari)], "catalog order")
+    }
+
+    func testTurningTheSwitchOffOnlyStoresTheChoice() {
+        let permissions = RecordingPermissions()
+        var prefs = Preferences()
+        prefs.browsers.useAutomation = true
+        _ = makeReal(prefs, running: [chrome, safari], permissions: permissions)
+        sut.setUseAutomation(false)
+        XCTAssertFalse(store.prefs.browsers.useAutomation)
+        XCTAssertTrue(permissions.calls.isEmpty, "off asks nothing and checks nothing")
     }
 }

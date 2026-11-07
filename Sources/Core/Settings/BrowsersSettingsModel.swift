@@ -3,14 +3,19 @@
 // - Browsers: every catalog browser that is installed, plus every other app registered for https links ("best
 //   effort", owner answer 2). Kytkin itself is never listed. Read by `refresh()` (when Settings opens or comes to the
 //   front), which also makes AppController read the web-link handlers again (P3-22: a browser installed since launch).
+// - P3-26 (plan.md Phase 3 decision 2026-11-08): the tab no longer lists every browser. An "All browsers" section
+//   holds the global switches: "Use website rules" (`browsers.siteRulesOn`), "Use Automation when a browser can't be
+//   read" (`browsers.useAutomation`; ignored for browsers without a dictionary) and "Don't use website rules in private
+//   windows" (`browsers.ignorePrivateWindowsCompletely`; owner meaning: don't read the address, use the browser's own
+//   rule, D12). Below, a "Browser" dropdown (`rows`) shows ONE browser (`selectedRow`): its status, engine, Automation
+//   permission (Ask / Open System Settings, or "not available") and "Open Permissions" where it applies. No
+//   per-browser overrides. The choice is UI state only (`selectedBrowserID`, never stored); by default the browser
+//   most recently in front this session, else the first working one, else the first.
 // - Status per browser: `BrowserSupport` from AppController, this session only (D15), in plain words.
-// - "Use website rules" per browser (`browsers.siteRulesEnabled`, absent = on; stored only when off, so the file
-//   holds only real differences) and "Don't use website rules in private windows"
-//   (`browsers.ignorePrivateWindowsCompletely`; owner meaning: don't read the address, use the browser's own rule, D12).
-// - Automation (P3-7): Chromium/Arc/Safari rows carry the "Use Automation" toggle and its state from
-//   `AutomationControlling` (AppEnvironment.automation); Gecko, Orion and other browsers say it isn't available. The
-//   toggle, "Ask" and "Open System Settings" are user clicks passed straight through (the prompt only from a click);
-//   `refresh()` asks for silent checks of the opted-in browsers listed (≤ 1 per 5 s per browser, never a prompt).
+// - Automation (P3-7): the state comes from `AutomationControlling` (AppEnvironment.automation). The switch, "Ask"
+//   and "Open System Settings" are user clicks passed straight through (the prompt only from a click); `refresh()`
+//   asks for silent checks of the listed browsers that support it while the switch is on (≤ 1 per 5 s each, never a
+//   prompt).
 // - Missing Public Suffix List (D11): a notice at the top, every status says so, and nothing else changes.
 // - No list of website rules here (D7): a count and "Show in Rules".
 // - Read-only preferences (§12 S1): every switch is disabled and the setters do nothing.
@@ -39,19 +44,25 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     @ObservationIgnored private let ownBundleIDPrefix: String
     /// P3-7: nil = no Automation controller (tests that don't test it): rows show the stored choice, never checked.
     @ObservationIgnored private let automation: (any AutomationControlling)?
+    /// P3-26: the browser most recently in front this session (AppController), for the dropdown's default.
+    @ObservationIgnored private let lastFrontBrowser: @MainActor () -> String?
     let suffixListLoaded: Bool
 
     /// Read on `refresh()`.
     private(set) var inventory = BrowserInventorySnapshot()
     /// Bumped by `refresh()`, so rows re-read the session's statuses (they aren't observable themselves).
     private(set) var statusGeneration = 0
+    /// P3-26: the dropdown's choice; nil (or a browser no longer listed) = the default. UI state, never stored.
+    var selectedBrowserID: String?
 
     init(store: PreferencesStore, appName: @escaping @MainActor (String) -> String?, suffixListLoaded: Bool,
          ownBundleIDPrefix: String, inventory: @escaping @MainActor () -> BrowserInventorySnapshot,
          support: @escaping @MainActor (String) -> BrowserSupport,
-         automation: (any AutomationControlling)? = nil) {
+         automation: (any AutomationControlling)? = nil,
+         lastFrontBrowser: @escaping @MainActor () -> String? = { nil }) {
         self.store = store
         self.automation = automation
+        self.lastFrontBrowser = lastFrontBrowser
         self.appNames = AppDisplayNames(lookup: appName)
         self.suffixListLoaded = suffixListLoaded
         self.ownBundleIDPrefix = ownBundleIDPrefix
@@ -64,12 +75,11 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         let next = readInventory()
         if next != inventory { inventory = next }
         statusGeneration += 1
-        // P3-7: silent Automation checks (never a prompt) for the listed browsers the user turned it on for, so a
-        // grant or revoke made in System Settings shows here. The controller throttles them (≤ 1 per 5 s each).
-        if let automation {
-            let optedIn = store.prefs.browsers.appleEventsOptIn.filter(\.value).keys
-            let listed = Set(rows.map(\.bundleID))
-            let ids = optedIn.filter { listed.contains($0) }.sorted()
+        // P3-7: silent Automation checks (never a prompt), so a grant or revoke made in System Settings shows here.
+        // The controller throttles them (≤ 1 per 5 s each). P3-26: every listed browser that supports Automation,
+        // while the global switch is on.
+        if let automation, useAutomation {
+            let ids = rows.filter { $0.automationState != nil }.map(\.bundleID).sorted()
             if !ids.isEmpty { automation.refreshAutomation(for: ids) }
         }
     }
@@ -83,17 +93,23 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     /// D11: shown at the top of the tab when the bundled Public Suffix List didn't load.
     var dataMissingNotice: String? { suffixListLoaded ? nil : Self.dataMissingText }
 
-    static let introText = "Kytkin can remember a language for each website you visit in these browsers."
+    static let introText = "Kytkin can remember a language for each website you visit in your browsers."
+    /// P3-26: the section with the global switches.
+    static let allBrowsersTitle = "All browsers"
     static let siteRulesToggleTitle = "Use website rules"
+    /// P3-26: the one note for the global switches (e.g. Automation for Zen).
+    static let skipNote = "Some browsers don't support every option; Kytkin skips what a browser can't do."
+    static let browserPickerTitle = "Browser"
     static let privateToggleTitle = "Don't use website rules in private windows"
     static let privateExplanation = "Kytkin never remembers websites from private windows. With this on, it also "
         + "doesn't read their address and uses only the browser's own language."
     /// P3-16 replaces this line once the per-browser private-window checks exist (they are waiting for the P3-3 round).
     static let privateDetectionText = "Kytkin can't yet tell which windows are private, except in Tor Browser, where "
         + "every window counts as private. Detection for more browsers comes in a later update."
-    /// Owner answer 3 (plan.md §Phase 3): the Safari gap is accepted, with this note.
-    static let safariPrivateNote = "Safari doesn't let Kytkin tell when a window is private. If you use Safari's "
-        + "private browsing, you can turn off \"\(siteRulesToggleTitle)\" for Safari."
+    /// Owner answer 3 (plan.md §Phase 3): the Safari gap is accepted, with this note. P3-26: the website-rules switch
+    /// is global now, so the note no longer offers a Safari-only switch.
+    static let safariPrivateNote = "Safari doesn't let Kytkin tell when a window is private, so Kytkin treats "
+        + "Safari's private windows like normal ones."
     /// P3-4: how websites are grouped, and why gov.il is different.
     static let groupingText = "A website rule covers the whole site: ynet.co.il also covers www.ynet.co.il and "
         + "news.ynet.co.il. Some addresses are shared by many separate sites, such as gov.il or github.io. There each "
@@ -101,43 +117,52 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         + "add a subdomain rule in Rules."
     static let noBrowsersText = "No browsers found."
 
-    // MARK: - Rows
+    // MARK: - Rows (P3-26: the dropdown's choices)
+
+    /// The browsers in the dropdown, unordered: catalog browsers installed, plus every web-link handler. Not Kytkin.
+    private var listedBrowserIDs: Set<String> {
+        let own = ownBundleIDPrefix.lowercased()
+        let isOwn = { (id: String) in !own.isEmpty && id.lowercased().hasPrefix(own) }
+        return inventory.installedCatalog.union(inventory.webLinkHandlers).filter { !isOwn($0) && !$0.isEmpty }
+    }
 
     /// Catalog browsers first, then other browsers; each group by name.
     var rows: [BrowserRow] {
         _ = statusGeneration
-        let own = ownBundleIDPrefix.lowercased()
-        let isOwn = { (id: String) in !own.isEmpty && id.lowercased().hasPrefix(own) }
-        let catalog = inventory.installedCatalog
-            .union(inventory.webLinkHandlers.filter { BrowserCatalog.known[$0] != nil })
-            .filter { !isOwn($0) }
-        let others = inventory.webLinkHandlers.filter { BrowserCatalog.known[$0] == nil && !isOwn($0) && !$0.isEmpty }
+        let ids = listedBrowserIDs
+        let catalog = ids.filter { BrowserCatalog.known[$0] != nil }
+        let others = ids.filter { BrowserCatalog.known[$0] == nil }
         let byName = { (a: BrowserRow, b: BrowserRow) in
             let c = a.name.localizedStandardCompare(b.name)
             return c == .orderedSame ? a.bundleID < b.bundleID : c == .orderedAscending
         }
-        return catalog.map(row(for:)).sorted(by: byName) + others.map(row(for:)).sorted(by: byName)
+        let on = siteRulesOn
+        return catalog.map { row(for: $0, siteRulesOn: on) }.sorted(by: byName)
+            + others.map { row(for: $0, siteRulesOn: on) }.sorted(by: byName)
     }
 
     func row(for bundleID: String) -> BrowserRow {
+        row(for: bundleID, siteRulesOn: siteRulesOn)
+    }
+
+    private func row(for bundleID: String, siteRulesOn on: Bool) -> BrowserRow {
         let known = BrowserCatalog.known[bundleID]
         let name = appNames.name(for: bundleID)
         let support = readSupport(bundleID)
-        let on = store.prefs.browsers.siteRulesEnabled[bundleID] != false
         let engine = known?.engine ?? .unknown
         var engineText = Self.engineTitle(engine)
         if let known, !known.verified { engineText += " · not yet tested" }
         let automation: BrowserRow.Automation = if known?.appleScript != nil {
             .available(automationState(for: bundleID))
         } else if engine == .gecko {
-            .notAvailable("Automation isn't available for Firefox-based browsers.")
+            .notAvailable("Automation isn't available for \(name): Firefox-based browsers don't support it.")
         } else {
-            .notAvailable("Automation isn't available for this browser.")
+            .notAvailable("Automation isn't available for \(name).")
         }
         let (status, hint, action) = Self.statusTexts(support, name: name, siteRulesOn: on, automation: automation)
         return BrowserRow(bundleID: bundleID, name: name, engineText: engineText, isCatalogued: known != nil,
                           support: support, statusText: status, statusHint: hint, statusAction: action,
-                          siteRulesOn: on, automation: automation)
+                          automation: automation)
     }
 
     static func engineTitle(_ engine: BrowserEngine) -> String {
@@ -158,12 +183,13 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         case .worksWithAutomation: return ("Works (using Automation)", nil, nil)
         case .notSeenYet: return ("Not checked yet", "Open \(name) and visit a website to check.", nil)
         case .cantRead:
-            // P3-24: point to the Automation toggle on this row when the browser supports it.
+            // P3-24: point to Automation when the browser supports it. P3-26: the switch is above (global); the
+            // permission (Ask / Open System Settings) is below, next to this status.
             if case .available(let state) = automation {
                 let hint = switch state.status {
                 case .allowed: "Kytkin can't see the page address, even with Automation."
                 case .denied, .notAsked, .checking: "Kytkin can't see the page address. Allow Automation below."
-                default: "Kytkin can't see the page address. Turn on Automation below."
+                default: "Kytkin can't see the page address. Turn on \"Use Automation\" above."
                 }
                 return ("Can't read this browser", hint, nil)
             }
@@ -174,6 +200,17 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         case .off:
             return siteRulesOn ? ("Off", "Kytkin is off or paused.", nil) : ("Off", "Website rules are off.", nil)
         }
+    }
+
+    // MARK: - The dropdown (P3-26)
+
+    /// The dropdown's browser: the user's choice while it is listed, else the browser most recently in front (if
+    /// listed), else the first working one, else the first. nil only when no browser is listed.
+    var selectedRow: BrowserRow? {
+        let rows = rows
+        if let id = selectedBrowserID, let row = rows.first(where: { $0.bundleID == id }) { return row }
+        if let id = lastFrontBrowser(), let row = rows.first(where: { $0.bundleID == id }) { return row }
+        return rows.first(where: \.isWorking) ?? rows.first
     }
 
     // MARK: - Website rules (D7: no second list)
@@ -194,50 +231,16 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         }
     }
 
-    // MARK: - Switches
+    // MARK: - Switches (P3-26: global)
 
-    func siteRulesEnabled(_ bundleID: String) -> Bool {
-        store.prefs.browsers.siteRulesEnabled[bundleID] != false
-    }
-
-    /// Off is stored as false; on removes the entry (absent = on).
-    func setSiteRulesEnabled(_ on: Bool, for bundleID: String) {
-        guard isEditable, !bundleID.isEmpty, siteRulesEnabled(bundleID) != on else { return }
-        store.update { $0.browsers.siteRulesEnabled[bundleID] = on ? nil : false }
-    }
-
-    // MARK: - Automation (P3-7, 001 §14.7–14.8)
-
-    static let automationToggleTitle = "Use Automation"
-    static let automationExplanation = "When Kytkin can't read the page address, it can ask the browser for it. "
-        + "macOS asks you once."
-
-    /// The row's Automation state; without a controller, the stored choice only (never checked).
-    func automationState(for bundleID: String) -> BrowserAutomationState {
-        if let automation { return automation.automationState(for: bundleID) }
-        return BrowserAutomationState.make(bundleID: bundleID,
-                                           optedIn: store.prefs.browsers.appleEventsOptIn[bundleID] == true,
-                                           permission: nil, browserIsRunning: false)
-    }
-
-    /// User click only (the "Use Automation" toggle). Turning it on while the browser runs shows the macOS question.
-    func setAutomationEnabled(_ on: Bool, for bundleID: String) {
-        guard isEditable, !bundleID.isEmpty else { return }
-        let state = automationState(for: bundleID)
-        guard state.isAvailable, state.isOn != on else { return }   // a repeated set never asks again
-        automation?.setAutomationEnabled(on, for: bundleID)
-    }
-
-    /// User click only (the row's "Ask" button).
-    func askAutomation(for bundleID: String) {
-        let state = automationState(for: bundleID)
-        guard state.action == .ask, state.actionEnabled else { return }
-        automation?.askAutomation(for: bundleID)
-    }
-
-    /// User click only (the row's "Open System Settings" button).
-    func openAutomationSettings() {
-        automation?.openAutomationSettings()
+    /// "Use website rules", for every browser. An old file's per-browser switches are decided against the browsers
+    /// listed here until AppController.start() has settled them (normally already done).
+    var siteRulesOn: Bool {
+        get { store.prefs.browsers.siteRulesOn(among: listedBrowserIDs) }
+        set {
+            guard isEditable, newValue != siteRulesOn else { return }
+            store.update { $0.browsers.setSiteRulesOn(newValue) }
+        }
     }
 
     var ignorePrivateWindows: Bool {
@@ -246,5 +249,41 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
             guard isEditable, newValue != ignorePrivateWindows else { return }
             store.update { $0.browsers.ignorePrivateWindowsCompletely = newValue }
         }
+    }
+
+    // MARK: - Automation (P3-7, 001 §14.7–14.8; P3-26: one global switch)
+
+    static let automationToggleTitle = "Use Automation when a browser can't be read"
+    static let automationExplanation = "Kytkin then asks the browser for the page address. macOS asks you once for "
+        + "each browser: turning this on asks for the browsers that are open now. For another browser, open it, "
+        + "choose it below and click Ask."
+
+    /// The global "Use Automation" (`browsers.useAutomation`).
+    var useAutomation: Bool { store.prefs.browsers.useAutomation }
+
+    /// User click only (the global switch). On asks macOS for the running browsers that support it and aren't
+    /// allowed yet, one at a time (AutomationControlling); off only stores the choice.
+    func setUseAutomation(_ on: Bool) {
+        guard isEditable, useAutomation != on else { return }   // a repeated set never asks again
+        automation?.setUseAutomation(on)
+    }
+
+    /// A browser's Automation state; without a controller, the stored choice only (never checked).
+    func automationState(for bundleID: String) -> BrowserAutomationState {
+        if let automation { return automation.automationState(for: bundleID) }
+        return BrowserAutomationState.make(bundleID: bundleID, optedIn: useAutomation,
+                                           permission: nil, browserIsRunning: false)
+    }
+
+    /// User click only (the dropdown's "Ask" button).
+    func askAutomation(for bundleID: String) {
+        let state = automationState(for: bundleID)
+        guard state.action == .ask, state.actionEnabled else { return }
+        automation?.askAutomation(for: bundleID)
+    }
+
+    /// User click only (the dropdown's "Open System Settings" button).
+    func openAutomationSettings() {
+        automation?.openAutomationSettings()
     }
 }

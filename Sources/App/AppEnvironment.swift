@@ -16,7 +16,7 @@ import AppKit
     let layoutCatalog: LayoutMapCatalog
     let contextMonitor: ContextMonitor
     let permissions: PermissionsManager
-    /// P3-7: the Automation toggle per browser, for Settings → Browsers & Sites (P3-15 binds to it).
+    /// P3-7: Automation for Settings → Browsers & Sites. P3-26: the global switch plus each browser's permission.
     let automation: BrowserAutomationController
     let conflicts: ConflictDetector
     let keyWatcher: KeyWatcher
@@ -201,7 +201,8 @@ import AppKit
                                          webLinkHandlers: controller.refreshWebLinkHandlers())
             },
             support: { controller.browserSupport(for: $0) },
-            automation: automation)   // P3-7: the toggle, its state, Ask / Open System Settings; silent refresh
+            automation: automation,   // P3-7: the switch, the states, Ask / Open System Settings; silent refresh
+            lastFrontBrowser: { controller.lastFrontBrowserID })   // P3-26: the dropdown's default
         let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                      runningApps: Self.runningApps,
                                      ownBundleID: Bundle.main.bundleIdentifier ?? "")
