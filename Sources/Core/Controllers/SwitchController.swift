@@ -132,14 +132,24 @@ import Foundation
     }
 
     func wordBoundary() {
-        guard !isOwnAppActive else { return }
+        guard !isOwnAppActive, !dropCandidateIfAppQuit() else { return }
         handle(learner.handle(.wordBoundary(atNanos: clock.nowNanos)))
     }
 
     /// The dwell clock (no word buffer). AppController ticks only while `wantsTicks`.
     func tick() {
-        guard !isOwnAppActive else { return }
+        guard !isOwnAppActive, !dropCandidateIfAppQuit() else { return }
         handle(learner.handle(.tick(atNanos: clock.nowNanos)))
+    }
+
+    /// P2-41 (P3-5 QA): a candidate made before the current app quit must not be confirmed by words typed (or time
+    /// spent) after it, e.g. in the next app before its Context arrives. Words and ticks are the only ways a
+    /// candidate commits, so it is dropped on the first one after the quit. True = a candidate was dropped.
+    private func dropCandidateIfAppQuit() -> Bool {
+        guard context.currentAppIsGone, learner.pending != nil, let c = context.current else { return false }
+        _ = learner.handle(.contextChanged(c, atNanos: clock.nowNanos))
+        note("discarded (app quit)")
+        return true
     }
 
     var wantsTicks: Bool { learner.pending != nil && !learner.keyboardTapAvailable }

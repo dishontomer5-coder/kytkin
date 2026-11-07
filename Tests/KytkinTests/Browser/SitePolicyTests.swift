@@ -44,6 +44,8 @@ final class SitePolicyTests: XCTestCase {
         let p = policy(handlers: ["io.github.kytkin.Kytkin", "io.github.kytkin.Kytkin.dev"])
         XCTAssertNil(p.request(for: "io.github.kytkin.Kytkin"))
         XCTAssertNil(p.request(for: "io.github.kytkin.Kytkin.dev"))
+        XCTAssertNil(policy(handlers: ["IO.GitHub.Kytkin.Kytkin"]).request(for: "IO.GitHub.Kytkin.Kytkin"),
+                     "case-insensitive, like the assembler (QA)")
     }
 
     func testBrowserTurnedOffInSettings() {

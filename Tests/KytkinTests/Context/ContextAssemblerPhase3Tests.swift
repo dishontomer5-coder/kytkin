@@ -212,6 +212,40 @@ final class ContextAssemblerPhase3Tests: XCTestCase {
         XCTAssertEqual(a.current?.siteDomain, "a.com")
     }
 
+    // MARK: - QA (P3-5 + P3-6 merge)
+
+    func testBrowserObservationOverloadMapsEveryField() throws {
+        var a = makeAssembler()
+        XCTAssertNil(a.appActivated(bundleID: zen, pid: 20, awaitsSite: true))
+        let o = BrowserObservation(site: SiteAddress(host: "news.ynet.co.il", registrableDomain: "ynet.co.il",
+                                                     isWebPage: true),
+                                   pageState: .editingAddress, isPrivate: true, via: .addressBar)
+        XCTAssertNil(a.browserObserved(o, pid: 21), "stale pid")
+        let c = try XCTUnwrap(a.browserObserved(o, pid: 20))
+        XCTAssertEqual(c.host, "news.ynet.co.il")
+        XCTAssertEqual(c.siteDomain, "ynet.co.il")
+        XCTAssertEqual(c.isPrivateWindow, true)
+        XCTAssertEqual(c.pageState, .editingAddress)
+        XCTAssertEqual(c.generation, 1)
+    }
+
+    func testAnUnknownFirstReadReleasesTheGraceAtOnceAndTheLaterSiteIsOneMoreContext() throws {
+        // Documents the cold-start path: the first read can't tell (readiness retries follow on the AX thread), so the
+        // grace ends early with the app's rule; the site, when read, is a second Context (no flip back afterwards).
+        var a = makeAssembler()
+        XCTAssertNil(a.appActivated(bundleID: zen, pid: 20, awaitsSite: true))
+        clock.advance(byMilliseconds: 10)
+        let first = try XCTUnwrap(a.browserObserved(.unknown(), pid: 20))
+        XCTAssertEqual(first.pageState, .unknown)
+        XCTAssertNil(a.pendingDeadlineNanos)
+        clock.advance(byMilliseconds: 250)
+        let second = try XCTUnwrap(a.site("a.com", "a.com", pid: 20))
+        XCTAssertEqual(second.siteDomain, "a.com")
+        clock.advance(bySeconds: 1)
+        XCTAssertNil(a.flushIfDue())
+        XCTAssertEqual(a.current?.generation, 2)
+    }
+
     // MARK: - Page state
 
     func testPageStateOnlyChangeIsEmittedWithTheSiteKept() throws {

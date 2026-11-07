@@ -339,6 +339,13 @@ final class BrowserAddressReaderTests: XCTestCase {
             let zen = BrowserFixtures.zen(focus: .urlbar)
             XCTAssertEqual(r.read(zen.tree, now: 1).observation.pageState, .editingAddress)
             XCTAssertFalse(zen.tree.calls.contains(.string(.value, zen.urlbar)), "a focused bar is never read (D2)")
+            // QA: the Chromium omnibox is never read, focused (D2) or not (D16).
+            for focused in [true, false] {
+                let chrome = BrowserFixtures.chrome(omniboxFocused: focused)
+                var c = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
+                _ = c.read(chrome.tree, now: 0)
+                XCTAssertFalse(chrome.tree.calls.contains(.string(.value, chrome.omnibox)), "\(engine) \(focused)")
+            }
         }
     }
 }

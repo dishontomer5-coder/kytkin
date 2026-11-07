@@ -154,6 +154,11 @@ struct ContextAssembler {
         return apply(next)
     }
 
+    /// 001 §14.2/§14.5 signature: one browser read (P3-6's `BrowserObservation`; `via` is for diagnostics only).
+    mutating func browserObserved(_ o: BrowserObservation, pid: Int32) -> Context? {
+        browserObserved(site: o.site, pageState: o.pageState, isPrivate: o.isPrivate, pid: pid)
+    }
+
     /// P3-5: the hosts of all siteHost rules changed (AppController, on every preferences change). If the newest
     /// observed host differs from the one in the newest state and either is now an override, the host change
     /// counts after all, so an override the user just added for the page they're on applies at once.

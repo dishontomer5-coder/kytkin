@@ -57,7 +57,9 @@ struct SitePolicy: Sendable, Equatable {
     /// nil = don't attach.
     func request(for bundleID: String) -> BrowserWatchRequest? {
         guard siteRulesAvailable, suffixListLoaded, !bundleID.isEmpty else { return nil }
-        guard ownBundleIDPrefix.isEmpty || !bundleID.hasPrefix(ownBundleIDPrefix) else { return nil }
+        // Case-insensitive, like ContextAssembler's own-app check (bundle IDs compare without case).
+        guard ownBundleIDPrefix.isEmpty || !bundleID.lowercased().hasPrefix(ownBundleIDPrefix.lowercased())
+        else { return nil }
         guard siteRulesEnabled[bundleID] != false else { return nil }
         guard let engine = BrowserCatalog.engine(for: bundleID, opensWebLinks: webLinkHandlers.contains(bundleID))
         else { return nil }

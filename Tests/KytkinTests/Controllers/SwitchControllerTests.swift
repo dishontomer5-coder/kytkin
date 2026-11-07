@@ -272,6 +272,30 @@ final class SwitchControllerTests: XCTestCase {
         XCTAssertTrue(store.prefs.rules.isEmpty)
     }
 
+    func testACandidateMadeBeforeTheAppQuitIsDroppedNotConfirmed() {
+        make()
+        monitor.activate(notes, pid: 10)
+        userSwitch(to: IDs.hebrew)
+        XCTAssertNotNil(sut.learner.pending)
+        monitor.currentAppIsGone = true   // Notes quit; the next app's Context hasn't arrived yet
+        sut.wordBoundary(); sut.wordBoundary(); sut.wordBoundary()
+        XCTAssertNil(sut.learner.pending)
+        XCTAssertTrue(store.prefs.rules.isEmpty, "words typed after the quit don't confirm it")
+        XCTAssertTrue(sut.learnerDebug.contains("app quit"))
+    }
+
+    func testADwellCandidateIsDroppedWhenTheAppQuit() {
+        make(tap: false)
+        monitor.activate(notes, pid: 10)
+        userSwitch(to: IDs.hebrew)
+        XCTAssertTrue(sut.wantsTicks)
+        monitor.currentAppIsGone = true
+        clock.advance(bySeconds: 5)
+        sut.tick()
+        XCTAssertFalse(sut.wantsTicks)
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
     func testAQuitAppsRuleIsNotReappliedButTheNextAppsIs() {
         make(prefs(rules: [.app(notes, IDs.hebrew), .app(terminal, IDs.russian)]))
         monitor.activate(notes, pid: 10)
