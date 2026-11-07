@@ -14,6 +14,9 @@ struct MenuState: Equatable {
     /// DEBUG counter for checklist §P2-17 (counts only, never keys).
     var doubleShiftCount = 0
     var conflicts = Conflicts.none
+    /// P2-55: DEBUG line about learning (gate, candidate, last decision). IDs and reasons only, never typed text.
+    /// StatusItemController (P2-22) renders it in Debug builds.
+    var learnerDebug: String?
     /// "Quit & Reopen" hint (P2-46).
     var showsQuitAndReopen = false
 }

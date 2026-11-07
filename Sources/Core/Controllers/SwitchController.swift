@@ -13,6 +13,11 @@
 // Kytkin's own window (P2-39, 001 §12 W2): ContextMonitor ignores Kytkin, so `context.current` stays the previous
 //     app. While Kytkin is active the candidate is cancelled and external switches don't reach the learner; on
 //     resign the settle restarts, and the previous app's rule is re-applied if that app is frontmost again.
+// P2-55: only a *real* activation counts. Opening the status-bar menu can post NSApplication didBecomeActive while
+//     the other app stays frontmost (WindowServer only makes Kytkin the "key thief"), and the matching resign may never
+//     come. That left the gate stuck on: every later manual switch and word was dropped, so nothing was ever learned. The
+//     root now passes `isFrontmost`; a not-frontmost activation and an unpaired resign change nothing (no cancel), and
+//     any new Context clears the flag (another app is frontmost, so Kytkin can't be).
 // Pause (001 §5.1): session state, not persisted. Stops switching and learning; AppController also turns the tap
 //     off. Resuming re-applies the current app's rule.
 
@@ -44,6 +49,8 @@ import Foundation
     private var lastRuleSelect: (target: InputSourceID, atNanos: UInt64, generation: UInt64)?
     private var reassertedGeneration: UInt64?
     private var keyboardTapAvailable = false
+    /// P2-55: the learner's last decision or the last switch the gates dropped, for the DEBUG menu (IDs only).
+    private var lastLearnerNote: String?
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init) {
@@ -63,6 +70,7 @@ import Foundation
     // MARK: - Flow (a)
 
     func contextDidChange(_ c: Context) {
+        isOwnAppActive = false   // P2-55: another app is frontmost, so Kytkin's own window can't be
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
         applyRule(for: c)
     }
@@ -83,10 +91,19 @@ import Foundation
             handle(learner.handle(.ourSwitch(id)))
         case .external(let id, let t):
             conflicts.noteExternalSwitch()
-            if reassertIfFighting(id, at: t) { return }
-            guard !isOwnAppActive, !paused, let c = context.current, !isDisabled(c.bundleID) else { return }
+            if reassertIfFighting(id, at: t) { return note("switch to \(id.rawValue) re-asserted (fight)") }
+            if let reason = ignoreReason() { return note("switch to \(id.rawValue) ignored (\(reason))") }
             handle(learner.handle(.externalSwitch(id, atNanos: t)))
         }
+    }
+
+    /// P2-55: why an external switch doesn't reach the learner (nil = it does).
+    private func ignoreReason() -> String? {
+        if isOwnAppActive { return "Kytkin active" }
+        if paused { return "paused" }
+        guard let c = context.current else { return "no app" }
+        if isDisabled(c.bundleID) { return "app disabled" }
+        return nil
     }
 
     /// True when it re-asserted (the external change is then not a user preference to learn).
@@ -114,10 +131,52 @@ import Foundation
     var wantsTicks: Bool { learner.pending != nil && !learner.keyboardTapAvailable }
 
     private func handle(_ outcome: LearnOutcome?) {
-        guard let outcome, case .learn = outcome else { return }
+        guard let outcome else { return }
+        switch outcome {
+        case .discard(let reason):
+            return note("discarded (\(reason))")
+        case .learn(let scope, let source):
+            note("learned \(Self.describe(scope))→\(source.rawValue)")
+        }
         let date = now()
         store.update { $0.rules = RuleWriter.learn(outcome, into: $0.rules, now: date) }
         preferencesDidChange()
+    }
+
+    // MARK: - DEBUG diagnostics (P2-55)
+
+    /// One line for the DEBUG menu: the gate state, the pending candidate and the last decision. Bundle and
+    /// input-source IDs and reasons only; never typed text, and no site domain or chat key.
+    var learnerDebug: String {
+        let state: String
+        if isOwnAppActive {
+            state = "off while Kytkin is active"
+        } else if !learner.learningEnabled {
+            let g = store.prefs.general
+            let why = !g.learnFromManualSwitches ? "setting off" : !g.enabled ? "Kytkin off"
+                : paused ? "paused" : conflicts.conflicts.pausesLearning ? "per-document input" : "?"
+            state = "off (\(why))"
+        } else if let p = learner.pending {
+            let progress = learner.keyboardTapAvailable
+                ? "\(learner.pendingWords ?? 0)/\(learner.config.confirmWords) words" : "waiting for the dwell"
+            state = "candidate \(Self.describe(p.scope))→\(p.source.rawValue), \(progress)"
+        } else {
+            state = learner.keyboardTapAvailable ? "idle (words)" : "idle (dwell)"
+        }
+        return "Learner: \(state)" + (lastLearnerNote.map { "; last: \($0)" } ?? "")
+    }
+
+    private func note(_ s: String) {
+        lastLearnerNote = s
+    }
+
+    private static func describe(_ scope: RuleScope) -> String {
+        switch scope {
+        case .app(let bundleID): return bundleID
+        case .site: return "site"
+        case .siteHost: return "site host"
+        case .chat(let bundleID, _): return "chat in \(bundleID)"
+        }
     }
 
     // MARK: - Settings, conflicts, availability
@@ -145,17 +204,24 @@ import Foundation
 
     // MARK: - Kytkin's own window (P2-39)
 
-    func kytkinDidBecomeActive() {
+    /// `isFrontmost`: Kytkin really is the frontmost app (P2-55: false when only the status-bar menu opened).
+    /// True when it was taken as Kytkin's own window coming to the front.
+    @discardableResult func kytkinDidBecomeActive(isFrontmost: Bool = true) -> Bool {
+        guard isFrontmost else { return false }
         isOwnAppActive = true
         if let c = context.current { handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos))) }
+        return true
     }
 
-    /// `frontmostPID`: the app in front now (nil = unknown).
-    func kytkinDidResignActive(frontmostPID: Int32?) {
+    /// `frontmostPID`: the app in front now (nil = unknown). True when it ended Kytkin's own-window state; an unpaired
+    /// resign (P2-55: the status-bar menu closed) changes nothing, so it can't cancel a candidate.
+    @discardableResult func kytkinDidResignActive(frontmostPID: Int32?) -> Bool {
+        guard isOwnAppActive else { return false }
         isOwnAppActive = false
-        guard let c = context.current else { return }
+        guard let c = context.current else { return true }
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
         if frontmostPID == c.pid { applyRule(for: c) }
+        return true
     }
 
     // MARK: - Menu actions

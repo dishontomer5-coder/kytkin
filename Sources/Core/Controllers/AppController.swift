@@ -168,14 +168,16 @@ import Observation
     /// to the front or goes away. Without these resets the word buffer would carry the previous app's word into
     /// Settings, and (worse) words typed in Settings back into that app when the user returns with ⌘Tab (a
     /// duplicate activation, so no new Context): a later double-Shift there would backspace over the wrong text.
-    func kytkinDidBecomeActive() {
-        switching.kytkinDidBecomeActive()
+    /// P2-55: `isFrontmost` is false when only the status-bar menu opened (another app stays frontmost): that is not
+    /// Kytkin's own window, so nothing is reset or cancelled. The root reads it from NSWorkspace.
+    func kytkinDidBecomeActive(isFrontmost: Bool = true) {
+        guard switching.kytkinDidBecomeActive(isFrontmost: isFrontmost) else { return }
         keyWatcher.perform(.reset(.contextChange))
         afterEvent()
     }
 
     func kytkinDidResignActive(frontmostPID: Int32?) {
-        switching.kytkinDidResignActive(frontmostPID: frontmostPID)
+        guard switching.kytkinDidResignActive(frontmostPID: frontmostPID) else { return }   // P2-55: unpaired
         keyWatcher.perform(.reset(.contextChange))
         keyWatcher.checkSecureInputNow()      // P2-45: like any other app change
         afterEvent()
@@ -194,7 +196,7 @@ import Observation
                   secureInputOn: keyWatcherStatus.secureInputOn,
                   degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
                   tapReEnableCount: keyWatcherStatus.health.reEnableCount, doubleShiftCount: doubleShiftCount,
-                  conflicts: conflicts.conflicts,
+                  conflicts: conflicts.conflicts, learnerDebug: switching.learnerDebug,
                   showsQuitAndReopen: policy.showsQuitAndReopen(
                     needsRelaunch: permissions.status.inputMonitoringNeedsRelaunch))
     }
