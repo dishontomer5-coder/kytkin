@@ -137,6 +137,8 @@ import Observation
         webLinkHandlerIDs = webLinkHandlers()   // P3-14: before the first policy (the permission read may push one)
         conflicts.start()
         permissions.start()
+        // P3-7 (§14.7): a silent Automation check for the browsers the user turned on (never a prompt).
+        permissions.refreshAutomation(for: automationOptIns)
         applyPreferences(force: true)
         // P2-21: the processor learns the layout its strokes are typed in only from changes; tell it the
         // current one at launch, so the first double-Shift knows which way to convert.
@@ -167,6 +169,8 @@ import Observation
 
     func contextDidChange(_ c: Context) {
         cancelLooks()                 // the new app got its own rule
+        // P3-7 (§14.7): an opted-in browser came to the front → silent check (≤ 1 per 5 s; catches a revoke).
+        if automationOptIns.contains(c.bundleID) { permissions.refreshAutomation(for: [c.bundleID]) }
         let change = switching.contextDidChange(c)
         // P3-19: a `.page` ↔ `.unknown` flip (one AX timeout) or a bar ↔ AXURL source change on the same site is not a
         // move to another text box: resetting the word buffer there could abort a convert mid-word. Into or out of
@@ -177,6 +181,11 @@ import Observation
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
         retryTapAfterLaunchTimeout()          // P2-52 item 2: at most once per run
         afterEvent()
+    }
+
+    /// P3-7: the browsers the user turned Automation on for.
+    private var automationOptIns: Set<String> {
+        Set(store.prefs.browsers.appleEventsOptIn.filter(\.value).keys)
     }
 
     /// P3-19: page-state-only changes between `.page` and `.unknown` (either way, or the same state with another

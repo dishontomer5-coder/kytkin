@@ -16,6 +16,10 @@
 //   5. The strategy reads. A `.site`/`.notWebPage` updates the window's kept site; anything else reports the kept site.
 // The first timeout stops the read (`LatchedAXTree`) → `.unknown` with the kept site. `invalidElement` drops the
 // window's cached handles and allows one rescan.
+// P3-7 (001 §14.7, D9): with an opted-in, granted browser (`appleEvents` set by the engine), step 4 asks the window's
+// private flag by Apple Event once per window when the AX probe gave nil (Chromium/Arc), and a read that ends
+// `.unknown` with a window (step 5, or an AX timeout) asks for the address by Apple Event. ≤ 1 send per second:
+// a send the rate limit holds back sets `appleEventRetryAt`, and the engine reads again then.
 // Kept sites are hosts in memory only and die with the reader (one reader per attach).
 
 /// Limits shared by the reader and its strategies (B13). Not inside the generic reader: generic types can't have
@@ -68,6 +72,13 @@ struct BrowserWindowState<Node> {
     /// nil = not probed yet; `.some(nil)` = probed, can't tell.
     var isPrivate: Bool??
     var lastFullScanAt: UInt64?
+    /// P3-7: the private flag an Apple Event gave for this window (nil = not asked yet; `.some(nil)` = asked, can't
+    /// tell). A window's private mode can't change, so it is asked once per window and kept for the attach.
+    var appleEventPrivate: Bool??
+    /// P3-7: the page state the last Apple Event address gave in this window (`.page` / `.notWebPage`) while AX keeps
+    /// answering `.unknown`. A read the rate limit kept from sending reports it, so one held-back send doesn't flip
+    /// the page to `.unknown` and back (D5: that would cancel a learning candidate). Cleared by any AX answer.
+    var appleEventState: BrowserPageState?
 
     init(window: Node) {
         self.window = window
@@ -127,6 +138,11 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
     /// P3-10: with a clock, a read also stops once it has run for `AXReadLatch.readBudgetNanos` (B13: a slow browser
     /// that answers each call just under the 0.25 s timeout). The AX thread sets it; nil = first-timeout rule only.
     var deadlineClock: (any Clock)?
+    /// P3-7: set by the engine only when `request.appleScript != nil` (opted in, granted, Kytkin on). nil = no Apple
+    /// Events from this reader at all.
+    var appleEvents: AppleEventSession?
+    /// P3-7: a wanted Apple Event was held back by the rate limit; read again at this time (the engine takes it).
+    private(set) var appleEventRetryAt: UInt64?
 
     init(request: BrowserWatchRequest, siteReader: SiteReader) {
         self.init(request: request, siteReader: siteReader, strategy: Self.defaultStrategy(for: request.engine),
@@ -171,9 +187,20 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         } catch {
             guard sawWindow, !windows.isEmpty else { return (.unknown(), sawWindow) }
             if error == .invalidElement { windows[0].dropHandles() }
-            let isPrivate = windows[0].isPrivate ?? request.privateFlag(probed: nil)
-            return (.unknown(kept: windows[0].lastSite, isPrivate: isPrivate), sawWindow)
+            let probed: Bool? = (windows[0].isPrivate ?? nil) ?? (windows[0].appleEventPrivate ?? nil)
+            let isPrivate = request.privateFlag(probed: probed)
+            let kept = BrowserObservation.unknown(kept: windows[0].lastSite, isPrivate: isPrivate)
+            // P3-7: an AX timeout with a window is "couldn't tell" too (§14.7 rule 1); not in an ignored private
+            // window (D12).
+            guard request.readsAddress(isPrivate: isPrivate) else { return (kept, sawWindow) }
+            return (appleEventAddress(after: kept, now: now), sawWindow)
         }
+    }
+
+    /// P3-7: the engine takes the retry time after each read (nil = none wanted).
+    mutating func takeAppleEventRetry() -> UInt64? {
+        defer { appleEventRetryAt = nil }
+        return appleEventRetryAt
     }
 
     // MARK: - Prelude
@@ -190,7 +217,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             windows[0].webArea = top   // a top-level web area of this window: the next walk may stop at it
         }
 
-        let isPrivate: Bool?
+        var isPrivate: Bool?
         if let cached = windows[0].isPrivate {
             isPrivate = cached
         } else if request.alwaysPrivate {
@@ -200,6 +227,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             isPrivate = try privateProbe(tree, window)   // P3-16's probe; nil until it lands
             windows[0].isPrivate = .some(isPrivate)
         }
+        if isPrivate == nil { isPrivate = appleEventPrivateFlag(now: now) }   // P3-7: only when AX can't tell
         guard request.readsAddress(isPrivate: isPrivate) else {
             return BrowserObservation(site: nil, pageState: .unknown, isPrivate: true, via: .kept)   // D12: not read
         }
@@ -207,7 +235,64 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         let prelude = BrowserReadPrelude(focused: focused, window: window, focusClass: walk.focusClass,
                                          webAreaFromFocus: walk.webArea, webAreaInWindow: walk.webAreaInWindow)
         let outcome = try strategy.read(tree, prelude: prelude, window: &windows[0], siteReader: siteReader, now: now)
-        return Self.observation(from: outcome, window: &windows[0], isPrivate: isPrivate)
+        let observation = Self.observation(from: outcome, window: &windows[0], isPrivate: isPrivate)
+        switch observation.pageState {
+        case .page, .notWebPage: windows[0].appleEventState = nil   // AX answered: it wins
+        case .editingAddress: return observation                     // never an Apple Event while editing (D2)
+        case .unknown: break
+        }
+        return appleEventAddress(after: observation, now: now)
+    }
+
+    // MARK: - Apple Events (P3-7, 001 §14.7)
+
+    /// Rule 2: the window's private flag by Apple Event, once per window, when the AX probe gave nil.
+    private mutating func appleEventPrivateFlag(now: UInt64) -> Bool? {
+        guard let session = appleEvents, session.dialect.hasPrivateFlag else { return nil }
+        if let asked = windows[0].appleEventPrivate { return asked }
+        switch session.readPrivateFlag(now: now) {
+        case .answered(let flag):
+            windows[0].appleEventPrivate = .some(flag)
+            return flag
+        case .notSent(let retryAt):
+            noteRetry(retryAt)
+            return nil
+        }
+    }
+
+    /// Rule 1: the read couldn't tell (`.unknown`) and saw a window → ask for the address. The caller has checked
+    /// that `windows[0]` may be read (D12) and isn't being edited (D2).
+    private mutating func appleEventAddress(after observation: BrowserObservation,
+                                            now: UInt64) -> BrowserObservation {
+        guard let session = appleEvents,
+              AppleEventFallback.wantsAddress(pageState: observation.pageState, sawWindow: true) else {
+            return observation
+        }
+        let isPrivate = observation.isPrivate
+        switch session.readAddress(siteReader: siteReader, now: now) {
+        case .answered(.site(let site)):
+            windows[0].lastSite = site
+            windows[0].appleEventState = .page
+            return BrowserObservation(site: site, pageState: .page, isPrivate: isPrivate, via: .appleEvent)
+        case .answered(.notWebPage):
+            windows[0].lastSite = nil
+            windows[0].appleEventState = .notWebPage
+            return BrowserObservation(site: nil, pageState: .notWebPage, isPrivate: isPrivate, via: .appleEvent)
+        case .answered(.unreadable), .answered(nil):
+            windows[0].appleEventState = nil
+            return observation
+        case .notSent(let retryAt):
+            noteRetry(retryAt)
+            // Held back by the rate limit: keep reporting what the last Apple Event said in this window.
+            guard let state = windows[0].appleEventState else { return observation }
+            return BrowserObservation(site: state == .page ? windows[0].lastSite : nil, pageState: state,
+                                      isPrivate: isPrivate, via: .appleEvent)
+        }
+    }
+
+    private mutating func noteRetry(_ at: UInt64?) {
+        guard let at else { return }
+        appleEventRetryAt = min(appleEventRetryAt ?? at, at)
     }
 
     /// The main window; else the focused window when it's a standard window (not Chrome's popup).

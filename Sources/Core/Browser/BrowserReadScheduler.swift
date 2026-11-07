@@ -11,6 +11,8 @@
 //                           Any read that saw a window and gave something other than `.unknown` ends them.
 //   safety poll           → 2 s after the last read while attached (a read for any reason resets it).
 //   detached              → no deadline at all: no timer, no AX calls (B15).
+//   Apple Event retry     → P3-7: a read wanted an Apple Event but the 1 s rate limit held it back: read again at
+//                           the time the limit allows (`readAgain(at:)`).
 // Several due reasons coalesce into one read, and a read covers every trigger before it.
 
 struct BrowserReadScheduler: Sendable {
@@ -26,8 +28,15 @@ struct BrowserReadScheduler: Sendable {
     private var retryBase: UInt64?        // the attach read's time; nil = no retries pending
     private var retryIndex = 0
     private var pollAt: UInt64?
+    private var againAt: UInt64?          // P3-7: an Apple Event held back by the rate limit
 
     init() {}
+
+    /// P3-7: read again at `at` (the time the Apple Event rate limit allows the next send). The earliest one wins.
+    mutating func readAgain(at: UInt64) {
+        guard isAttached else { return }
+        againAt = min(againAt ?? at, at)
+    }
 
     /// The browser became frontmost (or its request changed): read at once.
     mutating func attached(now: UInt64) {
@@ -80,6 +89,7 @@ struct BrowserReadScheduler: Sendable {
         if let i = immediateAt { deadline = min(deadline ?? i, i) }
         if let b = burstDeadline { deadline = min(deadline ?? b, b) }
         if let r = retryDeadline { deadline = min(deadline ?? r, r) }
+        if let a = againAt { deadline = min(deadline ?? a, a) }
         return deadline
     }
 
@@ -91,6 +101,7 @@ struct BrowserReadScheduler: Sendable {
         burstDeadline = nil
         burstFirstAt = nil
         if let r = retryDeadline, r <= now { retryIndex += 1 }
+        if let a = againAt, a <= now { againAt = nil }
         pollAt = now + Self.pollNanos   // readFinished re-arms it from the read's end
         return true
     }

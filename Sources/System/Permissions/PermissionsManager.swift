@@ -6,7 +6,10 @@
 // didActivateApplication), Kytkin becoming active (NSApplication.didBecomeActive, e.g. back from System
 // Settings), and a repeating main-run-loop timer at `PermissionMonitor.pollIntervalNanos`.
 // Reads never prompt. `request…`/`openSystemSettings` are for user clicks only (onboarding / Permissions tab).
-// Automation per browser is Phase 3 (P3-7): `automation` is always empty for now.
+// P3-7: Automation per browser. Silent checks (`refreshAutomation`) and the click-only request run on a background
+// queue (AEDeterminePermissionToAutomateTarget may block; with the prompt it blocks until the user answers) and
+// come back to main. Core's `AutomationPermissionTracker` holds the states and the 5 s throttle. Without the two
+// automation seams (tests that don't test it) nothing about Automation is ever checked or asked.
 // P2-45: Secure Input is not read or published here; KeyWatcher is its only owner (001 §12.2 W5).
 // Never logs.
 
@@ -26,6 +29,11 @@ import Observation
     @ObservationIgnored private(set) var scheduledPollNanos: UInt64?
 
     @ObservationIgnored private let probe: PermissionProbing
+    @ObservationIgnored private let clock: any Clock
+    @ObservationIgnored private let automationProbe: (any AutomationPermissionChecking)?
+    @ObservationIgnored private let automationRequester: (any AutomationPermissionRequesting)?
+    @ObservationIgnored private let background: Background
+    @ObservationIgnored private var automationTracker = AutomationPermissionTracker()
     @ObservationIgnored private let requester: PermissionRequesting
     @ObservationIgnored private var monitor: PermissionMonitor
     @ObservationIgnored private let workspaceCenter: NotificationCenter
@@ -36,12 +44,31 @@ import Observation
 
     /// No defaults for the seams on purpose: only the composition root (P2-20) passes the real
     /// `SystemPermissionProbe` / `SystemPermissionRequester`; tests pass fakes and private notification centers.
+    /// P3-7: runs `work` off main, then `done` on main. The app uses a utility queue + main queue; tests run both at
+    /// once, in order.
+    typealias Background = (_ work: @escaping @Sendable () -> AutomationCheckResult,
+                            _ done: @escaping @MainActor @Sendable (AutomationCheckResult) -> Void) -> Void
+
+    static let defaultBackground: Background = { work, done in
+        DispatchQueue.global(qos: .utility).async {
+            let result = work()
+            DispatchQueue.main.async { done(result) }
+        }
+    }
+
     init(probe: PermissionProbing,
          requester: PermissionRequesting,
          clock: any Clock = SystemClock(),
          workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
-         appCenter: NotificationCenter = .default) {
+         appCenter: NotificationCenter = .default,
+         automationProbe: (any AutomationPermissionChecking)? = nil,
+         automationRequester: (any AutomationPermissionRequesting)? = nil,
+         background: @escaping Background = PermissionsManager.defaultBackground) {
         self.probe = probe
+        self.clock = clock
+        self.automationProbe = automationProbe
+        self.automationRequester = automationRequester
+        self.background = background
         self.requester = requester
         self.workspaceCenter = workspaceCenter
         self.appCenter = appCenter
@@ -101,6 +128,39 @@ import Observation
     /// User click only.
     func openSystemSettings(_ pane: PermissionPane) {
         requester.openSettings(pane.settingsURL)
+    }
+
+    // MARK: - Automation (P3-7)
+
+    /// Silent; ≤ 1 per 5 s per browser.
+    func refreshAutomation(for bundleIDs: Set<String>) {
+        guard let automationProbe else { return }
+        let now = clock.nowNanos
+        for id in bundleIDs.sorted() where automationTracker.beginSilentCheck(id, now: now) {
+            background({ automationProbe.check(bundleID: id) }) { [weak self] result in
+                self?.automationAnswered(id, result)
+            }
+        }
+    }
+
+    /// User click only (the Automation toggle turned on, or the row's "Ask").
+    func requestAutomation(for bundleID: String) {
+        guard let automationRequester else { return }
+        automationTracker.beginRequest(bundleID, now: clock.nowNanos)
+        background({ automationRequester.ask(bundleID: bundleID) }) { [weak self] result in
+            self?.automationAnswered(bundleID, result)
+        }
+    }
+
+    /// User click only.
+    func openAutomationSettings() {
+        requester.openSettings(PermissionPane.automationSettingsURL)
+    }
+
+    private func automationAnswered(_ bundleID: String, _ result: AutomationCheckResult) {
+        guard automationTracker.ingest(bundleID, result), let next = monitor.setAutomation(automationTracker.states) else { return }
+        status = next
+        onChange?(next)
     }
 
     // MARK: - Internal (the timer calls it; tests call it directly instead of waiting)

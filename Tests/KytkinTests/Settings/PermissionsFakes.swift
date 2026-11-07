@@ -7,6 +7,7 @@ import Foundation
     enum Call: Equatable {
         case start, stop, refresh, setInteractive(Bool)
         case requestAccessibility, requestInputMonitoring, openSystemSettings(PermissionPane)
+        case refreshAutomation(Set<String>), requestAutomation(String), openAutomationSettings
     }
 
     var status = PermissionStatus()
@@ -20,12 +21,16 @@ import Foundation
     func requestAccessibility() { calls.append(.requestAccessibility) }
     func requestInputMonitoring() { calls.append(.requestInputMonitoring) }
     func openSystemSettings(_ pane: PermissionPane) { calls.append(.openSystemSettings(pane)) }
+    func refreshAutomation(for bundleIDs: Set<String>) { calls.append(.refreshAutomation(bundleIDs)) }
+    func requestAutomation(for bundleID: String) { calls.append(.requestAutomation(bundleID)) }
+    func openAutomationSettings() { calls.append(.openAutomationSettings) }
 
     /// Calls that show system UI (a permission dialog or System Settings).
     var promptingCalls: [Call] {
         calls.filter {
             switch $0 {
-            case .requestAccessibility, .requestInputMonitoring, .openSystemSettings: true
+            case .requestAccessibility, .requestInputMonitoring, .openSystemSettings, .requestAutomation,
+                 .openAutomationSettings: true
             default: false
             }
         }
@@ -33,6 +38,12 @@ import Foundation
 
     var interactiveCalls: [Bool] {
         calls.compactMap { if case .setInteractive(let v) = $0 { v } else { nil } }
+    }
+
+    /// P3-7: a browser's Automation state, as a silent check would publish it.
+    func set(automation bundleID: String, _ state: PermissionState?) {
+        status.grants.automation[bundleID] = state
+        onChange?(status)
     }
 
     func set(accessibility: PermissionState, inputMonitoring: PermissionState = .notDetermined,

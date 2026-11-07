@@ -42,6 +42,8 @@ final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificatio
     private let timer: any DeadlineTimer
     private let deliver: Deliver
     private let makeReader: (BrowserWatchRequest) -> BrowserAddressReader<Tree>
+    /// P3-7: the Automation fallback (nil = none: tests that don't test it, or no live sender).
+    private let appleEvents: AppleEventFallback?
 
     private struct Attached {
         let pid: Int32
@@ -70,8 +72,10 @@ final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificatio
 
     init(clock: any Clock, siteReader: SiteReader, makeTree: @escaping (Int32) -> Tree,
          makeObserver: @escaping () -> Observer, timer: any DeadlineTimer, deliver: @escaping Deliver,
-         makeReader: ((BrowserWatchRequest) -> BrowserAddressReader<Tree>)? = nil) {
+         makeReader: ((BrowserWatchRequest) -> BrowserAddressReader<Tree>)? = nil,
+         appleEvents: AppleEventFallback? = nil) {
         self.clock = clock
+        self.appleEvents = appleEvents
         self.makeTree = makeTree
         self.makeObserver = makeObserver
         self.timer = timer
@@ -92,6 +96,11 @@ final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificatio
         let now = clock.nowNanos
         var reader = makeReader(request)
         reader.deadlineClock = clock   // B13: a read stops after 0.5 s wall
+        // P3-7 (§14.7): Apple Events only with a dialect in the request (opted in ∧ granted ∧ Kytkin on).
+        if let dialect = request.appleScript, let appleEvents {
+            appleEvents.attached(pid: pid)
+            reader.appleEvents = AppleEventSession(pid: pid, dialect: dialect, fallback: appleEvents)
+        }
         let observer = makeObserver()
         attached = Attached(pid: pid, attachID: attachID, request: request, tree: makeTree(pid), reader: reader,
                             observer: observer)
@@ -161,6 +170,7 @@ final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificatio
         let (observation, sawWindow) = a.reader.read(a.tree, now: start)
         readCount += 1
         scheduler.readFinished(observation, sawWindow: sawWindow, now: clock.nowNanos)
+        if let at = a.reader.takeAppleEventRetry() { scheduler.readAgain(at: at) }   // P3-7: rate-limited send
         if a.request.engine == .gecko { updateBarWatch(&a) }
         let changed = a.lastPosted.map { !observation.hasSameFacts(as: $0) } ?? true
         if changed { a.lastPosted = observation }
