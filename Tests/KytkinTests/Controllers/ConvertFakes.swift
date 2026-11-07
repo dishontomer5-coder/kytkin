@@ -60,7 +60,7 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     let log: ConvertLog
     var focus: FocusInfo?
     var results: [StepKind: StepOutcome] = [:]
-    /// What `axReadBeforeCaret` finds when it succeeds.
+    /// What `axReadRunBeforeCaret` finds when it succeeds.
     var foundWord: String?
     /// Runs inside every `perform` (e.g. to move a fake clock past the budget).
     var onPerform: (() -> Void)?
@@ -95,6 +95,15 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return outcome
     }
 
+    func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
+        let step = ReplacementStep.axReadRunBeforeCaret(maxChars: maxChars)
+        log.add(.perform(step))
+        onPerform?()
+        let outcome = results[.read] ?? .done
+        if outcome.verdict == .done { wordBeforeCaret = foundWord }
+        return outcome
+    }
+
     func endReplacement() {
         log.add(.end)
         heldOld = nil
@@ -111,7 +120,7 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         case .axWriteSelection: .axWrite
         case .typeOverSelection: .typeOver
         case .backspaceAndType: .backspace
-        case .axReadBeforeCaret: .read
+        case .axReadRunBeforeCaret: .read
         case .pasteboard: .paste
         case .keyCodesAfterSwitch: .keyCodes
         }

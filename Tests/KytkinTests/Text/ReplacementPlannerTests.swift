@@ -114,12 +114,12 @@ final class ReplacementPlannerTests: XCTestCase {
     }
 
     func testTerminalLastWordIsBackspaceAndTypeOnly() {
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
+        XCTAssertEqual(plan(.convertRun, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
                             focus: field()), .steps([.backspaceAndType(count: 4)]))
         // Stale buffer: no AX path in a terminal, so a beep.
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.mitchellh.ghostty", snap: nil, focus: field()),
+        XCTAssertEqual(plan(.convertRun, bundle: "com.mitchellh.ghostty", snap: nil, focus: field()),
                        .refuse(.bufferStale))
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
+        XCTAssertEqual(plan(.convertRun, bundle: "com.mitchellh.ghostty", snap: snapshot(), typed: 4,
                             focus: field(), paste: true), .steps([.backspaceAndType(count: 4)]))
     }
 
@@ -129,7 +129,7 @@ final class ReplacementPlannerTests: XCTestCase {
             let steps = plan(kind, snap: snapshot(), typed: 4, focus: field(selection: "x"), caps: c, paste: true).steps
             XCTAssertFalse(steps.contains(.pasteboard), "\(kind)")
             XCTAssertFalse(steps.contains(.axWriteSelection(verify: true)), "\(kind)")
-            XCTAssertFalse(steps.contains(.axReadBeforeCaret(maxChars: 64)), "\(kind)")
+            XCTAssertFalse(steps.contains(.axReadRunBeforeCaret(maxChars: 256)), "\(kind)")
         }
     }
 
@@ -189,49 +189,90 @@ final class ReplacementPlannerTests: XCTestCase {
         }
     }
 
-    func testLastWordIgnoresTheSelectionCheck() {
-        // The control-character rule is about the selection only; the last word is rebuilt from strokes.
-        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(), typed: 4, focus: field(selection: "a\nb")),
+    func testRunIgnoresTheSelectionCheck() {
+        // The control-character rule is about the selection only; the buffer run is rebuilt from strokes.
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(), typed: 4, focus: field(selection: "a\nb", readsCaret: false)),
                        .steps([.backspaceAndType(count: 4)]))
     }
 
-    // MARK: - Last word
+    // MARK: - Run (P2-59, 001 §12.3 X4)
 
-    func testValidBufferIsBackspaceAndType() {
-        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(), typed: 4, focus: field()),
+    private let read = ReplacementStep.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars)
+    private let ax = ReplacementStep.axWriteSelection(verify: true)
+
+    /// A buffer of `words` words of 2 strokes, `gap` spaces between them, and `trailing` spaces after the last
+    /// (then `strokes` is empty). The planner reads only whether there is a run; the count is `typedLength`.
+    private func run(words: Int, trailing: Bool = false) -> WordSnapshot {
+        let w = [Stroke(keyCode: 0, layer: .plain), Stroke(keyCode: 1, layer: .plain)]
+        let previous = Array(repeating: w, count: trailing ? words : words - 1)
+        return WordSnapshot(strokes: trailing ? [] : w, previousWords: previous,
+                            renderedIn: InputSourceID("com.apple.keylayout.ABC"), isValid: !trailing)
+    }
+
+    func testMaxRunReadIs256Units() {
+        XCTAssertEqual(ReplacementPlanner.maxRunReadChars, 256)
+    }
+
+    func testReadableFieldReadsTheRunFirstThenAXThenTheBufferKeys() {
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(), typed: 4, focus: field()), .steps([read, ax,
+                                                                                              .backspaceAndType(count: 4)]))
+        XCTAssertEqual(plan(.convertRun, snap: run(words: 3), typed: 8, focus: field()),
+                       .steps([read, ax, .backspaceAndType(count: 8)]))
+        // Trailing spaces: no current word, still a run (`isValid` keeps its P4 meaning).
+        XCTAssertEqual(plan(.convertRun, snap: run(words: 2, trailing: true), typed: 6, focus: field()),
+                       .steps([read, ax, .backspaceAndType(count: 6)]))
+    }
+
+    func testReadableFieldWithoutABufferRunIsAXOnly() {
+        let expected = ReplacementPlan.steps([read, ax])
+        XCTAssertEqual(plan(.convertRun, snap: nil, focus: field()), expected)
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(valid: false), typed: 4, focus: field()), expected,
+                       "strokes that aren't valid are no run")
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(), typed: nil, focus: field()), expected,
+                       "typedRun was nil: dead key or combining mark, no key step")
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(count: 0), typed: 0, focus: field()), expected)
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(), typed: 0, focus: field()), expected)
+    }
+
+    func testUnreadableFieldTypesTheWholeBuffer() {
+        XCTAssertEqual(plan(.convertRun, snap: run(words: 3), typed: 8, focus: field(readsCaret: false)),
+                       .steps([.backspaceAndType(count: 8)]))
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(), typed: 4, focus: field(settable: false)),
                        .steps([.backspaceAndType(count: 4)]))
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.apple.Terminal", snap: snapshot(), typed: 4,
-                            focus: field()), .steps([.backspaceAndType(count: 4)]))
+    }
+
+    func testKeysOnlyAndTerminalNeverReadThroughAX() {
+        for id in ["com.apple.Terminal", "com.mitchellh.ghostty", "com.microsoft.VSCode", "com.google.Chrome"] {
+            XCTAssertEqual(plan(.convertRun, bundle: id, snap: run(words: 3), typed: 8, focus: field()),
+                           .steps([.backspaceAndType(count: 8)]), id)
+            XCTAssertEqual(plan(.convertRun, bundle: id, snap: nil, focus: field()), .refuse(.bufferStale), id)
+            XCTAssertEqual(plan(.convertRun, bundle: id, snap: snapshot(), typed: nil, focus: field()),
+                           .refuse(.noMethod), "\(id): a run that can't be counted")
+        }
     }
 
     func testBackspaceCountIsTheTypedLengthNotTheStrokeCount() {
         // A stroke can render as 0 or several graphemes; the controller counts what is on screen.
-        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(count: 3), typed: 5, focus: field()),
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(count: 3), typed: 5, focus: field(readsCaret: false)),
                        .steps([.backspaceAndType(count: 5)]))
     }
 
-    func testStaleBufferReadsBeforeCaretThenWritesAX() {
-        let expected = ReplacementPlan.steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)])
-        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(valid: false), typed: 4, focus: field()), expected)
-        XCTAssertEqual(plan(.convertLastWord, snap: nil, focus: field()), expected)
-        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(), typed: nil, focus: field()), expected)
-        XCTAssertEqual(plan(.convertLastWord, snap: snapshot(count: 0), typed: 0, focus: field()), expected)
-    }
-
-    func testStaleBufferWithoutAXRefuses() {
-        XCTAssertEqual(plan(.convertLastWord, snap: nil, focus: field(readsCaret: false)), .refuse(.bufferStale))
-        XCTAssertEqual(plan(.convertLastWord, snap: nil, focus: field(settable: false)), .refuse(.bufferStale))
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.apple.Terminal", snap: nil, focus: field()),
+    func testNoBufferAndNoAXRefuses() {
+        XCTAssertEqual(plan(.convertRun, snap: nil, focus: field(readsCaret: false)), .refuse(.bufferStale))
+        XCTAssertEqual(plan(.convertRun, snap: nil, focus: field(settable: false)), .refuse(.bufferStale))
+        XCTAssertEqual(plan(.convertRun, bundle: "com.apple.Terminal", snap: nil, focus: field()),
                        .refuse(.bufferStale))
         var c = ReplacementCapabilities()
         c.record(.failedVerify, of: .axWriteSelection(verify: true), for: textEdit)
-        XCTAssertEqual(plan(.convertLastWord, snap: nil, focus: field(), caps: c), .refuse(.bufferStale))
+        XCTAssertEqual(plan(.convertRun, snap: nil, focus: field(), caps: c), .refuse(.bufferStale))
+        XCTAssertEqual(plan(.convertRun, snap: snapshot(), typed: 4, focus: field(), caps: c),
+                       .steps([.backspaceAndType(count: 4)]), "AX broken here: the buffer keys only")
     }
 
-    func testNoUnicodeAppWithValidBufferFallsBackToAX() {
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.vmware.fusion", snap: snapshot(), typed: 4, focus: field()),
-                       .steps([.axReadBeforeCaret(maxChars: 64), .axWriteSelection(verify: true)]))
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.vmware.fusion", snap: snapshot(), typed: 4,
+    func testNoUnicodeAppIsAXOnly() {
+        XCTAssertEqual(plan(.convertRun, bundle: "com.vmware.fusion", snap: snapshot(), typed: 4, focus: field()),
+                       .steps([read, ax]))
+        XCTAssertEqual(plan(.convertRun, bundle: "com.vmware.fusion", snap: snapshot(), typed: 4,
                             focus: field(settable: false)), .refuse(.noMethod))
     }
 
@@ -253,7 +294,7 @@ final class ReplacementPlannerTests: XCTestCase {
 
     // MARK: - Hard rules (every kind)
 
-    private let allKinds: [ReplacementRequest.Kind] = [.convertSelection, .convertLastWord, .autoFix, .undoFix]
+    private let allKinds: [ReplacementRequest.Kind] = [.convertSelection, .convertRun, .autoFix, .undoFix]
 
     func testNeverPlansForASecureField() {
         for kind in allKinds {
@@ -290,9 +331,9 @@ final class ReplacementPlannerTests: XCTestCase {
     func testHardRulesComeBeforeEveryOtherCheck() {
         // Secure wins over composing, and both win over missing selection / stale buffer / keys-only hints.
         XCTAssertEqual(plan(.convertSelection, focus: field(secure: true, marked: true)), .refuse(.secureField))
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.apple.Terminal", focus: field(marked: true)),
+        XCTAssertEqual(plan(.convertRun, bundle: "com.apple.Terminal", focus: field(marked: true)),
                        .refuse(.composing))
-        XCTAssertEqual(plan(.convertLastWord, bundle: "com.apple.Terminal", snap: snapshot(), typed: 4,
+        XCTAssertEqual(plan(.convertRun, bundle: "com.apple.Terminal", snap: snapshot(), typed: 4,
                             focus: field(role: "AXSecureTextField", settable: false, readsCaret: false)),
                        .refuse(.secureField))
     }

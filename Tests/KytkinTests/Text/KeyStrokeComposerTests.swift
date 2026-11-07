@@ -1,5 +1,5 @@
-// P2-18: KeyStrokeComposer, SyntheticKeyEvent and WordBeforeCaret: chunking at grapheme boundaries, the
-// control-character guard, the `ours` marker, and the whitespace-only word scan.
+// P2-18: KeyStrokeComposer and SyntheticKeyEvent: chunking at grapheme boundaries, the control-character guard and
+// the `ours` marker. (P2-59: the scan before the caret is RunBeforeCaret now, see RunBeforeCaretTests.)
 
 import XCTest
 
@@ -73,23 +73,5 @@ final class KeyStrokeComposerTests: XCTestCase {
             XCTAssertEqual(chunks.flatMap { $0 }, Array(text.utf16))
             for c in chunks { XCTAssertNotNil(SyntheticKeyEvent.text(c, keyDown: true), "no split surrogates") }
         }
-    }
-
-    // MARK: - Word before the caret
-
-    func testWordScanStopsAtWhitespaceOnly() {
-        XCTAssertEqual(WordBeforeCaret.lastWord(in: "hello ,usv", reachesFieldStart: true), ",usv")
-        XCTAssertEqual(WordBeforeCaret.lastWord(in: "a g,h", reachesFieldStart: true), "g,h")
-        XCTAssertEqual(WordBeforeCaret.lastWord(in: "line\n;kt", reachesFieldStart: true), ";kt")
-        XCTAssertEqual(WordBeforeCaret.lastWord(in: "tab\tשָׁלוֹם", reachesFieldStart: true), "שָׁלוֹם")
-        XCTAssertEqual(WordBeforeCaret.lastWord(in: "akuo", reachesFieldStart: true), "akuo")
-    }
-
-    func testWordScanReturnsNothingWhenUnsure() {
-        XCTAssertNil(WordBeforeCaret.lastWord(in: "hello ", reachesFieldStart: true))
-        XCTAssertNil(WordBeforeCaret.lastWord(in: "", reachesFieldStart: true))
-        XCTAssertNil(WordBeforeCaret.lastWord(in: "abcdef", reachesFieldStart: false), "may be cut off")
-        XCTAssertEqual(WordBeforeCaret.lastWord(in: "xyz abc", reachesFieldStart: false), "abc")
-        XCTAssertNil(WordBeforeCaret.lastWord(in: "a b\u{0}c", reachesFieldStart: true))
     }
 }

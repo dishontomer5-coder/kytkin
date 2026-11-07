@@ -68,7 +68,7 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         c.record(.unavailable, of: .axWriteSelection(verify: true), for: app)
         c.record(.done, of: .axWriteSelection(verify: true), for: app)
         c.record(.failedVerify, of: .typeOverSelection, for: app)
-        c.record(.failedVerify, of: .axReadBeforeCaret(maxChars: 64), for: app)
+        c.record(.failedVerify, of: .axReadRunBeforeCaret(maxChars: 64), for: app)
         XCTAssertFalse(c.isAXWriteBroken(for: app))
         c.record(.failedVerify, of: .axWriteSelection(verify: true), for: app)
         XCTAssertTrue(c.isAXWriteBroken(for: app))

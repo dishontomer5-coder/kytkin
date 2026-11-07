@@ -31,6 +31,12 @@ final class FakeTextField: AXTextElement {
     var reportedRange: TextRange?
     /// Reads of these attributes time out.
     var timeouts: Set<AXTextAttribute> = []
+    /// P2-59: setting a caret (an empty range) fails, so a selection can't be collapsed.
+    var rejectsCaretRanges = false
+    /// P2-59: `AXStringForRange` answers this instead of the real text (an app returning the wrong length).
+    var stringForRangeOverride: String?
+    /// P2-59: every range `AXStringForRange` was asked for.
+    private(set) var stringRangesRead: [TextRange] = []
 
     private(set) var reads: [AXTextAttribute] = []
     private(set) var writes: [AXTextAttribute] = []
@@ -84,6 +90,8 @@ final class FakeTextField: AXTextElement {
 
     func string(in r: TextRange) -> Result<String, AXAccessError> {
         guard supportsStringForRangeValue else { return .failure(.unsupported) }
+        stringRangesRead.append(r)
+        if let stringForRangeOverride { return .success(stringForRangeOverride) }
         guard r.location >= 0, r.end <= units.count else { return .failure(.failed) }
         return .success(String(decoding: units[r.location..<r.end], as: UTF16.self))
     }
@@ -108,7 +116,8 @@ final class FakeTextField: AXTextElement {
 
     func setRange(_ value: TextRange, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
         writes.append(a)
-        guard a == .selectedTextRange, selRangeSettable, value.end <= units.count else { return .failure(.failed) }
+        guard a == .selectedTextRange, selRangeSettable, value.end <= units.count,
+              !(rejectsCaretRanges && value.isCaret) else { return .failure(.failed) }
         selection = value
         return .success(())
     }
