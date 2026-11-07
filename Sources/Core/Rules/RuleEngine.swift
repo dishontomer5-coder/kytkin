@@ -2,6 +2,9 @@
 // With no matching rule, DefaultBehavior decides. Its default, `keepCurrent`, leaves the language
 // alone (owner decision, plan.md Phase 1, 001 §11 Q3).
 //
+// P3-9 (001 §14.6, owner): a site or host rule, learned or pinned, beats the browser's app rule, pinned or not;
+// a browser pin is the default for sites without a rule. That is just the order below; no origin is compared.
+//
 // Matching details:
 // - Hosts and domains match case-insensitively, ignoring one trailing dot ("Docs.Google.com." == "docs.google.com").
 //   P3-2: a Unicode label also matches its Punycode form ("שלום.co.il" == "xn--9dbne9b.co.il"), via HostNormalizer.
@@ -66,9 +69,18 @@ struct RuleEngine: Sendable {
     /// A window known to be private (`isPrivateWindow == true`) only ever learns at app level.
     /// P2-9: an existing siteHost rule is preferred over the domain, otherwise the learned domain rule
     /// would be shadowed by the override and the manual switch would have no visible effect.
+    /// P3-9: unchanged (001 §14.6); it never creates a siteHost scope. RuleLearner adds the page-state guards.
     func learnableScope(for c: Context) -> RuleScope {
+        guard c.isPrivateWindow != true else { return .app(bundleID: c.bundleID) }
+        return pinScope(for: c)
+    }
+
+    /// P3-9 (001 §14.6, owner Q1): the scope the menu's Pin writes. `learnableScope` without the private-window
+    /// guard: the user's click is the consent, so "Always use Hebrew on ynet.co.il" works in a private window too.
+    /// On a site it is `site(domain)`, or the existing override `siteHost(host)`; with no site it is the app.
+    /// Site and host scopes come back normalized (HostNormalizer: lowercase, no trailing dot, Punycode, D13).
+    func pinScope(for c: Context) -> RuleScope {
         let bundleID = c.bundleID
-        guard c.isPrivateWindow != true else { return .app(bundleID: bundleID) }
         if let key = c.chatKey, Self.nonEmpty(bundleID) != nil, !key.value.isEmpty {
             return .chat(bundleID: bundleID, key: key)
         }

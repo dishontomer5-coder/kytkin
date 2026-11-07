@@ -41,17 +41,16 @@ struct SitePolicy: Sendable, Equatable {
     /// Bundle ID → site rules on/off; absent = on (§4.2 `browsers.siteRulesEnabled`).
     let siteRulesEnabled: [String: Bool]
 
-    /// `siteRulesEnabled`: §14.2 reads it from `Preferences.Browsers`, but that field is P3-9's to add. Until it
-    /// exists, AppController (P3-14) passes it here; absent = on.
+    /// P3-9: `siteRulesEnabled` comes from `browsers.siteRulesEnabled` (§14.2); absent = on.
     init(availability: FeatureAvailability, browsers: Preferences.Browsers, suffixListLoaded: Bool,
-         webLinkHandlers: Set<String>, ownBundleIDPrefix: String, siteRulesEnabled: [String: Bool] = [:]) {
+         webLinkHandlers: Set<String>, ownBundleIDPrefix: String) {
         siteRulesAvailable = availability.siteRules
         self.suffixListLoaded = suffixListLoaded
         ignorePrivateWindows = browsers.ignorePrivateWindowsCompletely
         appleEventsBrowsers = availability.appleEventsBrowsers
         self.webLinkHandlers = webLinkHandlers
         self.ownBundleIDPrefix = ownBundleIDPrefix
-        self.siteRulesEnabled = siteRulesEnabled
+        siteRulesEnabled = browsers.siteRulesEnabled
     }
 
     /// nil = don't attach.

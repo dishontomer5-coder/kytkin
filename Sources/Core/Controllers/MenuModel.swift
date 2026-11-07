@@ -6,6 +6,10 @@
 //   <App>: <Language> (learned|pinned|default) | <App>: no rule | No app yet      (grayed)
 //   Always use <current language> in <App>            (checked + disabled when that pin already exists)
 //   Forget rule for <App>                             (disabled without a matching rule)
+//   P3-9, on a site in a watched browser (001 §14.9), the three lines become:
+//   <site> (<Browser>[, private]): <Language> (learned|pinned|<Browser>'s rule|default) | <site> (<Browser>): no rule
+//   Always use <current language> on <site>
+//   Forget rule for <site>                            (enabled only for a matched site or subdomain rule, D6)
 //   Pause Kytkin | Resume Kytkin
 //   ── warnings, only when any apply (MenuWarning order), each with indented hints/actions ──
 //   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23)
@@ -86,6 +90,9 @@ enum MenuModel {
                              sourceName: (InputSourceID) -> String,
                              appName: (String) -> String) -> [MenuItemModel] {
         guard let rule = state.currentRule else { return [.info("No app yet")] }
+        if rule.isSite {
+            return siteContextItems(rule, currentSource: currentSource, sourceName: sourceName, appName: appName)
+        }
         let resolution = rule.resolution
         let here = scopeName(rule.pinScope, appName: appName)
 
@@ -99,29 +106,69 @@ enum MenuModel {
             line = "\(here): no rule"
         }
 
-        let pin: MenuItemModel
-        if let current = currentSource {
-            let done = resolution.matched.map {
-                $0.origin == .pinned && $0.scope == rule.pinScope && $0.inputSource == current.id
-            } ?? false
-            pin = .action("Always use \(current.name) in \(here)", .pinCurrent, enabled: !done, checked: done)
-        } else {
-            pin = .action("Always use this language in \(here)", .pinCurrent, enabled: false)
-        }
-
-        let forget: MenuItemModel = resolution.matched.map {
-            .action("Forget rule for \(scopeName($0.scope, appName: appName))", .forgetCurrent)
+        let forget: MenuItemModel = rule.forgetScope.map {
+            .action("Forget rule for \(scopeName($0, appName: appName))", .forgetCurrent)
         } ?? .action("Forget rule for \(here)", .forgetCurrent, enabled: false)
 
-        return [.info(line), pin, forget]
+        return [.info(line), pinItem(rule, currentSource: currentSource, preposition: "in", here: here), forget]
+    }
+
+    /// P3-9 (001 §14.9): the site form. `S` = the matched host for a siteHost match, else the site (both in Unicode);
+    /// `B` = the browser's name, plus ", private" in a private window. Pin says "on <site>"; Forget names the site and
+    /// is enabled only for a matched site or siteHost rule (D6).
+    private static func siteContextItems(_ rule: SwitchController.CurrentRule, currentSource: InputSourceInfo?,
+                                         sourceName: (InputSourceID) -> String,
+                                         appName: (String) -> String) -> [MenuItemModel] {
+        let c = rule.context
+        let resolution = rule.resolution
+        let site: String
+        if case .siteHost(let host)? = resolution.matched?.scope {
+            site = HostNormalizer.unicodeForm(HostNormalizer.normalize(host))
+        } else {
+            site = scopeName(rule.pinScope, appName: appName)
+        }
+        let browser = appName(c.bundleID)
+        let head = "\(site) (\(browser)\(c.isPrivateWindow == true ? ", private" : ""))"
+
+        let line: String
+        if let matched = resolution.matched {
+            let why: String
+            switch matched.scope {
+            case .app: why = "\(browser)'s rule"
+            case .site, .siteHost, .chat: why = matched.origin.rawValue
+            }
+            line = "\(head): \(sourceName(matched.inputSource)) (\(why))"
+        } else if resolution.level == .defaultRule, let target = resolution.target {
+            line = "\(head): \(sourceName(target)) (default)"
+        } else {
+            line = "\(head): no rule"
+        }
+
+        let forget: MenuItemModel = .action("Forget rule for \(site)", .forgetCurrent, enabled: rule.forgetScope != nil)
+        return [.info(line), pinItem(rule, currentSource: currentSource, preposition: "on", here: site), forget]
+    }
+
+    /// "Always use <language> in|on <here>", checked and disabled once exactly that pin exists.
+    private static func pinItem(_ rule: SwitchController.CurrentRule, currentSource: InputSourceInfo?,
+                                preposition: String, here: String) -> MenuItemModel {
+        guard let current = currentSource else {
+            return .action("Always use this language \(preposition) \(here)", .pinCurrent, enabled: false)
+        }
+        // P3-9: compare normalized scopes, so an old hand-edited Unicode key still reads as "this pin".
+        let done = rule.resolution.matched.map {
+            $0.origin == .pinned && RuleEngine.normalized($0.scope) == RuleEngine.normalized(rule.pinScope)
+                && $0.inputSource == current.id
+        } ?? false
+        return .action("Always use \(current.name) \(preposition) \(here)", .pinCurrent, enabled: !done, checked: done)
     }
 
     /// How a rule's scope is named in the menu: the app's name, the site, or the chat (P3/P4).
+    /// P3-9 (D13): hosts are stored in Punycode and shown in Unicode (`HostNormalizer.unicodeForm`).
     static func scopeName(_ scope: RuleScope, appName: (String) -> String) -> String {
         switch scope {
         case .app(let bundleID): appName(bundleID)
-        case .site(let domain): domain
-        case .siteHost(let host): host
+        case .site(let domain): HostNormalizer.unicodeForm(HostNormalizer.normalize(domain))
+        case .siteHost(let host): HostNormalizer.unicodeForm(HostNormalizer.normalize(host))
         case .chat(let bundleID, _): "this chat in \(appName(bundleID))"
         }
     }

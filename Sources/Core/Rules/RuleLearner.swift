@@ -19,6 +19,9 @@
 //   - the bundle ID is empty → nothing (todo P2-10).
 //   - `isPrivateWindow == true` → nothing, not even app-level (plan.md Decision, P2-9 QA: stricter than
 //     001 §3 (b) step 4). nil (unknown) counts as not private until P1-20.
+//   - P3-9: `pageState == .editingAddress` → nothing (D2); `.unknown`, or `.page` without a site → nothing (D3).
+//     Only the candidate's own scope is checked for a pin, so a site is learned in a browser pinned to another
+//     language (site beats the app pin, 001 §14.6).
 //   - a **pinned** rule exists for the scope → nothing; pins stay fixed (plan.md Decision, 001 §11 Q2).
 //   - a learned rule already says the same source → nothing to change.
 //
@@ -54,6 +57,10 @@ enum LearnOutcome: Sendable, Equatable {
         case noContext
         case emptyBundleID
         case privateWindow
+        /// P3-9: a text field outside the page has focus (address bar, find bar): D2.
+        case editingAddress
+        /// P3-9: the browser's page couldn't be read (`.unknown`), or a `.page` came without a site: D3.
+        case siteUnknown
         /// Within `settleAfterContextChange` of a context change.
         case tooSoonAfterContextChange
         case pinned
@@ -175,7 +182,15 @@ struct RuleLearner {
         if !learningEnabled { return .learningDisabled }
         if c.bundleID.isEmpty { return .emptyBundleID }
         if c.isPrivateWindow == true { return .privateWindow }   // P2-10: plan.md Decision, learn nothing
-        return nil
+        // P3-9 (001 §14.6, D2, D3): in a watched browser, a site is learned only on a page whose site is known.
+        // Typing in the address bar is no preference for the page underneath, and a switch on a page Kytkin couldn't
+        // read must not become the browser's app rule. `.notWebPage` (new tab, settings) learns at app level.
+        switch c.pageState {
+        case .editingAddress?: return .editingAddress
+        case .unknown?: return .siteUnknown
+        case .page?: return HostNormalizer.normalized(c.siteDomain) == nil ? .siteUnknown : nil
+        case .notWebPage?, nil: return nil
+        }
     }
 
     private func ruleReason(_ scope: RuleScope, _ id: InputSourceID) -> LearnOutcome.DiscardReason? {
