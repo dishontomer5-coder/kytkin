@@ -442,4 +442,183 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertEqual(f.selection, sel(9, 0))
         XCTAssertEqual(f.text, "שלום akuo")
     }
+    // MARK: - P2-49 item 6: a failed subrole read counts as secure
+
+    @TextActor func testFailedSubroleReadIsSecureAndNothingElseIsRead() async {
+        let f = FakeTextField("secret", selection: sel(0, 6))
+        f.role = "AXTextField"
+        f.subroleResult = .failure(.failed)   // an AX error, or a value of the wrong type (adapter: `.failed`)
+        let x = makeExecutor(f)
+        XCTAssertEqual(x.focusInfo(timeout: 0.25)?.isSecure, true)
+        XCTAssertFalse(f.reads.contains(.selectedText), "nothing more is read from a field that may be a password")
+        XCTAssertNil(x.focusedElement)
+        for step in [ReplacementStep.axWriteSelection(verify: true), .typeOverSelection, .backspaceAndType(count: 6)] {
+            XCTAssertEqual(x.perform(step, old: "secret", new: "שלום"), .unavailable)
+        }
+        XCTAssertTrue(f.writes.isEmpty)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testAbsentSubroleIsNotSecureButATimedOutOneIsUnknown() async {
+        for absent in [AXAccessError.noValue, .unsupported] {
+            let f = FakeTextField("akuo")
+            f.subroleResult = .failure(absent)
+            XCTAssertEqual(makeExecutor(f).focusInfo(timeout: 0.25)?.isSecure, false, "\(absent)")
+        }
+        for abort in [AXAccessError.timeout, .invalidElement, .notTrusted] {
+            let f = FakeTextField("akuo")
+            f.subroleResult = .failure(abort)
+            XCTAssertNil(makeExecutor(f).focusInfo(timeout: 0.25), "\(abort)")
+        }
+        let f = FakeTextField("akuo")
+        f.subroleResult = .success("AXSearchField")
+        XCTAssertEqual(makeExecutor(f).focusInfo(timeout: 0.25)?.isSecure, false)
+    }
+
+    // MARK: - P2-49 item 3: the focus must not have moved before a key step
+
+    @TextActor func testKeyStepsRefuseWhenTheFocusMovedToAnotherElement() async {
+        let x = makeExecutor(FakeTextField("hello akuo", selection: sel(6, 4)))
+        _ = x.focusInfo(timeout: 0.25)
+        let other = FakeTextField("chat message", selection: sel(0, 4))
+        provider.result = .success(other)
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertEqual(x.perform(.backspaceAndType(count: 4), old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertTrue(poster.events.isEmpty, "keys would land in the other field")
+        XCTAssertEqual(provider.timeouts, [0.25, 0.25, 0.25], "re-read with focusInfo's timeout before each key step")
+    }
+
+    @TextActor func testKeyStepsRunWhenTheFocusIsACopyOfTheSameElement() async {
+        let x = makeExecutor(FakeTextField("hello akuo", selection: sel(6, 4)))
+        _ = x.focusInfo(timeout: 0.25)
+        let copy = FakeTextField("hello akuo", selection: sel(6, 4))
+        copy.elementID = field.elementID   // live: a fresh AXUIElement that is CFEqual to the first
+        provider.result = .success(copy)
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .done)
+        XCTAssertEqual(poster.typed, "שלום")
+    }
+
+    @TextActor func testKeyStepsRefuseWhenTheFocusCantBeReadAgain() async {
+        for error in [AXAccessError.noValue, .notTrusted, .invalidElement, .failed, .timeout] {
+            let x = makeExecutor(FakeTextField("hello"))
+            _ = x.focusInfo(timeout: 0.25)
+            provider.result = .failure(error)
+            XCTAssertEqual(x.perform(.backspaceAndType(count: 2), old: "lo", new: "שנ"), .unavailable, "\(error)")
+            XCTAssertTrue(poster.events.isEmpty, "\(error)")
+        }
+    }
+
+    // MARK: - P2-49 item 2: type-over re-reads the selection
+
+    @TextActor func testTypeOverRefusesWhenTheSelectionBecameACaret() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        f.selection = sel(10, 0)   // dropped since focusInfo: typing would insert next to "akuo", not over it
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(f.text, "hello akuo")
+    }
+
+    @TextActor func testTypeOverRefusesWhenTheSelectionLengthChanged() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        for changed in [sel(6, 3), sel(0, 10), sel(5, 5)] {
+            f.selection = changed
+            XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable, "\(changed)")
+        }
+        XCTAssertTrue(poster.events.isEmpty)
+        // Length is counted in UTF-16 units, as AX reports it: "👍a" is 3 units.
+        let g = FakeTextField("x 👍a", selection: sel(2, 3))
+        let y = makeExecutor(g)
+        _ = y.focusInfo(timeout: 0.25)
+        XCTAssertEqual(y.perform(.typeOverSelection, old: "👍a", new: "ש"), .done)
+    }
+
+    @TextActor func testTypeOverGoesAheadWhenTheRangeCantBeChecked() async {
+        // R5: WebKit's garbage range (implausible): AX can't tell, so typing goes ahead as before P2-49.
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        f.reportedRange = sel(6, 4_294_967_292)
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .done)
+    }
+
+    @TextActor func testTypeOverRefusesWhenTheRangeReadTimesOut() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        f.timeouts = [.selectedTextRange]
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    // MARK: - P2-49 item 5: the first AX timeout ends the step (and the replacement's AX use)
+
+    @TextActor func testAWriteThatTimesOutAsksTheAppNothingMoreAndIsNotUntouched() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        f.writeBehavior = .writesThenTimesOut
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        let out = x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום")
+        XCTAssertEqual(out, StepOutcome(verdict: .unavailable, fieldUntouched: false), "the state is unknown: halt")
+        XCTAssertEqual(f.callsAfterTimeout, 0, "no intact check, read-back or collapse after the timeout")
+        // A later key step in the same replacement is refused without asking AX again (not even for the focus).
+        let focusReads = provider.timeouts.count
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertEqual(provider.timeouts.count, focusReads)
+        XCTAssertEqual(f.callsAfterTimeout, 0)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testATimedOutRunWriteNeverCollapsesOrReadsBack() async {
+        let f = FakeTextField("שלום akuo")
+        f.writeBehavior = .timesOut
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan).verdict, .done)
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום").fieldUntouched, false)
+        XCTAssertEqual(f.callsAfterTimeout, 0)
+        XCTAssertEqual(x.perform(.backspaceAndType(count: 4), old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testATimeoutBeforeAnyWriteIsUntouchedButStillEndsAXUse() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        f.timeouts = [.selectedText]   // isSettable(selectedText) hangs
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertTrue(f.writes.isEmpty)
+        let focusReads = provider.timeouts.count
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertEqual(provider.timeouts.count, focusReads, "a hung app costs one timeout, not one per step")
+        XCTAssertEqual(f.callsAfterTimeout, 0)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testAFocusReCheckTimeoutLatches() async {
+        let f = FakeTextField("hello")
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        provider.result = .failure(.timeout)
+        XCTAssertEqual(x.perform(.backspaceAndType(count: 2), old: "lo", new: "שנ"), .unavailable)
+        provider.result = .success(f)
+        XCTAssertEqual(x.perform(.backspaceAndType(count: 2), old: "lo", new: "שנ"), .unavailable,
+                       "still latched for this replacement")
+        XCTAssertEqual(provider.timeouts.count, 2, "focusInfo + the one re-check that timed out")
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testTheLatchIsPerReplacement() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        f.timeouts = [.selectedText]
+        _ = x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום")
+        f.timeouts = []   // the app recovered
+        XCTAssertNotNil(x.focusInfo(timeout: 0.25), "a new replacement starts with a fresh latch")
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .done)
+    }
 }

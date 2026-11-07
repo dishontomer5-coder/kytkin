@@ -749,6 +749,87 @@ final class ReplacementChainTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty)
     }
 
+    // MARK: - P2-49: nothing written when the field moved, changed, hung, or may be a password
+
+    @TextActor func testFocusThatMovedBeforeAKeyStepPostsNothingOnEveryPlanShape() async {
+        for steps in Self.writePlans {
+            poster = RecordingPoster()
+            let f = field(for: steps)
+            f.writeBehavior = .silentNoop
+            let provider = FakeFocusProvider(f)
+            let x = ReplacementExecutor(focusProvider: provider, poster: poster)
+            _ = x.focusInfo(timeout: 0.25)
+            let other = FakeTextField("someone else's chat")
+            provider.result = .success(other)   // the user clicked elsewhere after the double-Shift
+            var caps = ReplacementCapabilities()
+            let out = ReplacementChain.run(.steps(steps), on: x, bundleID: app, old: "akuo", convert: convert,
+                                           capabilities: &caps)
+            XCTAssertEqual(out.result, .exhausted, "\(steps)")
+            XCTAssertTrue(out.shouldBeep, "\(steps)")
+            XCTAssertTrue(poster.events.isEmpty, "\(steps)")
+            XCTAssertTrue(other.writes.isEmpty, "\(steps)")
+            XCTAssertEqual(other.text, "someone else's chat", "\(steps)")
+        }
+    }
+
+    @TextActor func testSelectionThatChangedBeforeTypeOverPostsNothing() async {
+        for changed in [sel(10, 0), sel(6, 3), sel(6, 5)] {
+            for steps in Self.writePlans where steps.contains(.typeOverSelection) {
+                poster = RecordingPoster()
+                let f = field(for: steps)
+                f.writeBehavior = .silentNoop
+                let x = executor(f)
+                let focus = x.focusInfo(timeout: 0.25)
+                f.selection = changed   // e.g. the app dropped the selection: typing would insert the text twice
+                var caps = ReplacementCapabilities()
+                let out = ReplacementChain.run(.steps(steps), on: x, bundleID: app, old: focus?.selection,
+                                               convert: convert, capabilities: &caps)
+                XCTAssertFalse(out.succeeded, "\(steps) \(changed)")
+                XCTAssertTrue(poster.events.isEmpty, "\(steps) \(changed)")
+                XCTAssertEqual(f.text, "hello akuo world", "\(steps) \(changed)")
+            }
+        }
+    }
+
+    @TextActor func testHungAppCostsOneTimeoutAndPostsNothingOnEveryPlanShape() async {
+        for steps in Self.writePlans {
+            for behavior in [FakeTextField.WriteBehavior.timesOut, .writesThenTimesOut] {
+                poster = RecordingPoster()
+                let f = field(for: steps)
+                f.writeBehavior = behavior
+                let provider = FakeFocusProvider(f)
+                let x = ReplacementExecutor(focusProvider: provider, poster: poster)
+                _ = x.focusInfo(timeout: 0.25)
+                // From here on the app is hung: the focused-element read times out too.
+                provider.result = .failure(.timeout)
+                var caps = ReplacementCapabilities()
+                let out = ReplacementChain.run(.steps(steps), on: x, bundleID: app, old: "akuo", convert: convert,
+                                               capabilities: &caps)
+                XCTAssertFalse(out.succeeded, "\(steps)")
+                XCTAssertTrue(out.shouldBeep, "\(steps)")
+                XCTAssertTrue(poster.events.isEmpty, "\(steps)")
+                XCTAssertEqual(f.callsAfterTimeout, 0, "nothing is asked of a hung app after its first timeout")
+                XCTAssertLessThanOrEqual(provider.timeouts.count, 2, "focusInfo + at most one timed-out re-check")
+                if steps.contains(.axWriteSelection(verify: true)) {
+                    // A write that timed out may or may not have landed: unknown, so the chain halts.
+                    XCTAssertEqual(out.result, .halted(after: .axWriteSelection(verify: true)), "\(steps)")
+                }
+            }
+        }
+    }
+
+    @TextActor func testFailedSubroleReadIsRefusedAsSecure() async {
+        let f = FakeTextField("hello akuo world", selection: sel(6, 4))
+        f.role = "AXTextField"
+        f.subroleResult = .failure(.failed)
+        var caps = ReplacementCapabilities()
+        let out = convertSelection(f, caps: &caps)
+        XCTAssertEqual(out.result, .refused(.secureField))
+        XCTAssertTrue(f.writes.isEmpty)
+        XCTAssertFalse(f.reads.contains(.selectedText))
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
     @TextActor func testBudgetStopsTheChain() async {
         let f = FakeTextField("hello akuo world", selection: sel(6, 4))
         f.writeBehavior = .silentNoop

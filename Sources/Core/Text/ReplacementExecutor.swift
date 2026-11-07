@@ -6,7 +6,10 @@
 //  - nothing runs unless `focusInfo` just read a focused element that is not secure and not composing;
 //  - every AX write is read back; a failure falls through only if the original text is still in place;
 //  - nothing typed may hold a line break, tab or other control character (design.md invariant);
-//  - every posted event carries the `ours` marker and no modifier flags (`SyntheticKeyEvent`).
+//  - every posted event carries the `ours` marker and no modifier flags (`SyntheticKeyEvent`);
+//  - P2-49: before any key step, the focused element must still be the one `focusInfo` read (keys go to whatever
+//    has focus); before a type-over, the selection must still be a selection of `old`'s length (else the text
+//    would be inserted next to it, twice); after the first AX timeout nothing more is asked of the app.
 // Text read through AX stays in memory for one replacement and is never logged (no logging in Text/, B12).
 
 import Foundation
@@ -19,7 +22,12 @@ import Foundation
     private let poster: any KeyEventPosting
 
     // One replacement's state, cleared by `focusInfo` and `endReplacement`.
-    private var element: (any AXTextElement)?
+    /// The focused element, behind the P2-49 timeout latch.
+    private var element: TimeoutLatchedElement?
+    /// P2-49 item 5: tripped by the first AX timeout of this replacement; reset by `focusInfo`/`endReplacement`.
+    private let latch = AXTimeoutLatch()
+    /// The messaging timeout `focusInfo` was given, reused for the P2-49 focus re-check.
+    private var timeout = ReplacementExecutor.axTimeout
     /// True only after `focusInfo` read a focused element that is neither secure nor composing.
     private var focusIsSafe = false
     /// The range `readRunBeforeCaret` found; the next AX write targets it.
@@ -27,7 +35,7 @@ import Foundation
     private(set) var wordBeforeCaret: String?
 
     /// P2-59c: the element `focusInfo` read as safe, for the undo record's same-element check (identity only).
-    var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element : nil }
+    var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element?.inner : nil }
 
     init(focusProvider: any FocusedElementProviding, poster: any KeyEventPosting) {
         self.focusProvider = focusProvider
@@ -39,6 +47,7 @@ import Foundation
         focusIsSafe = false
         pendingRange = nil
         wordBeforeCaret = nil
+        latch.reset()
     }
 
     // MARK: - Focus
@@ -56,13 +65,26 @@ import Foundation
 
     func focusInfo(timeout: Double) -> FocusInfo? {
         endReplacement()
-        guard case .success(let el) = focusProvider.focusedTextElement(timeout: timeout) else { return nil }
+        self.timeout = timeout
+        guard case .success(let focused) = focusProvider.focusedTextElement(timeout: timeout) else { return nil }
+        let el = TimeoutLatchedElement(focused, latch: latch)
         do {
             // A focused element without a role is something AX can't describe: refuse (001 §12 T4).
             guard let role = try optional(el.string(.role)) else { return nil }
-            let subrole = try optional(el.string(.subrole))
+            // P2-49 item 6: absent (no value / unsupported) is fine; a read that failed or returned another type
+            // can't rule out a password field, so it counts as secure. A timeout aborts the read (nil) as before.
+            let subroleUnreadable: Bool
+            let subrole: String?
+            switch el.string(.subrole) {
+            case .success(let s): subrole = s; subroleUnreadable = false
+            case .failure(let e):
+                if e.abortsFocusRead { throw Abort() }
+                subrole = nil
+                subroleUnreadable = e == .failed
+            }
             // Secure first, and read nothing else from a password field.
-            if role == FocusInfo.secureTextFieldRole || subrole == FocusInfo.secureTextFieldRole {
+            if role == FocusInfo.secureTextFieldRole || subrole == FocusInfo.secureTextFieldRole
+                || subroleUnreadable {
                 return FocusInfo(role: role, isSecure: true, hasMarkedText: false, selTextSettable: false,
                                  selRangeSettable: false, selection: nil)
             }
@@ -215,8 +237,40 @@ import Foundation
     /// R5 §B: typing replaces the selection. Never types over a selection holding a control character (§12 T2).
     private func typeOverSelection(old: String, new: String) -> StepOutcome {
         guard !old.isEmpty, !ReplacementPlanner.containsUnsafeCharacter(old),
-              let events = KeyStrokeComposer.typing(new) else { return .unavailable }
+              let events = KeyStrokeComposer.typing(new), focusIsUnchanged(), selectionStillSpans(old)
+        else { return .unavailable }
         return post(events)
+    }
+
+    /// P2-49 item 2: re-read the selected range right before typing over it. If it became a caret (an earlier
+    /// step or the app dropped it) or its length changed, typing would insert `new` beside the text instead of
+    /// replacing it: the text would appear twice. Refuse then. A range AX won't give (absent, unsupported, wrong
+    /// type) or reports implausibly (R5: WebKit's `(5, 4294967292)`) can't be checked, so typing goes ahead as
+    /// before (keys-only apps rely on it); a timeout (latched, item 5) or a vanished element refuses.
+    private func selectionStillSpans(_ old: String) -> Bool {
+        guard let el = element else { return false }
+        switch el.range(.selectedTextRange) {
+        case .failure(let e): return !e.abortsFocusRead
+        case .success(let r):
+            guard r.location >= 0, r.length >= 0 else { return true }   // implausible: can't tell
+            switch el.integer(.numberOfCharacters) {
+            case .success(let n) where r.end > n: return true             // implausible: can't tell
+            case .failure(let e) where e.abortsFocusRead: return false
+            default: break
+            }
+            return !r.isCaret && r.length == old.utf16.count
+        }
+    }
+
+    /// P2-49 item 3: keys go to whatever has focus, so before a key step the focused element must still be the
+    /// one `focusInfo` read (live: `CFEqual` through `FocusedElementIdentity`). Can't tell (no element, a timeout,
+    /// the latch already tripped) = changed: refuse.
+    private func focusIsUnchanged() -> Bool {
+        guard let el = element, !latch.tripped else { return false }
+        switch latch.guarded({ focusProvider.focusedTextElement(timeout: timeout) }) {
+        case .success(let now): return now.isSameElement(as: el.inner)
+        case .failure: return false
+        }
     }
 
     /// R5 §B: Backspace × graphemes on screen, then type. `old`, when given, must render to exactly `count`
@@ -224,7 +278,7 @@ import Foundation
     private func backspaceAndType(count: Int, old: String, new: String) -> StepOutcome {
         if !old.isEmpty && old.count != count { return .unavailable }
         guard let deletes = KeyStrokeComposer.backspaces(count),
-              let typing = KeyStrokeComposer.typing(new) else { return .unavailable }
+              let typing = KeyStrokeComposer.typing(new), focusIsUnchanged() else { return .unavailable }
         return post(deletes + typing)
     }
 
