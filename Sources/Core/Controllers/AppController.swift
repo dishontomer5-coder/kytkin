@@ -17,6 +17,8 @@
 //                         P2-59c: also after an AX run convert, whose finish forgets the buffer itself, so the X6
 //                         `untouchedSinceConvert` survives the switch)
 //   permission change   → FeatureAvailability + TapModePolicy (retry only on a real change, §12 W7)
+//                         P2-52 item 2: plus one retry on the next app activation if the run's first start came back
+//                         below the desired mode (a timeout at launch); TapModePolicy caps it at one per run
 //   conflicts change    → the learning flag (P2-38)
 //   KeyWatcher status   → achieved tap mode, Secure Input → FeatureAvailability (§12 W5) → dwell vs words
 //   KeyWatcher signal   → word boundary → learner; double-Shift → ConvertControlling or finished at once
@@ -142,6 +144,7 @@ import Observation
         switching.contextDidChange(c)
         keyWatcher.perform(.reset(.contextChange))
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
+        retryTapAfterLaunchTimeout()          // P2-52 item 2: at most once per run
         afterEvent()
     }
 
@@ -313,8 +316,9 @@ import Observation
             currentRule: switching.currentRule, paused: switching.paused, enabled: store.prefs.general.enabled,
             tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
             degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
-            canRestartKeyboard: keyWatcherStatus.degradedByWatchdog && isStarted
-                && policy.restartAction(desired: desiredTapMode()) != nil,
+            // P2-57 item 1: offered whenever the tap runs below the desired mode, not only after a watchdog downgrade.
+            canRestartKeyboard: isStarted && policy.restartAction(desired: desiredTapMode()) != nil,
+            keyboardBelowDesired: isStarted && policy.runsBelow(desired: desiredTapMode()),
             tapReEnableCount: keyWatcherStatus.health.reEnableCount,
             slowCallbackCount: keyWatcherStatus.health.overBudgetCallbacks, doubleShiftCount: doubleShiftCount,
             conflicts: conflicts.conflicts, learnerDebug: learnerDebug,
@@ -352,11 +356,11 @@ import Observation
         switching.selectFromMenu(id)
     }
 
-    /// P2-22: "Restart Keyboard Features" (a user click, shown only after a watchdog downgrade): start the desired
-    /// mode again through the policy. A user-initiated start clears the watchdog's history (KeyTapEngine).
+    /// P2-22: "Restart Keyboard Features" (a user click): start the desired mode again through the policy. A
+    /// user-initiated start clears the watchdog's history (KeyTapEngine). P2-57 item 1: offered whenever the tap runs
+    /// below the desired mode; if the restart fails too, `runsBelow` keeps the warning up.
     func restartKeyboard() {
-        guard isStarted, keyWatcherStatus.degradedByWatchdog,
-              let action = policy.restartAction(desired: desiredTapMode()) else { return }
+        guard isStarted, let action = policy.restartAction(desired: desiredTapMode()) else { return }
         if case .start(let mode) = action { policy.restarting(mode) }
         apply(action)
         recompute(grantsChanged: false)
@@ -457,6 +461,13 @@ import Observation
             keyWatcher.stop()
             policy.stopped()   // a timed-out stop is treated as `.off`
         }
+    }
+
+    /// P2-52 item 2: the one automatic retry after a below-desired first start (TapModePolicy decides; never again).
+    private func retryTapAfterLaunchTimeout() {
+        guard isStarted, let action = policy.activationRetry(desired: desiredTapMode()) else { return }
+        apply(action)                         // blocks main ≤ 1–2 s, once per run
+        recompute(grantsChanged: false)
     }
 
     private func desiredTapMode() -> TapMode {

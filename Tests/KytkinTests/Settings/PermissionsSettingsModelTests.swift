@@ -227,12 +227,18 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertTrue(text({ $0.accessibility = .notDetermined }, desired: .off).hasPrefix("Off: allow Accessibility"))
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .off).hasPrefix("Not in use"))
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .active)
-            .hasPrefix("Off: Kytkin couldn't start watching the keyboard yet."))
+            .hasPrefix("Off: Kytkin couldn't start watching the keyboard."))
+        // P2-57 item 1: a start that timed out (or a failed restart) says what the menu says.
+        XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .active)
+            .hasSuffix("Some keyboard features are off. Use “Restart Keyboard Features” in the Kytkin menu."))
         XCTAssertTrue(text({ $0.tapMode = .listenOnly; $0.showsQuitAndReopen = true }, desired: .active)
             .hasSuffix("Quit & Reopen Kytkin to use everything you allowed."))
         XCTAssertTrue(text({ $0.tapMode = .listenOnly; $0.degradedByWatchdog = true }, desired: .active)
             .contains("Restart Keyboard Features"))
-        XCTAssertTrue(text({ $0.tapMode = .listenOnly }, desired: .active).contains("try the full mode again"))
+        XCTAssertTrue(text({ $0.tapMode = .listenOnly }, desired: .active)
+            .hasSuffix("Some keyboard features are off. Use “Restart Keyboard Features” in the Kytkin menu."))
+        XCTAssertFalse(text({ $0.tapMode = .listenOnly; $0.degradedByWatchdog = true }, desired: .active)
+            .contains("Some keyboard features are off"), "the watchdog keeps its own wording")
     }
 
     func testDesiredModeFollowsTheSettings() {

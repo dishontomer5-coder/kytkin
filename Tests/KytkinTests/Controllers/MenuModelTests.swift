@@ -310,6 +310,40 @@ final class MenuModelTests: XCTestCase {
         XCTAssertEqual(warningLines(s), [], "canRestart alone shows nothing")
     }
 
+    /// P2-57 item 1 / P2-52 item 2: below the desired mode for any other reason is never silent.
+    func testKeyboardFeaturesOffWhileBelowDesired() {
+        var s = MenuState()
+        s.keyboardBelowDesired = true
+        XCTAssertEqual(MenuWarning.list(for: s), [.keyboardFeaturesOff(canRestart: false)])
+        XCTAssertEqual(warningLines(s), [.info("Some keyboard features are off")])
+        s.canRestartKeyboard = true
+        XCTAssertEqual(warningLines(s), [.info("Some keyboard features are off"),
+                                         .action("Restart Keyboard Features", .restartKeyboard, indent: 1)])
+        XCTAssertTrue(MenuModel.label(languageCode: "en", state: s).title.hasSuffix(MenuModel.dot), "marks the label")
+    }
+
+    func testWatchdogKeepsItsOwnWordingWhileBelowDesired() {
+        var s = MenuState()
+        s.keyboardBelowDesired = true
+        s.degradedByWatchdog = true
+        s.canRestartKeyboard = true
+        XCTAssertEqual(MenuWarning.list(for: s), [.keyboardSlowedDown(canRestart: true)])
+        XCTAssertEqual(warningLines(s)[0], .info("Some keyboard features stopped after a slowdown"))
+    }
+
+    func testKeyboardFeaturesOffNotWhilePausedOffOrNeedingARelaunch() {
+        var s = MenuState()
+        s.keyboardBelowDesired = true
+        s.paused = true
+        XCTAssertEqual(MenuWarning.list(for: s), [])
+        s.paused = false
+        s.enabled = false
+        XCTAssertEqual(MenuWarning.list(for: s), [.kytkinOff])
+        s.enabled = true
+        s.showsQuitAndReopen = true
+        XCTAssertEqual(MenuWarning.list(for: s), [.quitAndReopen], "Quit & Reopen is the remedy there")
+    }
+
     func testSecureInput() {
         var s = MenuState()
         s.secureInputOn = true
