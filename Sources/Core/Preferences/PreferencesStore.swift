@@ -1,7 +1,7 @@
 // P2-8: Owns the in-memory Preferences and preferences.json (001 §2.2, §4.1).
 //
 // Load (in init):
-//   - no file → defaults, no issue (first launch).
+//   - no file → defaults, no issue (first launch). `foundFileAtLoad` stays false only in this case (P3-12).
 //   - decodes → use it. Older schema → `.migrated(from:)`, and the original bytes are written to
 //     `preferences.v<N>.bak.json` just before the first save. Newer schema → `.newerSchemaReadOnly`.
 //   - decodes, but leniency dropped or defaulted something (a bad rule, a mistyped field…) →
@@ -31,6 +31,9 @@ import Observation
     private(set) var loadWasLossy = false
     /// Where the untouched original of a lossy or migrated file was copied, once the first save did it.
     private(set) var originalBackupURL: URL?
+    /// P3-12: a preferences file was there when this store loaded (good, migrated, lossy, newer, corrupt or
+    /// unreadable alike). False only on a true first launch (or after the user deleted the file). Never changes.
+    @ObservationIgnored private(set) var foundFileAtLoad = false
 
     @ObservationIgnored let fileURL: URL
     @ObservationIgnored private let clock: any Clock
@@ -69,11 +72,13 @@ import Observation
         do {
             data = try fileSystem.contents(of: fileURL)
         } catch {
+            foundFileAtLoad = true   // P3-12: something is there, we just can't read it
             loadIssue = .unreadable
             isReadOnly = true
             return
         }
         guard let data else { return }
+        foundFileAtLoad = true
 
         do {
             let decoded = try PreferencesCodec.decodeDetailed(data, migrator: migrator)

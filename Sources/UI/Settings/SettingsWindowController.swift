@@ -9,6 +9,8 @@
 //   macOS activates the app you were in). That resign is what AppController handles (P2-39 / P2-52 item 1).
 //   ⌘W (hidden main menu) and Esc (`KytkinWindow`) close it.
 // - P2-26: while the Permissions tab is showing in an open window, the permission poll runs every 1 s.
+//   P3-12 (P2-63): and only while that window is on screen: not while Kytkin is hidden or other windows fully
+//   cover it (the window's occlusion state; the poll resumes, with a fresh read, when it shows again).
 // - Kytkin's own window is not a context (001 §12 W2): ContextMonitor ignores it; AppController hears about it
 //   through the app's didBecomeActive / didResignActive notifications (AppEnvironment).
 
@@ -52,6 +54,7 @@ import SwiftUI
         refreshTabs()
         let window = self.window ?? makeWindow()
         WindowPresenter.show(window)   // P2-56
+        tabs.permissions.setCovered(false)   // P3-12: just brought to the front; occlusion changes follow
         updatePermissionsPolling()
     }
 
@@ -90,6 +93,12 @@ import SwiftUI
     }
 
     // MARK: - NSWindowDelegate
+
+    /// P3-12: hidden (Kytkin hidden, another Space) or fully covered → the 1 s poll pauses; back on screen → resumes.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window else { return }
+        tabs.permissions.setCovered(!window.occlusionState.contains(.visible))
+    }
 
     func windowDidBecomeKey(_ notification: Notification) {
         general.refresh()          // e.g. back from System Settings → Login Items

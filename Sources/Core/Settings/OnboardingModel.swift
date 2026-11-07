@@ -5,6 +5,12 @@
 // - Shown at launch only while `general.onboardingSeen` is false, and never with read-only preferences (the flag
 //   couldn't be saved, so it would come back on every launch). `begin` marks it seen as soon as it shows, so quitting
 //   half-way doesn't bring it back: it never steals focus twice. Settings → General → "Show Welcome Again" reopens it.
+// - P3-12 (P2-63): and only on a true first launch, i.e. no preferences file existed when Kytkin started. An install
+//   from before P2-26 has a file without the flag (absent → false), so the flag alone would greet it at its next
+//   login. "File was there" is the robust test: Kytkin writes the file on the first change and the welcome itself
+//   writes it (`markSeen`), so any earlier run that did anything left one; it needs no version stamp or second flag;
+//   and it holds whatever state the file is in (migrated, lossy, corrupt). A file the user deleted counts as a fresh
+//   start, which is what deleting it means.
 // - Language pair (P2-62): on the first launch, if the saved pair is still the shipped default and has a problem (a
 //   layout not turned on, missing…), it is replaced by `DefaultLanguagePair.suggest` from the layouts actually turned on. The user can change it on
 //   that step (the same pickers and checks as Settings → Languages). Reopened later, it never changes the pair itself.
@@ -55,9 +61,10 @@ import Observation
 
     // MARK: - When to show
 
-    /// At launch: only the first time, and only if the "seen" flag can be saved.
+    /// At launch: only on a true first launch (no preferences file yet, P3-12), and only if the "seen" flag can
+    /// be saved.
     static func shouldShowAtLaunch(_ store: PreferencesStore) -> Bool {
-        !store.isReadOnly && !store.prefs.general.onboardingSeen
+        !store.foundFileAtLoad && !store.isReadOnly && !store.prefs.general.onboardingSeen
     }
 
     /// The window is about to show. `firstLaunch`: shown by itself at launch (not reopened from Settings).
@@ -75,6 +82,12 @@ import Observation
     func setVisible(_ visible: Bool) {
         polling.set(.onboarding, visible: visible)
         if visible { reload() }
+    }
+
+    /// P3-12: the window is hidden or fully covered (true), or back on screen (false). No poll while covered.
+    func setCovered(_ covered: Bool) {
+        polling.set(.onboarding, covered: covered)
+        if !covered { reload() }
     }
 
     /// Silent: takes the last permission reading.

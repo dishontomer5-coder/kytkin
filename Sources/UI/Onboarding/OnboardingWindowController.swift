@@ -4,6 +4,7 @@
 // - Showing and closing go through `WindowPresenter` (P2-56). One window, reused.
 // - Closing it any way (Done, Skip, ⌘W, Esc, the close button) calls `model.finish()`: the "seen" flag stays set and
 //   the 1 s permission poll stops.
+// - P3-12 (P2-63): the poll also pauses while the window is hidden or fully covered (its occlusion state).
 
 import AppKit
 import SwiftUI
@@ -24,6 +25,7 @@ import SwiftUI
         if !isOpen { model.begin(firstLaunch: firstLaunch) }
         let window = self.window ?? makeWindow()
         WindowPresenter.show(window)
+        model.setCovered(false)   // P3-12: just brought to the front; occlusion changes follow
         model.setVisible(true)
     }
 
@@ -50,6 +52,12 @@ import SwiftUI
     }
 
     // MARK: - NSWindowDelegate
+
+    /// P3-12: hidden or fully covered → the 1 s poll pauses; back on screen → resumes.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window else { return }
+        model.setCovered(!window.occlusionState.contains(.visible))
+    }
 
     func windowDidBecomeKey(_ notification: Notification) {
         model.reload()   // e.g. back from System Settings
