@@ -97,6 +97,52 @@ final class RunBeforeCaretTests: XCTestCase {
         XCTAssertEqual(run("שלום akuo vh, nhv", in: hePC), "A:akuo vh, nhv")
     }
 
+    // MARK: - One-sided punctuation (P2-60 QA)
+
+    /// Apple Hebrew types no ASCII `'` or `"` (its keys give `׳` and `״`), so they are `strong(A)` non-letters. They
+    /// must never pick the side or start a run: correct Hebrew with an ASCII apostrophe or quote (common in pasted
+    /// text) kept its `'` → `,` otherwise.
+    func testOneSidedPunctuationNeverDecidesOrStartsARun() {
+        XCTAssertEqual(he.runClass(of: "'"), .strong(.a), "the premise: Apple Hebrew has no ASCII apostrophe")
+        XCTAssertEqual(run("מס' 5 tkhk"), "A:tkhk", "was `' 5 tkhk`: the abbreviation's `'` became `,`")
+        XCTAssertEqual(run("ראיתי את פרופ'"), "nothing", "was `'` → `,`; the Hebrew run stops at the ASCII `'`")
+        XCTAssertEqual(run("הוא אמר \"שלום\" tkhk"), "A:tkhk", "was `\" tkhk`: the closing quote became `״`")
+        XCTAssertEqual(run("גב' tkhk"), "A:tkhk")
+        XCTAssertEqual(run("ג'hrpv"), "A:hrpv", "converting back after a split leaves the `'` alone")
+        XCTAssertEqual(run("שלום ' akuo"), "A:akuo", "a lone one-sided `'` is trimmed like a lone comma")
+        XCTAssertEqual(run("שלום '"), "nothing")
+    }
+
+    func testOneSidedPunctuationInsideItsOwnSideStillConverts() {
+        XCTAssertEqual(run("akuo'"), "A:akuo'", "the ABC `'` key is the Hebrew comma")
+        XCTAssertEqual(run("akuo' nv"), "A:akuo' nv")
+        XCTAssertEqual(run("akuo '"), "A:akuo '", "trailing, it converts per the run's side")
+        XCTAssertEqual(run("tbh \"tkhk\""), "A:tbh \"tkhk\"")
+        XCTAssertEqual(run("צה״ל"), "B:צה״ל", "a real gershayim is Hebrew's own")
+        XCTAssertEqual(run("ג'ירפה"), "B:ירפה", "a Hebrew run still stops at an ASCII `'` it has no key for")
+    }
+
+    /// Double-Shift on a correct Hebrew line, then double-Shift again after the X6 undo record expired: the text comes
+    /// back exactly (or nothing is converted). Never a `'` → `,`.
+    func testCorrectHebrewWithAsciiApostropheRoundTripsOrIsLeftAlone() {
+        for line in ["מס' 5", "ראיתי את פרופ'", "ג'ירפה", "צה\"ל", "הוא אמר \"שלום\"", "רח' הרצל 5", "שלום, מה שלומך?"] {
+            let once = convertRun(line)
+            XCTAssertTrue(convertRun(once).unicodeScalars.elementsEqual(line.unicodeScalars),
+                          "\(line) → \(once) → \(convertRun(once))")
+        }
+    }
+
+    /// The text after one run convert (the run before the caret, converted by its side's converter).
+    private func convertRun(_ text: String) -> String {
+        let w = BeforeCaretWindow(text: text, location: 0, reachesFieldStart: true)
+        guard case let .run(loc, side) = RunBeforeCaret.scan(w, classify: he.runClass),
+              let c = he.converter(from: he.source(of: side)) else { return text }
+        let units = Array(text.utf16)
+        let head = String(decoding: units[..<loc.offset], as: UTF16.self)
+        let tail = String(decoding: units[loc.offset...], as: UTF16.self)
+        return head + c.convert(tail).text
+    }
+
     // MARK: - Cap (X2)
 
     func testWindowNotAtTheFieldStartDropsTheCutToken() {
