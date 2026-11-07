@@ -1,5 +1,7 @@
 // P2-25: Settings → Rules (001 §5.2). Layout only; `RulesSettingsModel` (Core) sorts, filters and writes every
 // change through RuleWriter, and is tested. Read-only preferences disable every edit (the notice says why).
+// P3-15: a kind filter, "Add Website…" / "Add Subdomain Rule…" (a sheet), and the search box is a real search field
+// (Esc clears only search fields).
 
 import SwiftUI
 
@@ -12,7 +14,12 @@ struct RulesSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             SettingsNoticeList(notices: model.notices)
             HStack {
-                TextField("Search", text: $model.searchText).textFieldStyle(.roundedBorder)
+                SearchField(prompt: "Search", text: $model.searchText)
+                Picker("Kind", selection: $model.kindFilter) {
+                    ForEach(RuleKindFilter.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
                 Picker("Show", selection: $model.originFilter) {
                     ForEach(RuleOriginFilter.allCases) { Text($0.title).tag($0) }
                 }
@@ -68,12 +75,21 @@ struct RulesSettingsView: View {
                     if let selected { model.delete(selected.id) }
                 }
                 .disabled(selected == nil || !model.isEditable)
+                if let selected, model.offersSubdomainRule(selected), case .site(let domain) = selected.scope {
+                    Button("Add Subdomain Rule…") { model.beginAddWebsite(subdomainOf: domain) }
+                }
                 Spacer()
+                Button("Add Website…") { model.beginAddWebsite() }
+                    .disabled(!model.canAddWebsite)
+                    .help(model.canAddWebsite ? "" : RulesSettingsModel.websiteDataMissingText)
                 Button("Forget All Learned Rules…") { confirmingForgetAll = true }
                     .disabled(model.learnedCount == 0 || !model.isEditable)
             }
             Text("Choosing a language for a rule pins it: Kytkin won't change a pinned rule by learning.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+        .sheet(item: $model.addWebsite) { form in
+            AddWebsiteSheet(form: form, save: { model.saveAddWebsite() }, cancel: { model.cancelAddWebsite() })
         }
         .confirmationDialog(model.forgetAllLearnedQuestion, isPresented: $confirmingForgetAll) {
             Button("Forget Learned Rules", role: .destructive) { model.forgetAllLearned() }

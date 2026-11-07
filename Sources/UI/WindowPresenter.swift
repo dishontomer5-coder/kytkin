@@ -66,7 +66,10 @@ final class KytkinWindow: NSWindow {
     override func cancelOperation(_ sender: Any?) {
         let editor = firstResponder as? NSTextView
         let focus: EscapeKeyAction.Focus = switch editor {
-        case let text? where text.isEditable && text.isFieldEditor: .textField(isEmpty: text.string.isEmpty)
+        // P3-15: only a search field is cleared by Esc; any other field just stops editing (EscapeKeyAction).
+        case let text? where text.isEditable && text.isFieldEditor && text.delegate is NSSearchField:
+            .searchField(isEmpty: text.string.isEmpty)
+        case let text? where text.isEditable && text.isFieldEditor: .textField
         case let text? where text.isEditable: .textArea
         default: .nothingEdited
         }
@@ -77,6 +80,8 @@ final class KytkinWindow: NSWindow {
             // Through the text system (not `string = ""`), so the field's binding hears it and ⌘Z can undo it.
             editor?.selectAll(nil)
             editor?.delete(nil)
+            // P3-15 (P3-12 QA note): a field that refused the delete keeps its text; leave it instead of looping.
+            if editor?.string.isEmpty == false { makeFirstResponder(nil) }
         case .stopEditing:
             makeFirstResponder(nil)
         case .closeWindow:

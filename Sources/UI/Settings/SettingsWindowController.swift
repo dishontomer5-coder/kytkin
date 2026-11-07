@@ -31,17 +31,21 @@ import SwiftUI
         let convert: ConvertSettingsModel
         let apps: AppsSettingsModel
         let permissions: PermissionsSettingsModel   // P2-26
+        let browsers: BrowsersSettingsModel         // P3-15
     }
 
     /// P2-26: General → "Show Welcome Again".
     private let showWelcome: @MainActor () -> Void
+    /// P3-15: About → "Open Settings Folder".
+    private let openSettingsFolder: @MainActor () -> Void
 
     init(general: GeneralSettingsModel, about: AboutInfo, tabs: TabModels,
-         showWelcome: @escaping @MainActor () -> Void) {
+         showWelcome: @escaping @MainActor () -> Void, openSettingsFolder: @escaping @MainActor () -> Void) {
         self.general = general
         self.about = about
         self.tabs = tabs
         self.showWelcome = showWelcome
+        self.openSettingsFolder = openSettingsFolder
         super.init()
     }
 
@@ -73,6 +77,8 @@ import SwiftUI
         let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about,
                                                                  rules: tabs.rules, convert: tabs.convert,
                                                                  apps: tabs.apps, permissions: tabs.permissions,
+                                                                 browsers: tabs.browsers,
+                                                                 openSettingsFolder: openSettingsFolder,
                                                                  showWelcome: showWelcome,
                                                                  tabChanged: { [weak self] in
                                                                      self?.updatePermissionsPolling()
@@ -112,6 +118,7 @@ import SwiftUI
         tabs.rules.refresh()
         tabs.apps.refresh()
         tabs.permissions.reload()
+        tabs.browsers.refresh()   // P3-15 / P3-22: browsers installed since launch, this session's statuses
     }
 
     func windowWillClose(_ notification: Notification) {

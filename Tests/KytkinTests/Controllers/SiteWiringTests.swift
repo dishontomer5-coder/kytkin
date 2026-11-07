@@ -19,6 +19,9 @@ final class SiteWiringTests: XCTestCase {
     private let other = "com.example.OtherBrowser"
     private let date = Date(timeIntervalSince1970: 5_000)
     private var generation: UInt64 = 100
+    /// P3-22: what LaunchServices would answer now.
+    private lazy var handlers: Set<String> = [other, zen]
+    private var handlerReads = 0
 
     private func make(_ prefs: Preferences = Preferences(), accessibility: PermissionState = .granted,
                       suffixListLoaded: Bool = true) {
@@ -33,7 +36,10 @@ final class SiteWiringTests: XCTestCase {
         sut = AppController(switcher: switcher, context: monitor, store: store, permissions: permissions,
                             conflicts: FakeConflicts(), keyWatcher: watcher, ticker: FakeTicker(), clock: clock,
                             now: { [date] in date }, suffixListLoaded: suffixListLoaded,
-                            webLinkHandlers: { [other, zen] in [other, zen] })
+                            webLinkHandlers: { [unowned self] in
+                                self.handlerReads += 1
+                                return self.handlers
+                            })
         switcher.onChange = { [unowned self] in self.sut.inputSourceDidChange($0) }
         monitor.onChange = { [unowned self] in self.sut.contextDidChange($0) }
         permissions.onChange = { [unowned self] in self.sut.permissionsDidChange($0) }
@@ -130,6 +136,47 @@ final class SiteWiringTests: XCTestCase {
         store.update { $0.browsers.siteRulesEnabled[zen] = false }
         sut.preferencesDidChange()
         XCTAssertEqual(sut.browserSupport(for: zen), .off)
+    }
+
+    // MARK: - P3-15 / P3-22: Settings
+
+    func testSettingsReReadsTheWebLinkHandlers() throws {
+        make()
+        XCTAssertEqual(handlerReads, 1, "read at start")
+        let newcomer = "com.example.InstalledLater"
+        XCTAssertNil(try XCTUnwrap(monitor.sitePolicyCalls.last).request(for: newcomer))
+        let before = monitor.sitePolicyCalls.count
+        XCTAssertEqual(sut.refreshWebLinkHandlers(), [other, zen])
+        XCTAssertEqual(monitor.sitePolicyCalls.count, before, "nothing changed: no new policy")
+        handlers.insert(newcomer)
+        XCTAssertEqual(sut.refreshWebLinkHandlers(), [other, zen, newcomer])
+        XCTAssertEqual(handlerReads, 3)
+        XCTAssertNotNil(try XCTUnwrap(monitor.sitePolicyCalls.last).request(for: newcomer),
+                        "a browser installed since launch is watched")
+        XCTAssertEqual(sut.otherBrowserBundleIDs, [other, newcomer])
+    }
+
+    func testRefreshBeforeStartReadsNothing() {
+        clock = FakeClock()
+        store = makeStore(clock: clock)
+        let controller = AppController(switcher: FakeSwitcher(), context: FakeContextMonitor(), store: store,
+                                       permissions: FakePermissions(), conflicts: FakeConflicts(),
+                                       keyWatcher: FakeKeyWatcher(), ticker: FakeTicker(), clock: clock,
+                                       webLinkHandlers: { [unowned self] in
+                                           self.handlerReads += 1
+                                           return []
+                                       })
+        XCTAssertEqual(controller.refreshWebLinkHandlers(), [])
+        XCTAssertEqual(handlerReads, 0)
+    }
+
+    func testBrowserSupportFollowsTheSwitchAtOnce() {
+        make()
+        // A Settings write, before the preferences observation has pushed a new policy.
+        store.update { $0.browsers.siteRulesEnabled[zen] = false }
+        XCTAssertEqual(sut.browserSupport(for: zen), .off)
+        store.update { $0.browsers.siteRulesEnabled[zen] = nil }
+        XCTAssertEqual(sut.browserSupport(for: zen), .notSeenYet)
     }
 
     func testDebugMenuCarriesTheSiteLine() {

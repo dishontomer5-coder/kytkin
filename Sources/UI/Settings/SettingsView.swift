@@ -12,13 +12,16 @@ struct SettingsView: View {
     let convert: ConvertSettingsModel    // P2-25
     let apps: AppsSettingsModel          // P2-25
     let permissions: PermissionsSettingsModel   // P2-26
+    let browsers: BrowsersSettingsModel         // P3-15
+    /// P3-15: About → "Open Settings Folder".
+    let openSettingsFolder: @MainActor () -> Void
     /// P2-26: General → "Show Welcome Again".
     let showWelcome: @MainActor () -> Void
     /// P2-26: the tab changed (the window controller turns the 1 s permission poll on or off).
     let tabChanged: @MainActor () -> Void
 
     /// A fixed size: grouped Forms scroll and have no natural height to size the window from.
-    static let size = CGSize(width: 600, height: 460)
+    static let size = CGSize(width: 680, height: 500)   // P3-15: eight tabs
 
     var body: some View {
         TabView(selection: $selection.tab) {
@@ -36,12 +39,19 @@ struct SettingsView: View {
     @ViewBuilder private func content(for tab: SettingsTab) -> some View {
         switch tab {
         case .general: GeneralSettingsView(model: general, showWelcome: showWelcome)
-        case .about: AboutSettingsView(info: about)
+        case .about: AboutSettingsView(info: about, openSettingsFolder: openSettingsFolder)
         case .languages: LanguagesSettingsView()   // P2-24: its model comes from the environment
         case .rules: RulesSettingsView(model: rules)
         case .convert: ConvertSettingsView(model: convert)
         case .apps: AppsSettingsView(model: apps)
         case .permissions: PermissionsSettingsView(model: permissions)   // P2-26
+        case .browsers:   // P3-15
+            BrowsersSettingsView(model: browsers,
+                                 openPermissions: { selection.tab = .permissions },
+                                 showWebsiteRules: {
+                                     rules.kindFilter = .websites
+                                     selection.tab = .rules
+                                 })
         }
     }
 }

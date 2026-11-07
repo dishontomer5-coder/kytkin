@@ -13,7 +13,8 @@ final class SettingsMappingTests: XCTestCase {
 
     func testTabOrderAndPlaceholders() {
         XCTAssertEqual(SettingsTab.allCases.map(\.title),
-                       ["General", "Languages", "Rules", "Convert", "Apps", "Permissions", "About"])
+                       ["General", "Languages", "Rules", "Convert", "Apps", "Browsers & Sites", "Permissions",
+                        "About"])
         XCTAssertEqual(SettingsTab.allCases.filter { !$0.isPlaceholder },
                        SettingsTab.allCases, "P2-26: the Permissions tab was the last placeholder")
         for tab in SettingsTab.allCases {

@@ -1,11 +1,11 @@
 // P2-23: The tabs of the Settings window (001 §5.2), in the order they appear. General and About are built in P2-23;
 // the others show a one-line "coming soon" placeholder until their task lands (Languages P2-24, Rules/Apps/Convert
-// P2-25, Permissions P2-26), so each later task only replaces its placeholder. All are built now. Browsers & Sites is Phase 3.
+// P2-25, Permissions P2-26), so each later task only replaces its placeholder. All are built now. P3-15: Browsers & Sites sits between Apps and Permissions (001 §14.8).
 
 import Foundation
 
 enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
-    case general, languages, rules, convert, apps, permissions, about
+    case general, languages, rules, convert, apps, browsers, permissions, about
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
         case .rules: "Rules"
         case .convert: "Convert"
         case .apps: "Apps"
+        case .browsers: "Browsers & Sites"
         case .permissions: "Permissions"
         case .about: "About"
         }
@@ -29,6 +30,7 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
         case .rules: "list.bullet"
         case .convert: "arrow.left.arrow.right"
         case .apps: "square.grid.2x2"
+        case .browsers: "network"
         case .permissions: "lock.shield"
         case .about: "info.circle"
         }
@@ -40,6 +42,7 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
         case .general, .languages, .about: false   // P2-24: Languages
         case .rules, .convert, .apps: false   // P2-25
         case .permissions: false              // P2-26
+        case .browsers: false                 // P3-15
         }
     }
 
@@ -48,6 +51,7 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .general, .languages, .about, .permissions: ""   // P2-26: Permissions
         case .rules, .convert, .apps: ""   // P2-25
+        case .browsers: ""                 // P3-15
         }
     }
 }

@@ -5,7 +5,11 @@
 // - Every write goes through `RuleWriter` (001 §12 S3), which collapses duplicates of the scope it touches:
 //   changing the language pins the rule (a choice made by hand is a pin, like the menu's Pin), Pin / Unpin keep the
 //   language, Delete forgets the scope, and "Forget all learned rules" keeps every pin.
-// - Site, host and chat rules (Phase 3/4) are listed and can be edited or deleted, but Settings never creates one.
+// - Site, host and chat rules (Phase 3/4) are listed and can be edited or deleted. P3-15 (001 §14.8, D7): website and
+//   single-address rules are created only here, by "Add Website…" / "Add Subdomain Rule…" (`AddWebsiteForm`), as a
+//   pinned rule through `RuleWriter.pin` (Punycode keys, D13). Chat rules are never created here.
+// - P3-15: a kind filter (All / Apps / Websites). Hosts are shown with `HostNormalizer.unicodeForm`, and the stored
+//   Punycode key is the second line when it differs (D13; IDN look-alikes stay visible).
 // - Read-only preferences (§12 S1): every action does nothing and the notice says why.
 // - App names come from the injected lookup (the UI's LaunchServices lookup, cached for the session); a miss shows
 //   the bundle ID. Language names come from the injected source list, read on `refresh()`.
@@ -18,17 +22,25 @@ import Observation
     @ObservationIgnored private let appNames: AppDisplayNames
     @ObservationIgnored private let readSources: @MainActor () -> [InputSourceInfo]
     @ObservationIgnored private let now: () -> Date
+    /// P3-15: nil when the bundled Public Suffix List is missing (D11): no website rule can be added then.
+    @ObservationIgnored private let extractor: DomainExtractor?
 
     /// All input sources (enabled or not), read on `refresh()`, for names and the language picker.
     private(set) var sources: [InputSourceInfo] = []
     var sortOrder: RuleSortOrder = .lastUpdated
     var originFilter: RuleOriginFilter = .all
+    /// P3-15: All / Apps / Websites.
+    var kindFilter: RuleKindFilter = .all
+    /// P3-15: the open "Add Website…" sheet (nil = closed).
+    var addWebsite: AddWebsiteForm?
     /// Matches the name, the second line, the language or the kind, ignoring case and accents.
     var searchText = ""
 
     init(store: PreferencesStore, appName: @escaping @MainActor (String) -> String?,
-         sources: @escaping @MainActor () -> [InputSourceInfo], now: @escaping () -> Date = Date.init) {
+         sources: @escaping @MainActor () -> [InputSourceInfo], now: @escaping () -> Date = Date.init,
+         extractor: DomainExtractor? = nil) {
         self.store = store
+        self.extractor = extractor
         self.appNames = AppDisplayNames(lookup: appName)
         self.readSources = sources
         self.now = now
@@ -61,7 +73,7 @@ import Observation
     var rows: [RuleRow] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = allRows.filter { row in
-            guard originFilter.includes(row.origin) else { return false }
+            guard originFilter.includes(row.origin), kindFilter.includes(row.scope) else { return false }
             guard !query.isEmpty else { return true }
             return [row.name, row.detail ?? "", row.languageName, row.kindTitle].contains {
                 $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
@@ -124,6 +136,43 @@ import Observation
         write { RuleWriter.forgetAllLearned(in: $0) }
     }
 
+    // MARK: - Add Website (P3-15)
+
+    /// False when the Public Suffix List is missing (D11) or the preferences are read-only.
+    var canAddWebsite: Bool { extractor != nil && isEditable }
+
+    static let websiteDataMissingText = "Website rules are unavailable: a file inside Kytkin is missing. Reinstall Kytkin."
+
+    /// "Add Website…". `subdomainOf` = a site row's "Add Subdomain Rule…": the field starts with that site.
+    func beginAddWebsite(subdomainOf site: String? = nil) {
+        guard canAddWebsite, let extractor else { return }
+        let options = LanguageOption.options(pair: store.prefs.languagePair, sources: sources)
+        addWebsite = AddWebsiteForm(
+            extractor: extractor, text: site.map(HostNormalizer.unicodeForm) ?? "",
+            extent: site == nil ? .wholeSite : .onlyHost, languageOptions: options, subdomainOf: site,
+            existingRule: { [weak self] scope in self.flatMap { RuleEngine(rules: $0.store.prefs.rules).rule(for: scope) } },
+            languageName: { [weak self] id in LanguageOption.name(of: id, in: self?.sources ?? []) })
+    }
+
+    /// "Add Subdomain Rule…" is offered for a whole-site rule with a real domain (not an IP, localhost or intranet name).
+    func offersSubdomainRule(_ row: RuleRow) -> Bool {
+        guard canAddWebsite, case .site(let key) = row.scope else { return false }
+        return key.contains(".") && !IPAddress.isIPLiteral(key)
+    }
+
+    /// Cancel (or Esc in the sheet): the typed address is dropped.
+    func cancelAddWebsite() {
+        addWebsite = nil
+    }
+
+    /// Save: a pinned rule through RuleWriter (Punycode). Closes the sheet on success; false = nothing written.
+    @discardableResult func saveAddWebsite() -> Bool {
+        guard let form = addWebsite, form.canSave, let scope = form.scope, isEditable else { return false }
+        write { RuleWriter.pin(scope, to: form.language, in: $0, now: now()) }
+        addWebsite = nil
+        return true
+    }
+
     // MARK: - Private
 
     private func rule(_ id: UUID) -> Rule? {
@@ -145,11 +194,14 @@ import Observation
             name = appNames.name(for: bundleID)
             detail = name == bundleID ? nil : bundleID
         case .site(let domain):
-            kind = "Site"
-            name = domain
+            // P3-15 (D13): shown in Unicode, the stored Punycode key underneath when it differs.
+            kind = "Website"
+            name = HostNormalizer.unicodeForm(domain)
+            detail = name == domain ? nil : domain
         case .siteHost(let host):
-            kind = "Site (exact address)"
-            name = host
+            kind = "Website, only this address"
+            name = HostNormalizer.unicodeForm(host)
+            detail = name == host ? nil : host
         case .chat(let bundleID, _):
             kind = "Chat"
             let app = appNames.name(for: bundleID)

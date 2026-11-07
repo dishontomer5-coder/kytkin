@@ -131,12 +131,17 @@ final class EscapeKeyActionTests: XCTestCase {
         XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: false, focus: .nothingEdited), .closeWindow)
     }
 
-    func testAFieldWithTextIsClearedFirst() {
-        XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: false, focus: .textField(isEmpty: false)), .clearField)
+    func testASearchFieldWithTextIsClearedFirst() {
+        XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: false, focus: .searchField(isEmpty: false)), .clearField)
     }
 
     func testAnEmptyFieldIsLeftNotTheWindowClosed() {
-        XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: false, focus: .textField(isEmpty: true)), .stopEditing)
+        XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: false, focus: .searchField(isEmpty: true)), .stopEditing)
+    }
+
+    /// P3-15 (P3-12 QA note): an ordinary field (an address being typed) is never cleared by Esc.
+    func testAPlainTextFieldIsNeverCleared() {
+        XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: false, focus: .textField), .stopEditing)
     }
 
     func testATextAreaIsNeverCleared() {
@@ -144,8 +149,8 @@ final class EscapeKeyActionTests: XCTestCase {
     }
 
     func testASheetKeepsEscWhateverHasFocus() {
-        let all: [EscapeKeyAction.Focus] = [.nothingEdited, .textField(isEmpty: true), .textField(isEmpty: false),
-                                            .textArea]
+        let all: [EscapeKeyAction.Focus] = [.nothingEdited, .searchField(isEmpty: true),
+                                            .searchField(isEmpty: false), .textField, .textArea]
         for focus in all {
             XCTAssertEqual(EscapeKeyAction.decide(sheetAttached: true, focus: focus), .ignore)
         }
@@ -153,13 +158,13 @@ final class EscapeKeyActionTests: XCTestCase {
 
     func testThreeEscsFromASearchFieldWithText() {
         // clear → (field now empty) leave → (nothing edited) close
-        var focus = EscapeKeyAction.Focus.textField(isEmpty: false)
+        var focus = EscapeKeyAction.Focus.searchField(isEmpty: false)
         var actions: [EscapeKeyAction] = []
         for _ in 0..<3 {
             let action = EscapeKeyAction.decide(sheetAttached: false, focus: focus)
             actions.append(action)
             switch action {
-            case .clearField: focus = .textField(isEmpty: true)
+            case .clearField: focus = .searchField(isEmpty: true)
             case .stopEditing: focus = .nothingEdited
             default: break
             }
