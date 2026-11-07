@@ -95,22 +95,31 @@ final class PermissionsSettingsModelTests: XCTestCase {
                        "no second permission asked for nothing")
     }
 
-    /// QA (P2-26): "Accessibility covers it" is only true once the active tap runs. Whether Accessibility alone
-    /// allows it on every Mac is still open (P1-17), so a tap stuck below the wanted mode keeps the fallback offered.
-    func testInputMonitoringIsOfferedWhileTheTapIsStuckBelowWhatAccessibilityShouldGive() {
-        set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined; $0.tapMode = .off }
-        var im = row(.inputMonitoring)
-        XCTAssertEqual(im.status, .notGranted)
-        XCTAssertTrue(im.showsGrant && im.showsOpenSettings, "001 §6.1 step 4: offer Input Monitoring")
-        XCTAssertNotEqual(im.statusText, "Not needed (Accessibility covers it)")
+    /// P2-64 (replaces P2-26 QA's "only once the tap runs"): P1-17 is answered, Accessibility alone gives listen
+    /// access on macOS 26, so Input Monitoring is never offered while Accessibility is allowed, whatever the tap does.
+    func testInputMonitoringIsNotNeededWhileAccessibilityIsAllowedWhateverTheTapDoes() {
+        for mode in [TapMode.off, .listenOnly, .active] {
+            set { $0.accessibility = .granted; $0.inputMonitoring = .notDetermined; $0.tapMode = mode }
+            let im = row(.inputMonitoring)
+            XCTAssertEqual(im.status, .notNeeded, "\(mode)")
+            XCTAssertEqual(im.statusText, "Not needed (Accessibility covers it)")
+            XCTAssertFalse(im.showsGrant || im.showsOpenSettings || im.showsQuitAndReopen, "\(mode)")
+        }
+    }
 
-        set { $0.tapMode = .listenOnly }
-        XCTAssertEqual(row(.inputMonitoring).status, .notGranted)
+    /// P2-64 (owner, macOS 26): with only Accessibility granted, `CGPreflightListenEventAccess()` reads true although
+    /// Kytkin isn't in the Input Monitoring list. The row must not say "Allowed" (or ask for a restart).
+    func testAPreflightThatReadsTrueBecauseOfAccessibilityStillSaysNotNeeded() {
+        set { $0.accessibility = .granted; $0.inputMonitoring = .granted; $0.tapMode = .active }
+        XCTAssertEqual(row(.inputMonitoring).status, .notNeeded)
+        XCTAssertEqual(row(.inputMonitoring).statusText, "Not needed (Accessibility covers it)")
 
-        set { $0.tapMode = .active }
-        im = row(.inputMonitoring)
-        XCTAssertEqual(im.status, .notNeeded)
-        XCTAssertFalse(im.showsGrant || im.showsOpenSettings)
+        set { $0.showsQuitAndReopen = true }   // even a stale hint can't bring the button back
+        XCTAssertEqual(row(.inputMonitoring).status, .notNeeded)
+        XCTAssertFalse(row(.inputMonitoring).showsQuitAndReopen)
+
+        set { $0.accessibility = .denied; $0.showsQuitAndReopen = false }
+        XCTAssertEqual(row(.inputMonitoring).status, .granted, "without Accessibility the real value shows again")
     }
 
     func testInputMonitoringNotNeededWhenNoTypingFeatureWantsATap() {

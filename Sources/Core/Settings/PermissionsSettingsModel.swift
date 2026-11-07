@@ -50,7 +50,7 @@ import Observation
     // MARK: - Rows
 
     var rows: [PermissionRow] {
-        let covers = Self.accessibilityCoversInputMonitoring(state: state, desired: desiredTapMode)
+        let covers = Self.accessibilityCoversInputMonitoring(state: state)
         return [
             PermissionRow.make(.accessibility, state: state.accessibility, accessibilityCoversIt: covers,
                                showsQuitAndReopen: false, appName: appName),
@@ -59,13 +59,13 @@ import Observation
         ]
     }
 
-    /// QA (P2-26): Input Monitoring is "not needed" only while Accessibility is allowed and the tap is not below
-    /// the mode Kytkin wants. Whether Accessibility alone allows the active tap on every Mac is still open (P1-17),
-    /// so a tap stuck below it keeps Input Monitoring offered as the fallback (001 §6.1 step 4). A watchdog
-    /// slow-down is not a permission problem, so it doesn't bring the row back.
-    static func accessibilityCoversInputMonitoring(state: MenuState, desired: TapMode) -> Bool {
-        guard state.accessibility == .granted else { return false }
-        return TapModePolicy.rank(state.tapMode) >= TapModePolicy.rank(desired) || state.degradedByWatchdog
+    /// P2-64 (P1-17 answered, keyboard-event-tap.md addendum): on macOS 26 Accessibility alone gives listen access,
+    /// and `CGPreflightListenEventAccess()` then reads true even though Kytkin is not in the Input Monitoring list.
+    /// An Input Monitoring grant adds nothing while Accessibility is allowed, so the row reads "Not needed" whatever
+    /// the preflight value and the tap mode are (this replaces P2-26 QA's "only once the tap runs" rule: offering a
+    /// second permission can't help a tap that Accessibility didn't start; the Mode line and the menu say so).
+    static func accessibilityCoversInputMonitoring(state: MenuState) -> Bool {
+        state.accessibility == .granted
     }
 
     // MARK: - User clicks only

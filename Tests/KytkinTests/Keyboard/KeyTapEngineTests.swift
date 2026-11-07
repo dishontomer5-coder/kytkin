@@ -324,6 +324,34 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertEqual(statuses.last?.health.mode, .off)
     }
 
+    /// P2-27 (quit during a convert): the worker on @TextActor hasn't posted yet when the app quits. The shutdown
+    /// replays the held key and wins the B3 commit, so the worker's `claimPosting` fails and it writes nothing after
+    /// the tap is gone (no converted text landing after the keys typed behind it).
+    func testQuitBeforeTheWorkerPostsFlushesAndTheWorkerCanNoLongerWrite() {
+        makeEngine()
+        let gen = doubleShift()
+        XCTAssertEqual(commit.state, .pending(gen: gen))
+        _ = deliver(T.key(a))
+        engine.shutdown()
+        XCTAssertEqual(postedCodes, [Int64(a)], "a quit never eats a key")
+        XCTAssertNil(backend.handler)
+        XCTAssertFalse(commit.claimPosting(gen: gen), "the worker must not post after the quit flushed")
+    }
+
+    /// P2-27: the worker is already posting when the app quits. The tap is not active any more, so the held key is
+    /// replayed at once rather than kept waiting for a finish that may never come (the accepted 001 §12.2 limit:
+    /// it can land before the rest of the converted text). Nothing is lost and the tap is removed.
+    func testQuitWhileTheWorkerPostsStillReplaysTheHeldKey() {
+        makeEngine()
+        let gen = doubleShift()
+        XCTAssertTrue(commit.claimPosting(gen: gen))
+        _ = deliver(T.key(a))
+        engine.shutdown()
+        XCTAssertEqual(postedCodes, [Int64(a)])
+        XCTAssertNil(backend.handler)
+        XCTAssertTrue(backend.timersDetached)
+    }
+
     /// QA (P2-17): stop flushes, removes the tap, and invalidates the timers (their handlers hold the engine unowned).
     func testShutdownFlushesThenDetachesTheTimers() {
         makeEngine()

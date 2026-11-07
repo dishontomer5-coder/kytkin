@@ -26,6 +26,7 @@
 // P2-16 QA: "any earlier read", not only the first: granted at launch → revoked → granted again is the same
 // situation for the tap (KeyWatcher dropped it on the revoke and must create a new one). It is a hint only; the
 // UI shows "Quit & Reopen" only while the tap mode KeyWatcher achieved is still below the desired one.
+// P2-64: never while Accessibility is trusted (on macOS 26 it alone makes the Input Monitoring preflight read true).
 
 import Foundation
 
@@ -79,7 +80,11 @@ struct PermissionMonitor {
         next.grants.accessibility = state(reading.accessibilityTrusted, .accessibility)
         next.grants.inputMonitoring = state(reading.inputMonitoringGranted, .inputMonitoring)
         // A revoke clears the hint: there is nothing to reopen for.
+        // P2-64: on macOS 26 Accessibility alone makes the Input Monitoring preflight read true, so granting
+        // Accessibility would look like a fresh Input Monitoring grant. While Accessibility is trusted the active tap
+        // covers it and nothing needs a relaunch.
         next.inputMonitoringNeedsRelaunch = reading.inputMonitoringGranted && inputMonitoringSeenNotGranted
+            && !reading.accessibilityTrusted
 
         guard next != status else { return nil }
         status = next

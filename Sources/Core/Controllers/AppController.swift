@@ -303,14 +303,21 @@ import Observation
 
     var menuState: MenuState {
         let status = permissions.status
+        // P2-27: the learner line is built only for the DEBUG menu (it is read on every label refresh).
+        #if DEBUG
+        let learnerDebug: String? = switching.learnerDebug
+        #else
+        let learnerDebug: String? = nil
+        #endif
         return MenuState(
             currentRule: switching.currentRule, paused: switching.paused, enabled: store.prefs.general.enabled,
             tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
             degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
             canRestartKeyboard: keyWatcherStatus.degradedByWatchdog && isStarted
                 && policy.restartAction(desired: desiredTapMode()) != nil,
-            tapReEnableCount: keyWatcherStatus.health.reEnableCount, doubleShiftCount: doubleShiftCount,
-            conflicts: conflicts.conflicts, learnerDebug: switching.learnerDebug,
+            tapReEnableCount: keyWatcherStatus.health.reEnableCount,
+            slowCallbackCount: keyWatcherStatus.health.overBudgetCallbacks, doubleShiftCount: doubleShiftCount,
+            conflicts: conflicts.conflicts, learnerDebug: learnerDebug,
             showsQuitAndReopen: policy.showsQuitAndReopen(needsRelaunch: status.inputMonitoringNeedsRelaunch),
             accessibility: status.grants.accessibility, inputMonitoring: status.grants.inputMonitoring,
             store: MenuState.StoreFlags(loadIssue: store.loadIssue, isReadOnly: store.isReadOnly,
