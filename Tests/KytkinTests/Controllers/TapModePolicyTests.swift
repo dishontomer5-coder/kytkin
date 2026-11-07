@@ -74,4 +74,29 @@ final class TapModePolicyTests: XCTestCase {
         p.started(achieved: .listenOnly)
         XCTAssertFalse(p.showsQuitAndReopen(needsRelaunch: true))
     }
+
+    // MARK: - P2-22: "Restart Keyboard Features"
+
+    func testRestartOnlyWhenBelowTheDesiredMode() {
+        var p = TapModePolicy()
+        _ = p.decide(desired: .active, grantsChanged: false)
+        p.started(achieved: .active)
+        XCTAssertNil(p.restartAction(desired: .active), "already running")
+        p.statusReported(mode: .listenOnly)      // the watchdog lowered it
+        XCTAssertEqual(p.restartAction(desired: .active), .start(.active))
+        p.statusReported(mode: .off)
+        XCTAssertEqual(p.restartAction(desired: .listenOnly), .start(.listenOnly))
+        XCTAssertNil(p.restartAction(desired: .off), "nothing wants a tap")
+    }
+
+    func testRestartIsRecordedSoDecideDoesNotRepeatIt() {
+        var p = TapModePolicy()
+        _ = p.decide(desired: .active, grantsChanged: false)
+        p.started(achieved: .active)
+        p.statusReported(mode: .listenOnly)
+        p.restarting(.active)
+        p.started(achieved: .active)
+        XCTAssertNil(p.decide(desired: .active, grantsChanged: false))
+        XCTAssertNil(p.restartAction(desired: .active))
+    }
 }

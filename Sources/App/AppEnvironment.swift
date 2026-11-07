@@ -72,6 +72,8 @@ import AppKit
         permissions.onChange = { status in controller.permissionsDidChange(status) }
         conflicts.onChange = { conflicts in controller.conflictsDidChange(conflicts) }
         controller.onDisplayChange = { statusItem.refresh() }
+        // P2-22: the menu's "Settings…", "Open Settings…" and About call `statusItem.openSettings` (a tab target).
+        // It stays nil (items disabled or hidden) until the Settings window (P2-23) is wired here.
 
         // P2-39 (001 §12 W2): Kytkin's own windows are not a context.
         let center = NotificationCenter.default

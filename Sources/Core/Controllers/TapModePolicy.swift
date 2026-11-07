@@ -54,6 +54,18 @@ struct TapModePolicy: Sendable, Equatable {
         achieved = mode
     }
 
+    /// P2-22: the menu's "Restart Keyboard Features" after a watchdog downgrade (B4), a user click only: start the
+    /// desired mode again when the tap runs below it. nil = nothing to do (off is wanted, or it already runs).
+    func restartAction(desired: TapMode) -> Action? {
+        guard desired != .off, Self.rank(achieved) < Self.rank(desired) else { return nil }
+        return .start(desired)
+    }
+
+    /// P2-22: records the restart `restartAction` returned, like `decide` does for its own starts.
+    mutating func restarting(_ desired: TapMode) {
+        requested = desired
+    }
+
     /// The tap stays below what the grants allow while Input Monitoring was granted during this run: the UI offers
     /// "Quit & Reopen" (P2-46, 001 §6.1 step 4).
     func showsQuitAndReopen(needsRelaunch: Bool) -> Bool {
