@@ -1,6 +1,7 @@
 // P2-15: The thin tier-0 adapters. WorkspaceAppActivationSource is driven by fake notifications on a
 // private NotificationCenter (never the real workspace one), and ContextMonitor by a fake source.
 // Nothing here activates, hides or messages any app.
+// P3-5 / P2-41: wake and session re-reads, the isolated deinits (no observer or timer left behind), the dead-pid flag.
 
 import AppKit
 import XCTest
@@ -75,6 +76,50 @@ final class WorkspaceAppActivationSourceTests: XCTestCase {
         post(NSWorkspace.didActivateApplicationNotification, on: center, app: me)
         XCTAssertEqual(count, 3) // one observer, not two
         source.stop()
+    }
+
+    // MARK: - P2-41
+
+    func testWakeAndSessionBecameActiveReReadTheFrontmostApp() {
+        let center = NotificationCenter()
+        let source = WorkspaceAppActivationSource(center: center, frontmost: { self.me })
+        var count = 0
+        source.onActivate = { _, _ in count += 1 }
+        source.start()
+        count = 0
+        post(NSWorkspace.didWakeNotification, on: center, app: nil)
+        post(NSWorkspace.sessionDidBecomeActiveNotification, on: center, app: nil)
+        XCTAssertEqual(count, 2)
+        post(NSWorkspace.sessionDidResignActiveNotification, on: center, app: nil)
+        XCTAssertEqual(count, 2, "switching away reports nothing")
+        source.stop()
+    }
+
+    /// Counts the observers the source leaves registered.
+    private final class CountingCenter: NotificationCenter, @unchecked Sendable {
+        private(set) var live = 0
+        override func addObserver(forName name: NSNotification.Name?, object obj: Any?, queue: OperationQueue?,
+                                  using block: @escaping @Sendable (Notification) -> Void) -> NSObjectProtocol {
+            live += 1
+            return super.addObserver(forName: name, object: obj, queue: queue, using: block)
+        }
+        override func removeObserver(_ observer: Any) {
+            live -= 1
+            super.removeObserver(observer)
+        }
+    }
+
+    func testReleasedWhileStartedLeavesNoObserver() {
+        let center = CountingCenter()
+        weak var weakSource: WorkspaceAppActivationSource?
+        do {
+            let source = WorkspaceAppActivationSource(center: center, frontmost: { nil })
+            weakSource = source
+            source.start()
+            XCTAssertEqual(center.live, 5)
+        }
+        XCTAssertNil(weakSource)
+        XCTAssertEqual(center.live, 0, "isolated deinit removed every observer")
     }
 }
 
@@ -212,5 +257,57 @@ final class ContextMonitorTests: XCTestCase {
         source.onActivate?("com.apple.Safari", 10) // same instant: still the leading edge
         XCTAssertEqual(seen, ["com.apple.Safari"])
         monitor.stop()
+    }
+
+    // MARK: - P3-5 / P2-41
+
+    func testCurrentAppIsGoneFollowsTerminationAndTheNextContext() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        let monitor = makeMonitor(source, clock)
+        monitor.start()
+        source.onActivate?("A", 1)
+        XCTAssertFalse(monitor.currentAppIsGone)
+        source.onTerminate?(1)
+        XCTAssertTrue(monitor.currentAppIsGone)
+        clock.advance(bySeconds: 1)
+        source.onActivate?("B", 2)
+        XCTAssertFalse(monitor.currentAppIsGone)
+        monitor.stop()
+    }
+
+    func testOverrideHostsWithNoBrowserEmitNothing() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        let monitor = makeMonitor(source, clock)
+        var seen = 0
+        monitor.onChange = { _ in seen += 1 }
+        monitor.start()
+        source.onActivate?("A", 1)
+        monitor.setHostsWithOverrides(["a.com"])
+        XCTAssertEqual(seen, 1)
+        monitor.stop()
+    }
+
+    func testReleasedMonitorStopsItsSourceAndTimer() {
+        let source = FakeSource()
+        let clock = FakeClock(nowNanos: 1)
+        var seen: [String] = []
+        weak var weakMonitor: ContextMonitor?
+        do {
+            let monitor = makeMonitor(source, clock)
+            weakMonitor = monitor
+            monitor.onChange = { seen.append($0.bundleID) }
+            monitor.start()
+            source.onActivate?("A", 1)
+            source.onActivate?("B", 2)   // held: a flush timer is armed
+        }
+        XCTAssertNil(weakMonitor)
+        XCTAssertEqual(source.stopped, 1, "isolated deinit stopped the source (its observers go with it)")
+        XCTAssertNil(source.onActivate)
+        XCTAssertNil(source.onTerminate)
+        clock.advance(bySeconds: 1)
+        spin()
+        XCTAssertEqual(seen, ["A"], "the timer died with the monitor")
     }
 }

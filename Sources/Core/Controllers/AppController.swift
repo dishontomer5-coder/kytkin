@@ -56,6 +56,8 @@ import Observation
     private var lastPrefs: Preferences?
     private var lastConfig: KeyProcessorConfig?
     private var lastHints: [String: MethodHint]?
+    /// P3-5: the override hosts last given to the context monitor.
+    private var lastOverrideHosts: Set<String>?
     private let clock: any Clock
     /// P2-52 item 7: our after-convert switch whose buffer was re-rendered into `target`; its change notification
     /// (10–20 ms later) is the only `.ours` change that keeps the tap's word buffer. Expires like a switch token.
@@ -434,6 +436,12 @@ import Observation
         if force || config != lastConfig {
             lastConfig = config
             keyWatcher.perform(.updateConfig(config))   // P2-50, already clamped
+        }
+        // P3-5: siteHost rules → the assembler's override hosts (001 §14.5); it re-checks the page in front.
+        let hosts = RuleEngine.overrideHosts(prefs.rules)
+        if force || hosts != lastOverrideHosts {
+            lastOverrideHosts = hosts
+            context.setHostsWithOverrides(hosts)
         }
         let hints = PreferencesMapping.methodHintOverrides(prefs.apps)
         if force || hints != lastHints {

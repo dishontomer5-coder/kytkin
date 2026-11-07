@@ -259,6 +259,68 @@ final class SwitchControllerTests: XCTestCase {
         XCTAssertEqual(store.prefs.rules.count, 1)
     }
 
+    // MARK: - P2-41: the current app quit
+
+    func testNothingIsLearnedForAnAppThatQuit() {
+        make()
+        monitor.activate(notes, pid: 10)
+        monitor.currentAppIsGone = true
+        userSwitch(to: IDs.hebrew)
+        XCTAssertNil(sut.learner.pending)
+        XCTAssertTrue(sut.learnerDebug.contains("app quit"))
+        sut.wordBoundary(); sut.wordBoundary()
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
+    func testACandidateMadeBeforeTheAppQuitIsDroppedNotConfirmed() {
+        make()
+        monitor.activate(notes, pid: 10)
+        userSwitch(to: IDs.hebrew)
+        XCTAssertNotNil(sut.learner.pending)
+        monitor.currentAppIsGone = true   // Notes quit; the next app's Context hasn't arrived yet
+        sut.wordBoundary(); sut.wordBoundary(); sut.wordBoundary()
+        XCTAssertNil(sut.learner.pending)
+        XCTAssertTrue(store.prefs.rules.isEmpty, "words typed after the quit don't confirm it")
+        XCTAssertTrue(sut.learnerDebug.contains("app quit"))
+    }
+
+    func testADwellCandidateIsDroppedWhenTheAppQuit() {
+        make(tap: false)
+        monitor.activate(notes, pid: 10)
+        userSwitch(to: IDs.hebrew)
+        XCTAssertTrue(sut.wantsTicks)
+        monitor.currentAppIsGone = true
+        clock.advance(bySeconds: 5)
+        sut.tick()
+        XCTAssertFalse(sut.wantsTicks)
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
+    func testAQuitAppsRuleIsNotReappliedButTheNextAppsIs() {
+        make(prefs(rules: [.app(notes, IDs.hebrew), .app(terminal, IDs.russian)]))
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+        switcher.current = IDs.abc
+        monitor.currentAppIsGone = true
+        sut.kytkinDidBecomeActive()
+        sut.kytkinDidResignActive(frontmostPID: 10)
+        sut.recheckAfterResign(frontmostPID: 10)
+        sut.setPaused(true); sut.setPaused(false)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew], "no switch for a dead pid")
+        monitor.activate(terminal, pid: 11)   // a new Context clears the flag
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.russian])
+    }
+
+    func testPinAndForgetStillWorkAfterTheAppQuit() {
+        make(prefs(rules: [.app(notes, IDs.abc)]))
+        monitor.activate(notes, pid: 10)
+        monitor.currentAppIsGone = true
+        switcher.current = IDs.hebrew
+        XCTAssertEqual(sut.pinCurrent()?.inputSource, IDs.hebrew)
+        XCTAssertTrue(sut.forgetCurrent())
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
     // MARK: - Pin / Forget / Pause
 
     func testPinWritesAPinnedRuleForTheCurrentAppAndSource() {
