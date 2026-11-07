@@ -46,7 +46,9 @@ import SwiftUI
         let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about))
         hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
+        // nowhere) and skips windowWillClose, so Kytkin never hides; Settings windows don't minimize anyway.
+        window.styleMask = [.titled, .closable]
         window.title = "Kytkin Settings"
         window.setContentSize(SettingsView.size)
         window.isReleasedWhenClosed = false

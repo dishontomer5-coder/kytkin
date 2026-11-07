@@ -189,6 +189,38 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertEqual(sut.loginItemError, "Couldn't turn off Open at Login.")
     }
 
+    /// QA (P2-23): register/unregister returned without an error but the status didn't follow (e.g. `.notFound`):
+    /// the switch flips back, so say so instead of reverting silently.
+    func testRegisterThatDoesNotTakeIsShownAsAnError() {
+        make()
+        login.statusAfterRegister = .notFound
+        sut.setLaunchAtLogin(true)
+        XCTAssertFalse(sut.launchAtLogin)
+        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login.")
+        XCTAssertNil(sut.loginItemHint)
+    }
+
+    func testUnregisterThatDoesNotTakeIsShownAsAnError() {
+        make()
+        login.current = .requiresApproval
+        login.statusAfterUnregister = .requiresApproval
+        sut.setLaunchAtLogin(false)
+        XCTAssertTrue(sut.launchAtLogin)
+        XCTAssertEqual(sut.loginItemError, "Couldn't turn off Open at Login.",
+                       "pending approval excuses only a turn-on")
+    }
+
+    func testASuccessfulToggleClearsAnEarlierError() {
+        make()
+        login.registerError = FakeLoginItems.Failure()
+        sut.setLaunchAtLogin(true)
+        XCTAssertNotNil(sut.loginItemError)
+        login.registerError = nil
+        sut.setLaunchAtLogin(true)
+        XCTAssertNil(sut.loginItemError)
+        XCTAssertTrue(sut.launchAtLogin)
+    }
+
     func testNoHintWhenEnabledOrOff() {
         make()
         for status in [LoginItemStatus.enabled, .notRegistered, .notFound] {

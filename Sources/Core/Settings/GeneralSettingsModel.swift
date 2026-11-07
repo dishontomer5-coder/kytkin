@@ -82,15 +82,24 @@ import Observation
             loginItemStatus = before
             return
         }
+        var threw = false
         do {
             if on { try loginItems.register() } else { try loginItems.unregister() }
-            loginItemError = nil
         } catch {
-            loginItemError = on ? "Couldn't turn on Open at Login." : "Couldn't turn off Open at Login."
+            threw = true
         }
-        loginItemStatus = loginItems.status
-        // macOS may refuse with "needs approval"; the hint below says what to do, so that's not an error.
-        if loginItemStatus == .requiresApproval { loginItemError = nil }
+        let after = loginItems.status
+        loginItemStatus = after
+        if on, after == .requiresApproval {
+            // macOS may refuse with "needs approval"; the hint below says what to do, so that's not an error.
+            loginItemError = nil
+        } else if threw || after.isOn != on {
+            // QA (P2-23): also when the call "succeeded" but the status didn't follow (e.g. `.notFound` for a copy
+            // macOS can't register), so the switch never flips back silently.
+            loginItemError = on ? "Couldn't turn on Open at Login." : "Couldn't turn off Open at Login."
+        } else {
+            loginItemError = nil
+        }
     }
 
     /// Shown under the switch while macOS waits for the user's approval.

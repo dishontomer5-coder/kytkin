@@ -9,6 +9,8 @@ import Foundation
     var current: LoginItemStatus = .notRegistered
     /// What `register` leaves behind (macOS may ask for approval).
     var statusAfterRegister: LoginItemStatus = .enabled
+    /// What `unregister` leaves behind.
+    var statusAfterUnregister: LoginItemStatus = .notRegistered
     var registerError: Error?
     var unregisterError: Error?
 
@@ -31,7 +33,7 @@ import Foundation
     func unregister() throws {
         calls.append(.unregister)
         if let unregisterError { throw unregisterError }
-        current = .notRegistered
+        current = statusAfterUnregister
     }
 
     func openSystemSettingsLoginItems() { calls.append(.openSystemSettings) }
