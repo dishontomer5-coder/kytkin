@@ -95,10 +95,19 @@ final class KeyStreamProcessorTests: XCTestCase {
         XCTAssertEqual(verdict, .pass)
         XCTAssertEqual(signal, .wordBoundary)
         _ = p.handle(F.key(s))
+        _ = p.handle(F.key(KeyCode.space))
+        _ = p.handle(F.key(d))
+        XCTAssertEqual(p.handle(F.key(KeyCode.space)).1, .wordBoundary)
+        _ = p.handle(F.key(a))
+        XCTAssertEqual(p.handle(F.key(KeyCode.space)).1, .wordBoundary)
+        XCTAssertEqual(p.buffer.wordCount, 2, "current (empty) word + 2 previous; the oldest was dropped")
+        // P2-59: Return and Tab still emit the boundary (the learner), but they end the buffer.
+        _ = p.handle(F.key(s))
         XCTAssertEqual(p.handle(F.key(KeyCode.returnKey)).1, .wordBoundary)
+        XCTAssertTrue(p.buffer.isEmpty)
         _ = p.handle(F.key(d))
         XCTAssertEqual(p.handle(F.key(KeyCode.tab)).1, .wordBoundary)
-        XCTAssertEqual(p.buffer.wordCount, 2, "current (empty) word + 2 previous; the oldest was dropped")
+        XCTAssertTrue(p.buffer.isEmpty)
     }
 
     func testBackspaceRemovesAStroke() {

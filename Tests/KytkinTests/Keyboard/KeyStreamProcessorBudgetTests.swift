@@ -24,6 +24,9 @@ final class KeyStreamProcessorBudgetTests: XCTestCase {
             case 0: events.append(contentsOf: F.doubleShift(at: t))
             case 13: events.append(F.key(KeyCode.leftArrow, at: t))
             case 41: events.append(F.pointer(at: t))
+            // P2-59a: buffer-ending keys (Return, Option-Space) are on the per-key path too.
+            case 59: events.append(F.key(KeyCode.returnKey, at: t))
+            case 77: events.append(F.key(KeyCode.space, flags: KeyEvent.optionMask, at: t))
             default:
                 if i % 6 == 5 {
                     events.append(F.key(KeyCode.space, at: t))
@@ -46,7 +49,10 @@ final class KeyStreamProcessorBudgetTests: XCTestCase {
             if let signal {
                 signals += 1
                 if case let .doubleShift(_, gen) = signal {
-                    held += p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil).count
+                    // P2-59a: keep the buffer re-rendered half the time, so `bufferRendering` is exercised.
+                    let rendered: InputSourceID? = gen % 2 == 0 ? InputSourceID("com.apple.keylayout.Hebrew") : nil
+                    held += p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil,
+                                                bufferRenderedIn: rendered).count
                 }
             }
             if let flushed = p.pollFlush() { held += flushed.count }

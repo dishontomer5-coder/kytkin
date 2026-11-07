@@ -48,7 +48,9 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return claimAnswer
     }
 
-    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) {
+    // P2-59a: `bufferRenderedIn` is accepted but not logged yet (P2-59c records it with the run flow).
+    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
+                           bufferRenderedIn: InputSourceID?) {
         log.add(.finish(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter))
     }
 }

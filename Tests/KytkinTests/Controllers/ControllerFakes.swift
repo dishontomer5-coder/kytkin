@@ -132,7 +132,8 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
     func perform(_ operation: KeyWatcherOperation) { calls.append(.perform(operation)) }
     func checkSecureInputNow() { calls.append(.checkSecureInput) }
     func claimPosting(gen: UInt64) -> Bool { true }
-    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) {
+    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
+                           bufferRenderedIn: InputSourceID?) {
         calls.append(.finish(gen: gen))
     }
 

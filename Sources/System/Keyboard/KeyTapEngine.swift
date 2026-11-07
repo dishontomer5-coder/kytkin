@@ -130,8 +130,11 @@ final class KeyTapEngine: @unchecked Sendable {
 
     /// The worker is done (contract step 3): replay what the processor returns, *then* `commit.finish`, then the
     /// flush step. A stale generation replays nothing and leaves a newer generation's commit alone.
-    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?) {
-        let events = processor.finishReplacement(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter)
+    /// P2-59: `bufferRenderedIn` passes through to the processor (001 §12.3 X5).
+    func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
+                           bufferRenderedIn: InputSourceID? = nil) {
+        let events = processor.finishReplacement(gen: gen, newRendering: newRendering, bufferAfter: bufferAfter,
+                                                 bufferRenderedIn: bufferRenderedIn)
         replay(events)
         commit.finish(gen: gen)
         runFlushStep()
