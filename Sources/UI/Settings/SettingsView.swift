@@ -28,6 +28,7 @@ struct SettingsView: View {
         switch tab {
         case .general: GeneralSettingsView(model: general)
         case .about: AboutSettingsView(info: about)
+        case .languages: LanguagesSettingsView()   // P2-24: its model comes from the environment
         default: PlaceholderSettingsView(tab: tab)
         }
     }

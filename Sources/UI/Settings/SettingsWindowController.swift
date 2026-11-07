@@ -20,11 +20,13 @@ import SwiftUI
     private let selection = SettingsSelection()
     private let general: GeneralSettingsModel
     private let about: AboutInfo
+    private let languages: LanguagesSettingsModel   // P2-24
     private var window: NSWindow?
 
-    init(general: GeneralSettingsModel, about: AboutInfo) {
+    init(general: GeneralSettingsModel, about: AboutInfo, languages: LanguagesSettingsModel) {
         self.general = general
         self.about = about
+        self.languages = languages
         super.init()
     }
 
@@ -34,6 +36,7 @@ import SwiftUI
     func show(tab: SettingsTab) {
         selection.tab = tab
         general.refresh()          // fresh login-item status and layout list (R8: don't cache the status)
+        languages.refresh()        // P2-24: layouts turned on or installed since the last open
         let window = self.window ?? makeWindow()
         if !window.isVisible { window.center() }
         NSApp.unhide(nil)          // closing hid the app; a hidden app's windows stay hidden even when ordered front
@@ -43,7 +46,9 @@ import SwiftUI
     }
 
     private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about))
+        // P2-24: the Languages model goes through the environment, so SettingsView's switch needs one line per tab.
+        let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about)
+            .environment(languages))
         hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
@@ -62,6 +67,7 @@ import SwiftUI
 
     func windowDidBecomeKey(_ notification: Notification) {
         general.refresh()          // e.g. back from System Settings → Login Items
+        languages.refresh()        // P2-24: e.g. back from System Settings → Keyboard → Input Sources
     }
 
     func windowWillClose(_ notification: Notification) {
