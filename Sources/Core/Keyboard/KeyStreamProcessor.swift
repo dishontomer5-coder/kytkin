@@ -26,6 +26,10 @@
 // active) is remembered. Until its stale `finishReplacement` arrives or another `postingHardCapNanos` passes, a
 // double-Shift or auto-fix trigger starts nothing (passes, no signal, no hold), so two workers never post at once.
 // `reset` doesn't clear it: the worker is still running.
+// P2-60: an aborted or force-flushed generation never leaves a kept buffer. Its finish is ignored (it only replays),
+// so nothing states the buffer after it; the abort forgets the buffer itself, and until the next replacement starts
+// an `isOurs` input-source change ("keep the buffer") is treated as a foreign one. Both orders of its finish and its
+// after-convert switch notification therefore end with no buffer.
 
 import Foundation
 
@@ -70,6 +74,9 @@ struct KeyStreamProcessor: Sendable {
     private var generation: UInt64 = 0
     /// P2-35: a generation flushed while its worker was posting, and when we stop waiting for its finish.
     private var stalePosting: (gen: UInt64, untilNanos: UInt64)?
+    /// P2-60: the last replacement was aborted or force-flushed, so its finish won't state the buffer and its
+    /// after-convert switch (`isOurs`) may not keep one. Cleared when the next replacement starts.
+    private(set) var keepBufferRevoked = false
     // P2-12: last seen device Shift bits, so each flagsChanged yields exact per-side press/release edges.
     private var leftShiftHeld = false
     private var rightShiftHeld = false
@@ -127,8 +134,9 @@ struct KeyStreamProcessor: Sendable {
             lastConvertGen = nil // P2-59 (X6): the caret may have moved
             _ = detector.handle(.pointerDown)
             // R5: a click during a replacement finishes it: flush, and the buffer is stale.
+            let signal = invalidateBuffer()
             abortReplacement()
-            return (.pass, invalidateBuffer())
+            return (.pass, signal)
 
         case .keyDown, .keyUp:
             // P2-59 (X6): any user or replayed key (held or not) touches the field after the last convert.
@@ -163,6 +171,8 @@ struct KeyStreamProcessor: Sendable {
             stalePosting = (r.gen, now + config.postingHardCapNanos)
         }
         // P2-12: deadline (or hard cap, or abort) → flush unchanged. A late finish for this gen is then ignored.
+        // P2-60: so is the buffer statement it carries: its after-convert switch must not keep a buffer.
+        keepBufferRevoked = true
         phase = .idle
         return queue.drain()
     }
@@ -263,8 +273,10 @@ struct KeyStreamProcessor: Sendable {
     /// any other change invalidates it (001 §2.2).
     /// P2-59 (X5): our switch keeps the whole buffer; once the source is the layout the buffer was re-rendered into,
     /// `bufferRendering` has nothing left to say.
+    /// P2-60: after an aborted or force-flushed generation (`keepBufferRevoked`), `isOurs` is ignored: that
+    /// generation's finish never states the buffer, so keys typed since (in the old layout) must not be kept.
     mutating func inputSourceChanged(to id: InputSourceID?, isOurs: Bool) {
-        if !isOurs { reset(.inputSourceChanged) }
+        if !isOurs || keepBufferRevoked { reset(.inputSourceChanged) }
         inputSource = id
         if bufferRendering == id { bufferRendering = nil }
     }
@@ -284,8 +296,11 @@ struct KeyStreamProcessor: Sendable {
         if e.kind == .keyDown { _ = detector.handle(.otherKeyDown) }
         // R5: a ⌘/⌃ shortcut during a replacement ends it (replayed after the held keys, so order holds).
         // A full FIFO aborts too: flush unchanged, never drop a key (B2).
+        // P2-60: the abort forgets the buffer (its worker may have written; its finish won't say what).
         if (e.kind == .keyDown && e.commandOrControl) || queue.isFull {
+            let signal = invalidateBuffer()
             abortReplacement()
+            return (.hold, signal)
         }
         return (.hold, nil)
     }
@@ -377,6 +392,7 @@ struct KeyStreamProcessor: Sendable {
     }
 
     private mutating func startReplacement(_ kind: ReplacementKind, gen: UInt64) {
+        keepBufferRevoked = false   // P2-60: a new generation; its own finish states the buffer again
         let wait = kind == .convert ? config.convertDeadlineNanos : config.autoFixDeadlineNanos
         phase = .replacing(Replacement(gen: gen, kind: kind, deadlineNanos: clock.nowNanos + wait, hardCapNanos: nil))
     }
@@ -391,10 +407,15 @@ struct KeyStreamProcessor: Sendable {
         return true
     }
 
+    /// P2-60: every abort forgets the buffer and revokes the keep-buffer switch. Today's callers (click, shortcut,
+    /// full FIFO, reset) already forget it first, so they can report the invalidation; this is the backstop for any
+    /// new abort path.
     private mutating func abortReplacement() {
-        if case var .replacing(r) = phase {
+        if case var .replacing(r) = phase, !r.aborted {
             r.aborted = true
             phase = .replacing(r)
+            keepBufferRevoked = true
+            forgetBuffer()
         }
     }
 
