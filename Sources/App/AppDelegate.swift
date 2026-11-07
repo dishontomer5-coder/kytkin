@@ -1,5 +1,6 @@
 // P0-5: App lifecycle. P2-20: builds the composition root (AppEnvironment) at launch and stops it on quit.
 // P2-23: a reopen (Finder double-click while running) opens Settings.
+// P2-56: installs the hidden main menu (⌘W closes Kytkin's windows, Edit shortcuts work in text fields).
 
 import AppKit
 
@@ -8,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var environment: AppEnvironment?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MainMenu.install(appName: AppEnvironment.appName)
         let env = AppEnvironment()
         environment = env
         env.start()

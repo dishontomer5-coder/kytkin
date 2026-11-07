@@ -1,6 +1,6 @@
 // P2-23: The tabs of the Settings window (001 §5.2), in the order they appear. General and About are built in P2-23;
 // the others show a one-line "coming soon" placeholder until their task lands (Languages P2-24, Rules/Apps/Convert
-// P2-25, Permissions P2-26), so each later task only replaces its placeholder. Browsers & Sites is Phase 3.
+// P2-25, Permissions P2-26), so each later task only replaces its placeholder. All are built now. Browsers & Sites is Phase 3.
 
 import Foundation
 
@@ -39,15 +39,14 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .general, .languages, .about: false   // P2-24: Languages
         case .rules, .convert, .apps: false   // P2-25
-        case .permissions: true
+        case .permissions: false              // P2-26
         }
     }
 
     /// The one line a placeholder tab shows.
     var comingSoonText: String {
         switch self {
-        case .permissions: "An overview of Kytkin's permissions is coming soon."
-        case .general, .languages, .about: ""
+        case .general, .languages, .about, .permissions: ""   // P2-26: Permissions
         case .rules, .convert, .apps: ""   // P2-25
         }
     }

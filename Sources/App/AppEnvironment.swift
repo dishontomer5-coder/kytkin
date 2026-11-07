@@ -23,6 +23,12 @@ import AppKit
     let statusItem: StatusItemController
     /// P2-23: built on first `openSettings`, then reused.
     private var settingsWindow: SettingsWindowController?
+    /// P2-26: the welcome window, built on first use (launch, or Settings → General → "Show Welcome Again").
+    private var onboardingWindow: OnboardingWindowController?
+    /// P2-26: Settings and the welcome window share these (one General / Languages model, one poll switch).
+    private lazy var sharedModels = makeSharedModels()
+    /// P2-26: the name System Settings lists ("Kytkin Dev" for Debug builds).
+    static let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Kytkin"
 
     private var appObservers: [NSObjectProtocol] = []
 
@@ -81,7 +87,12 @@ import AppKit
         contextMonitor.onChange = { context in controller.contextDidChange(context) }
         permissions.onChange = { status in controller.permissionsDidChange(status) }
         conflicts.onChange = { conflicts in controller.conflictsDidChange(conflicts) }
-        controller.onDisplayChange = { statusItem.refresh() }
+        // P2-26: the root fans the display change out: the menu-bar label, and the Permissions tab / welcome window
+        // (so they follow a grant, the P2-46 tap retry and Secure Input without a timer of their own).
+        controller.onDisplayChange = { [weak self] in
+            statusItem.refresh()
+            self?.displayDidChange()
+        }
         // P2-22 + P2-23: the menu's "Settings…", "Open Settings…" and About open the Settings window on that tab.
         statusItem.openSettings = { [weak self] target in
             switch target {
@@ -120,7 +131,27 @@ import AppKit
         window.show(tab: tab)
     }
 
-    private func makeSettingsWindow() -> SettingsWindowController {
+    /// P2-26: the welcome window. `firstLaunch` = shown by itself at launch; otherwise the user asked for it.
+    func openOnboarding(firstLaunch: Bool = false) {
+        let window = onboardingWindow ?? OnboardingWindowController(model: OnboardingModel(
+            store: store, permissions: permissions, polling: sharedModels.polling, general: sharedModels.general,
+            languages: sharedModels.languages, appName: Self.appName))
+        onboardingWindow = window
+        window.show(firstLaunch: firstLaunch)
+    }
+
+    private func displayDidChange() {
+        settingsWindow?.permissionsChanged()
+        onboardingWindow?.reload()
+    }
+
+    private struct SharedModels {
+        let polling: PermissionPollingDemand
+        let general: GeneralSettingsModel
+        let languages: LanguagesSettingsModel
+    }
+
+    private func makeSharedModels() -> SharedModels {
         let switcher = self.switcher
         // P2-23: SMAppServiceLoginItems only reads the status here; register/unregister run on the user's toggle.
         let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
@@ -129,6 +160,21 @@ import AppKit
         let languages = LanguagesSettingsModel(store: store, imported: importedLayouts, catalog: layoutCatalog,
                                                fileSystem: importedLayouts.fileSystem,
                                                inputMethods: { switcher.sources(includeDisabled: false) })
+        return SharedModels(polling: PermissionPollingDemand(permissions: permissions), general: general,
+                            languages: languages)
+    }
+
+    private func makeSettingsWindow() -> SettingsWindowController {
+        let general = sharedModels.general
+        let languages = sharedModels.languages
+        let controller = self.controller
+        let switcher = self.switcher
+        // P2-26: the Permissions tab reads what AppController knows (grants, tap mode, Secure Input, the P2-46
+        // "Quit & Reopen" hint); its buttons are the user's clicks.
+        let permissionsTab = PermissionsSettingsModel(permissions: permissions, store: store,
+                                                      polling: sharedModels.polling, appName: Self.appName,
+                                                      state: { controller.menuState },
+                                                      relaunch: { AppRelauncher.quitAndReopen() })
         // P2-25: Rules, Convert and Apps. Names come from LaunchServices; running apps only when Settings opens.
         let rules = RulesSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                        sources: { switcher.sources(includeDisabled: true) })
@@ -138,7 +184,9 @@ import AppKit
         return SettingsWindowController(general: general,
                                         about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:]),
                                         tabs: .init(languages: languages, rules: rules,
-                                                    convert: ConvertSettingsModel(store: store), apps: apps))
+                                                    convert: ConvertSettingsModel(store: store), apps: apps,
+                                                    permissions: permissionsTab),
+                                        showWelcome: { [weak self] in self?.openOnboarding() })
     }
 
     /// P2-25: regular (Dock) apps that are running, for Settings → Apps "Add Running App".
@@ -152,6 +200,8 @@ import AppKit
     func start() {
         controller.start()
         statusItem.refresh()
+        // P2-26 (001 §6.1): the welcome window, once. It marks itself seen as it shows; never with read-only prefs.
+        if OnboardingModel.shouldShowAtLaunch(store) { openOnboarding(firstLaunch: true) }
     }
 
     func stop() {

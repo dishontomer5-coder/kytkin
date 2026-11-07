@@ -15,7 +15,7 @@ final class SettingsMappingTests: XCTestCase {
         XCTAssertEqual(SettingsTab.allCases.map(\.title),
                        ["General", "Languages", "Rules", "Convert", "Apps", "Permissions", "About"])
         XCTAssertEqual(SettingsTab.allCases.filter { !$0.isPlaceholder },
-                       [.general, .languages, .rules, .convert, .apps, .about])
+                       SettingsTab.allCases, "P2-26: the Permissions tab was the last placeholder")
         for tab in SettingsTab.allCases {
             XCTAssertFalse(tab.symbolName.isEmpty)
             XCTAssertEqual(tab.comingSoonText.isEmpty, !tab.isPlaceholder, "\(tab)")
