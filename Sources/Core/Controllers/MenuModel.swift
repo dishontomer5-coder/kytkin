@@ -153,6 +153,10 @@ enum MenuModel {
             var out: [MenuItemModel] = [.info("Some keyboard features stopped after a slowdown")]
             if canRestart { out.append(.action("Restart Keyboard Features", .restartKeyboard, indent: 1)) }
             return out
+        case .keyboardFeaturesOff(let canRestart):
+            var out: [MenuItemModel] = [.info("Some keyboard features are off")]
+            if canRestart { out.append(.action("Restart Keyboard Features", .restartKeyboard, indent: 1)) }
+            return out
         case .secureInput:
             return [.info("Typing protected by another app")]
         case .settingsReadOnly(let newerVersion):

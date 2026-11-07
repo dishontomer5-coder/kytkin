@@ -99,4 +99,60 @@ final class TapModePolicyTests: XCTestCase {
         XCTAssertNil(p.decide(desired: .active, grantsChanged: false))
         XCTAssertNil(p.restartAction(desired: .active))
     }
+
+    // MARK: - P2-52 item 2 / P2-57 item 1: one retry after a launch timeout, never silent
+
+    func testLaunchTimeoutArmsExactlyOneActivationRetry() {
+        var p = TapModePolicy()
+        XCTAssertEqual(p.decide(desired: .active, grantsChanged: false), .start(.active))
+        p.started(achieved: .off)                           // timed out on a busy system
+        XCTAssertTrue(p.runsBelow(desired: .active))
+        XCTAssertEqual(p.activationRetry(desired: .active), .start(.active))
+        XCTAssertNil(p.activationRetry(desired: .active), "used up when returned")
+        p.started(achieved: .off)                           // the retry failed too
+        XCTAssertTrue(p.runsBelow(desired: .active), "still below: the warning stays")
+        for _ in 0..<200 {
+            XCTAssertNil(p.activationRetry(desired: .active))
+            XCTAssertNil(p.decide(desired: .active, grantsChanged: false))
+        }
+        XCTAssertEqual(p.restartAction(desired: .active), .start(.active), "the user can still restart")
+    }
+
+    func testASuccessfulFirstStartArmsNoRetry() {
+        var p = TapModePolicy()
+        _ = p.decide(desired: .active, grantsChanged: false)
+        p.started(achieved: .active)
+        XCTAssertFalse(p.runsBelow(desired: .active))
+        p.statusReported(mode: .listenOnly)                 // a later watchdog downgrade is not a launch timeout
+        XCTAssertNil(p.activationRetry(desired: .active))
+        XCTAssertTrue(p.runsBelow(desired: .active))
+    }
+
+    func testAnyLaterStartUsesUpTheRetry() {
+        var p = TapModePolicy()
+        _ = p.decide(desired: .active, grantsChanged: false)
+        p.started(achieved: .off)
+        XCTAssertEqual(p.decide(desired: .active, grantsChanged: true), .start(.active))   // a grant changed
+        p.started(achieved: .off)
+        XCTAssertNil(p.activationRetry(desired: .active), "no second automatic start right after the first")
+    }
+
+    func testRetryOnlyForTheModeStillWantedAndStillMissing() {
+        var p = TapModePolicy()
+        _ = p.decide(desired: .active, grantsChanged: false)
+        p.started(achieved: .off)
+        XCTAssertNil(p.activationRetry(desired: .off), "paused / turned off since")
+        p.statusReported(mode: .active)                     // the late apply came through after all
+        XCTAssertNil(p.activationRetry(desired: .active))
+        XCTAssertFalse(p.runsBelow(desired: .active))
+    }
+
+    func testRunsBelowNeedsSomethingRequestedAndWanted() {
+        var p = TapModePolicy()
+        XCTAssertFalse(p.runsBelow(desired: .active), "nothing decided yet")
+        _ = p.decide(desired: .listenOnly, grantsChanged: false)
+        p.started(achieved: .off)
+        XCTAssertFalse(p.runsBelow(desired: .off))
+        XCTAssertTrue(p.runsBelow(desired: .listenOnly))
+    }
 }

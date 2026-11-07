@@ -13,8 +13,12 @@ struct MenuState: Equatable {
     var tapMode: TapMode = .off
     var secureInputOn = false
     var degradedByWatchdog = false
-    /// P2-22: the watchdog lowered the tap and a user-clicked restart could bring it back.
+    /// P2-22: a user-clicked restart could bring the tap back up to the desired mode (after a watchdog downgrade, or
+    /// P2-57 item 1 any time it runs below).
     var canRestartKeyboard = false
+    /// P2-57 item 1 / P2-52 item 2: the tap runs below what the grants and settings want while Kytkin is on and not
+    /// paused (`TapModePolicy.runsBelow`): a timed-out start, a failed retry or restart. Never silent.
+    var keyboardBelowDesired = false
     var tapReEnableCount = 0
     /// P2-27 (001 §7 B1): DEBUG counter of tap callbacks slower than 1 ms (`TapHealth.overBudgetCallbacks`, counted
     /// only in Debug builds). Counts only, never keys.

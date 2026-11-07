@@ -648,6 +648,153 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(watcher.starts, [.listenOnly, .listenOnly])
     }
 
+    // MARK: - P2-52 item 2 / P2-57 item 1: the keyboard features are never off silently
+
+    /// Launches with the first `start` timing out (the fake answers `.off`).
+    private func makeWithLaunchTimeout(_ prefs: Preferences = Preferences()) {
+        make(prefs, start: false)
+        watcher.startAnswer = .off
+        sut.start()
+        XCTAssertEqual(watcher.starts, [.active])
+        XCTAssertEqual(sut.policy.achieved, .off)
+    }
+
+    func testLaunchTimeoutWarnsAndRetriesOnceOnTheNextActivation() {
+        makeWithLaunchTimeout()
+        XCTAssertTrue(sut.menuState.keyboardBelowDesired)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardFeaturesOff(canRestart: true)])
+
+        monitor.activate(notes, pid: 10)                     // the one retry; it times out again
+        XCTAssertEqual(watcher.starts, [.active, .active])
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardFeaturesOff(canRestart: true)],
+                       "still off: the warning stays")
+
+        // No bursts: 200 more events of every kind start nothing.
+        for i in 0..<200 {
+            switch i % 5 {
+            case 0: monitor.activate(i % 2 == 0 ? notes : "com.apple.Safari", pid: Int32(10 + i % 2))
+            case 1: sut.keyWatcherStatusDidChange(KeyWatcherStatus())
+            case 2: sut.preferencesDidChange()
+            case 3: sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+            default: sut.kytkinDidBecomeActive()
+            }
+        }
+        XCTAssertEqual(watcher.starts, [.active, .active], "never more than one automatic retry")
+        XCTAssertTrue(sut.menuState.keyboardBelowDesired)
+    }
+
+    /// QA: the real monitor reports the frontmost app from inside `start()`, right after the first start timed out.
+    /// That report must not fire the retry (two blocking starts back to back at launch); the next real one does.
+    func testTheLaunchContextReportDoesNotFireTheRetry() {
+        make(start: false)
+        monitor.emitOnStart = Context(bundleID: notes, pid: 10, generation: 1)
+        watcher.startAnswer = .off
+        sut.start()
+        XCTAssertEqual(watcher.starts, [.active], "one start at launch, not two back to back")
+        XCTAssertTrue(sut.menuState.keyboardBelowDesired)
+        monitor.activate("com.apple.Safari", pid: 11)
+        XCTAssertEqual(watcher.starts, [.active, .active], "the retry waits for the next real activation")
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active, .active])
+    }
+
+    /// QA: a watchdog downgrade (B4) before the next activation is never fought by the automatic retry.
+    func testTheRetryNeverFightsAWatchdogDowngrade() {
+        make(start: false)
+        watcher.startAnswer = .listenOnly                    // the first start came back below `.active`
+        sut.start()
+        XCTAssertTrue(sut.policy.launchRetryArmed)
+        var status = KeyWatcherStatus()
+        status.health.mode = .off
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active], "no automatic start after a watchdog downgrade")
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardSlowedDown(canRestart: true)])
+    }
+
+    /// QA: while only a relaunch can help ("Quit & Reopen"), the retry would block main for nothing.
+    func testNoRetryWhileOnlyARelaunchCanHelp() {
+        make(accessibility: .denied, inputMonitoring: .granted, start: false)
+        watcher.startAnswer = .off
+        permissions.statusOnStart = PermissionStatus(grants: PermissionGrants(accessibility: .denied,
+                                                                             inputMonitoring: .granted),
+                                                     inputMonitoringNeedsRelaunch: true)
+        sut.start()
+        XCTAssertTrue(sut.menuState.showsQuitAndReopen)
+        XCTAssertTrue(sut.policy.launchRetryArmed)
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.listenOnly], "no retry: Quit & Reopen is the fix")
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState).filter {
+            if case .keyboardFeaturesOff = $0 { return true } else { return false }
+        }, [], "Quit & Reopen takes precedence")
+    }
+
+    func testASuccessfulRetryClearsTheWarning() {
+        makeWithLaunchTimeout()
+        XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
+        watcher.startAnswer = nil                            // the system calmed down
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active, .active])
+        XCTAssertEqual(sut.policy.achieved, .active)
+        XCTAssertTrue(sut.availability.doubleShiftConvert)
+        XCTAssertFalse(sut.menuState.keyboardBelowDesired)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [])
+        monitor.activate("com.apple.Safari", pid: 11)
+        XCTAssertEqual(watcher.starts, [.active, .active])
+    }
+
+    func testAFailedManualRestartKeepsTheWarning() {
+        makeWithLaunchTimeout()
+        monitor.activate(notes, pid: 10)                     // the automatic retry fails too
+        sut.restartKeyboard()                                // a user click; fails again
+        XCTAssertEqual(watcher.starts, [.active, .active, .active])
+        // The real KeyWatcher clears the watchdog flag on a user-initiated start; the warning must not go with it.
+        sut.keyWatcherStatusDidChange(KeyWatcherStatus())
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardFeaturesOff(canRestart: true)])
+        watcher.startAnswer = nil
+        sut.restartKeyboard()                                // works this time
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [])
+        sut.restartKeyboard()
+        XCTAssertEqual(watcher.starts.count, 4, "nothing to restart once it runs")
+    }
+
+    func testAFailedRestartAfterAWatchdogDowngradeStillWarns() {
+        make()
+        var status = KeyWatcherStatus()
+        status.health.mode = .listenOnly
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardSlowedDown(canRestart: true)],
+                       "the watchdog keeps its own wording")
+        watcher.startAnswer = .off
+        sut.restartKeyboard()
+        var cleared = KeyWatcherStatus()
+        cleared.health.mode = .off                           // the user start cleared the watchdog flag
+        sut.keyWatcherStatusDidChange(cleared)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.keyboardFeaturesOff(canRestart: true)])
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active, .active], "a watchdog downgrade arms no automatic retry")
+    }
+
+    func testNoWarningOrRetryWhilePausedOrTurnedOff() {
+        makeWithLaunchTimeout()
+        sut.setPaused(true)
+        XCTAssertFalse(sut.menuState.keyboardBelowDesired)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [])
+        let starts = watcher.starts.count
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts.count, starts, "paused: no retry")
+
+        makeWithLaunchTimeout()
+        store.update { $0.general.enabled = false }
+        sut.preferencesDidChange()
+        XCTAssertFalse(sut.menuState.keyboardBelowDesired)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.kytkinOff])
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.starts, [.active], "turned off: no retry")
+    }
+
     /// P2-52 item 4: key signals never refresh the label (the menu reads everything when it opens).
     func testKeySignalsDoNotRefreshTheDisplay() {
         make()

@@ -138,7 +138,7 @@ import Observation
                     : "Off: allow Accessibility so pressing Shift twice can work. Switching the language for each "
                         + "app works without it."
             } else {
-                text = "Off: Kytkin couldn't start watching the keyboard yet."
+                text = "Off: Kytkin couldn't start watching the keyboard."
             }
         }
         if TapModePolicy.rank(achieved) < TapModePolicy.rank(desired) {
@@ -147,8 +147,9 @@ import Observation
             } else if state.degradedByWatchdog {
                 text += " Kytkin turned some keyboard features off because the keyboard was slow to answer. "
                     + "Use “Restart Keyboard Features” in the Kytkin menu."
-            } else if achieved != .off {
-                text += " Kytkin will try the full mode again when a permission changes."
+            } else {
+                // P2-57 item 1 / P2-52 item 2: the same words as the menu's warning, never silent.
+                text += " Some keyboard features are off. Use “Restart Keyboard Features” in the Kytkin menu."
             }
         }
         return text
