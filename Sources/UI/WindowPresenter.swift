@@ -10,6 +10,7 @@
 //   4. Fallback (P2-56): if a moment later the window still isn't key (activation was refused, so typing would go to
 //      the app behind), ask once more with the older `activate(ignoringOtherApps:)`. Only ever right after a show the
 //      user asked for, or the one-time welcome at launch, so Kytkin never keeps grabbing focus.
+//      P3-12 (P2-63): and only if the user hasn't switched apps in those 0.3 s (`FocusFallbackPolicy`, Core).
 // Closing: when the last titled window closes, Kytkin hides itself, so macOS activates the app you were in (an
 // accessory app with no window would otherwise stay active and keys would go nowhere).
 
@@ -21,19 +22,27 @@ import AppKit
 
     static func show(_ window: NSWindow) {
         if !window.isVisible { window.center() }
+        let frontmostAtShow = frontmostPID()   // P3-12: before we ask to activate
         NSApp.unhide(nil)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         DispatchQueue.main.asyncAfter(deadline: .now() + keyCheckDelay) { [weak window] in
             MainActor.assumeIsolated {
-                guard let window, window.isVisible, !(NSApp.isActive && window.isKeyWindow) else { return }
+                guard let window, FocusFallbackPolicy.shouldInsist(
+                    windowVisible: window.isVisible, windowHasKeyboard: NSApp.isActive && window.isKeyWindow,
+                    ownPID: ProcessInfo.processInfo.processIdentifier,
+                    frontmostAtShow: frontmostAtShow, frontmostNow: frontmostPID()) else { return }
                 // P2-56: the deprecated call goes through a protocol so the build stays free of warnings; it is
                 // the way to insist once after cooperative activation was refused.
                 (NSApp as LegacyActivating).activate(ignoringOtherApps: true)
                 window.makeKeyAndOrderFront(nil)
             }
         }
+    }
+
+    private static func frontmostPID() -> Int32? {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
 
     /// From `windowWillClose`: hide Kytkin if `closing` was its last visible titled window.
@@ -51,8 +60,27 @@ import AppKit
 extension NSApplication: LegacyActivating {}
 
 /// P2-56: Kytkin's windows close on Esc too (⌘W comes from the hidden main menu, `MainMenu`).
+/// P3-12 (P2-63): but Esc in a text field first clears it, then leaves it; only then does it close the window, and
+/// never while a sheet is attached (`EscapeKeyAction`, Core).
 final class KytkinWindow: NSWindow {
     override func cancelOperation(_ sender: Any?) {
-        performClose(sender)
+        let editor = firstResponder as? NSTextView
+        let focus: EscapeKeyAction.Focus = switch editor {
+        case let text? where text.isEditable && text.isFieldEditor: .textField(isEmpty: text.string.isEmpty)
+        case let text? where text.isEditable: .textArea
+        default: .nothingEdited
+        }
+        switch EscapeKeyAction.decide(sheetAttached: attachedSheet != nil, focus: focus) {
+        case .ignore:
+            break
+        case .clearField:
+            // Through the text system (not `string = ""`), so the field's binding hears it and ⌘Z can undo it.
+            editor?.selectAll(nil)
+            editor?.delete(nil)
+        case .stopEditing:
+            makeFirstResponder(nil)
+        case .closeWindow:
+            performClose(sender)
+        }
     }
 }
