@@ -67,5 +67,13 @@ import Observation
     /// Esc closes the sheet only when nothing is typed (P3-12 QA note: Esc never loses input).
     var escapeCloses: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    var canSave: Bool { scope != nil && !language.rawValue.isEmpty }
+    /// QA (P3-15): "Add Subdomain Rule…" starts with the site itself in the field. Saving that unchanged would pin
+    /// the whole site to the sheet's default language, silently replacing the site's rule (Return was enough), so
+    /// the sheet saves only once a different address is typed.
+    var isStillTheParentSite: Bool {
+        guard let subdomainOf, let scope else { return false }
+        return scope == .site(domain: subdomainOf)
+    }
+
+    var canSave: Bool { scope != nil && !language.rawValue.isEmpty && !isStillTheParentSite }
 }

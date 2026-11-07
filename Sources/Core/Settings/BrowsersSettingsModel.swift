@@ -142,7 +142,7 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         switch support {
         case .works: return ("Works", nil, nil)
         case .worksWithAutomation: return ("Works (using Automation)", nil, nil)
-        case .notSeenYet: return ("Not tested yet", "Open \(name) and visit a website to check.", nil)
+        case .notSeenYet: return ("Not checked yet", "Open \(name) and visit a website to check.", nil)
         case .cantRead:
             if case .available = automation {
                 return ("Can't read this browser", "Kytkin can't see the page address. Automation can help.", nil)

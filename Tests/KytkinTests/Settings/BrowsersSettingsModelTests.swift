@@ -75,7 +75,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
         inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome])
         make()
         let cases: [(BrowserSupport, String)] = [
-            (.works, "Works"), (.worksWithAutomation, "Works (using Automation)"), (.notSeenYet, "Not tested yet"),
+            (.works, "Works"), (.worksWithAutomation, "Works (using Automation)"), (.notSeenYet, "Not checked yet"),
             (.cantRead, "Can't read this browser"), (.needsAccessibility, "Needs Accessibility"),
             (.siteDataMissing, "Website rules are unavailable"), (.off, "Off"),
         ]

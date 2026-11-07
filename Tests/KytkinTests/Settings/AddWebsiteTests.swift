@@ -213,8 +213,58 @@ final class AddWebsiteRulesTests: XCTestCase {
         XCTAssertEqual(form.extent, .onlyHost)
         XCTAssertEqual(form.hint, "Type the address that should get its own language, like news.ynet.co.il.")
         form.text = "sport.ynet.co.il"
+        XCTAssertTrue(form.canSave)
         sut.saveAddWebsite()
         XCTAssertTrue(store.prefs.rules.contains { $0.scope == .siteHost(host: "sport.ynet.co.il") && $0.origin == .pinned })
+    }
+
+    /// QA (P3-15): the prefilled site in "Add Subdomain Rule…" must not be saved as is: Return would otherwise pin the
+    /// whole site to the sheet's default language and replace its rule.
+    func testTheUnchangedPrefilledSiteIsNotSavedFromTheSubdomainSheet() throws {
+        make([site("ynet.co.il", IDs.hebrew)])
+        sut.beginAddWebsite(subdomainOf: "ynet.co.il")
+        let form = try XCTUnwrap(sut.addWebsite)
+        XCTAssertEqual(form.language, IDs.abc, "the default language differs from the site's rule")
+        XCTAssertTrue(form.isStillTheParentSite)
+        XCTAssertFalse(form.canSave)
+        XCTAssertFalse(sut.saveAddWebsite())
+        form.text = "https://WWW.ynet.co.il./"
+        form.extent = .wholeSite
+        XCTAssertEqual(form.scope, .site(domain: "ynet.co.il"), "the whole site, chosen for a typed subdomain")
+        XCTAssertFalse(form.canSave, "still the parent site, however it is typed")
+        form.extent = .onlyHost
+        XCTAssertTrue(form.canSave, "only www.ynet.co.il is a subdomain rule")
+        let rule = try XCTUnwrap(store.prefs.rules.only)
+        XCTAssertEqual(rule.inputSource, IDs.hebrew, "the site's rule is untouched")
+        XCTAssertEqual(rule.origin, .learned)
+    }
+
+    /// QA (P3-15): a pasted URL never leaves its path, query, fragment or user info in the file.
+    func testOnlyTheHostReachesThePreferences() throws {
+        make()
+        sut.beginAddWebsite()
+        let form = try XCTUnwrap(sut.addWebsite)
+        form.text = "https://alice:secret@news.ynet.co.il:8443/private/path?token=tokenvalue#fragpart"
+        form.extent = .onlyHost
+        XCTAssertTrue(sut.saveAddWebsite())
+        XCTAssertEqual(store.prefs.rules.map(\.scope), [.siteHost(host: "news.ynet.co.il")])
+        let data = try JSONEncoder().encode(store.prefs)
+        let json = String(decoding: data, as: UTF8.self)
+        for secret in ["alice", "secret", "private", "token", "tokenvalue", "fragpart", "8443"] {
+            XCTAssertFalse(json.contains(secret), secret)
+        }
+        XCTAssertFalse(json.contains("https"), "no scheme either")
+    }
+
+    /// QA (P3-15): a scheme-less address with user info could be a mail address: refused, nothing written.
+    func testUserInfoWithoutASchemeIsRefused() throws {
+        make()
+        sut.beginAddWebsite()
+        let form = try XCTUnwrap(sut.addWebsite)
+        form.text = "me@ynet.co.il"
+        XCTAssertFalse(form.canSave)
+        XCTAssertFalse(sut.saveAddWebsite())
+        XCTAssertTrue(store.prefs.rules.isEmpty)
     }
 
     func testReadOnlyPreferencesAddNothing() {
