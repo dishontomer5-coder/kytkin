@@ -34,13 +34,18 @@ struct LayoutSnapshot: Sendable {
     func typed(_ strokes: [Stroke], in source: InputSourceID) -> String? {
         guard let map = converter(from: source)?.from else { return nil }
         var out = ""
+        var graphemes = 0
         for s in strokes {
             // A dead key types nothing by itself (it changes the next key), so the screen can't be counted.
             if map.deadKeys[s.keyCode]?.contains(s.layer) == true { return nil }
             guard let text = map.keys[s.keyCode]?[s.layer], !text.isEmpty else { return nil }
             out += text
+            graphemes += text.count
         }
-        return out
+        // P2-21 QA: a stroke whose text joined the previous grapheme (a niqqud or other combining mark from the
+        // Option layer) makes the Backspace count app-dependent: browsers delete one code point, Cocoa a cluster.
+        // Unknown → the caller takes the AX path, which selects the exact range.
+        return out.count == graphemes ? out : nil
     }
 
     /// The same keys rendered in the other layout of the pair (the double-Shift last-word path, 001 §3 (c) step 4).

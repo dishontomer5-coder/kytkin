@@ -115,6 +115,32 @@ final class ConvertControllerTests: XCTestCase {
         XCTAssertEqual(f.writes.map(\.old), ["שלום"])
     }
 
+    /// P2-21 QA: Hebrew finals and the punctuation keys that are letters in Hebrew; digits stay; one Backspace per key.
+    @TextActor func testFinalsPunctuationAndDigitsConvertKeyForKey() async {
+        let f = field()
+        let sut = make(f)
+        let keys = ConvertFixtures.strokes("lo,.;i1")
+        let out = await sut.handle(request(word(keys, in: IDs.hebrew), gen: 1, current: IDs.hebrew),
+                                   layouts: ConvertFixtures.layouts)
+        XCTAssertEqual(out, .converted(to: IDs.abc, by: .backspaceAndType(count: 7), switched: true))
+        XCTAssertEqual(f.writes.map(\.old), ["ךםתץףן1"])
+        XCTAssertEqual(f.writes.map(\.new), ["lo,.;i1"])
+    }
+
+    /// P2-21 QA: a niqqud typed on the Option layer joins the letter before it; the Backspace count would depend on
+    /// the app, so the buffered word goes through the AX path (exact range) instead of backspace × graphemes.
+    @TextActor func testACombiningMarkInTheBufferUsesTheAXPath() async {
+        let f = field(readsBeforeCaret: true)
+        f.foundWord = "שָ"
+        let sut = make(f)
+        let keys = [Stroke(keyCode: 0, layer: .plain), Stroke(keyCode: 13, layer: .option)]
+        await sut.handle(request(word(keys, in: IDs.hebrew), gen: 1, current: IDs.hebrew),
+                         layouts: ConvertFixtures.layouts)
+        XCTAssertFalse(log.performs.contains { if case .backspaceAndType = $0 { true } else { false } })
+        XCTAssertEqual(log.performs.first, .axReadBeforeCaret(maxChars: ReplacementPlanner.maxCharsBeforeCaret))
+        assertOneFinish(1, rendering: nil, after: log.claims.isEmpty ? nil : [])
+    }
+
     @TextActor func testALayoutOutsideThePairBeepsAndWritesNothing() async {
         let sut = make(field())
         let out = await sut.handle(request(word(akuo, in: IDs.russian), gen: 2), layouts: ConvertFixtures.layouts)

@@ -158,10 +158,11 @@ enum ConvertFixtures {
     static let pair = LanguagePair(a: IDs.abc, b: IDs.hebrew)
     static let layouts = LayoutSnapshot(pair: pair, a: abc, b: hebrew)!
 
-    /// The plain-layer strokes that type `text` on ABC.
+    /// The plain-layer strokes that type `text` on ABC. QA: the lowest key code wins, so `.` and digits are the main
+    /// keys, not the keypad's (a dictionary's order changes between runs).
     static func strokes(_ text: String) -> [Stroke] {
         text.map { ch in
-            let code = abc.keys.first { $0.value.plain == String(ch) }!.key
+            let code = abc.keys.filter { $0.value.plain == String(ch) }.map(\.key).min()!
             return Stroke(keyCode: code, layer: .plain)
         }
     }

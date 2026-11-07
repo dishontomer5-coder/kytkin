@@ -104,6 +104,22 @@ final class HoldBackTests: XCTestCase {
         XCTAssertEqual(p.handle(F.key(s)).0, .pass)
     }
 
+    /// P2-21 QA: an empty `bufferAfter` (the text changed, no strokes describe it) forgets the whole buffer. Keeping
+    /// the earlier words let a Backspace make "a" current again over the converted text, and a second double-Shift
+    /// would then have deleted characters that were never "a".
+    func testEmptyBufferAfterForgetsEveryWord() {
+        let clock = FakeClock()
+        var p = makeProcessor(clock)
+        feed(&p, [F.key(a), F.key(KeyCode.space), F.key(s), F.key(d)])
+        let gen = startConvert(&p)
+        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: [])
+        XCTAssertTrue(p.buffer.isEmpty)
+        feed(&p, [F.key(KeyCode.delete)])
+        let snapshot = feed(&p, F.doubleShift()).compactMap { if case let .doubleShift(s, _) = $0 { s } else { nil } }
+        XCTAssertEqual(snapshot.first?.isValid, false, "no earlier word came back")
+        XCTAssertEqual(snapshot.first?.strokes, [])
+    }
+
     func testStaleGenerationFinishIsIgnoredWhileANewOneRuns() {
         let clock = FakeClock()
         var p = makeProcessor(clock)

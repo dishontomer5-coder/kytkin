@@ -27,6 +27,29 @@ final class LayoutSnapshotTests: XCTestCase {
         XCTAssertEqual(s.typed([Stroke(keyCode: 0, layer: .option)], in: IDs.abc), "å", "not dead: counted")
     }
 
+    /// P2-21 QA: ABC `, . ;` and `l o i` are Hebrew ת ץ ף and the finals ך ם ן; digits stay; one grapheme per key.
+    func testPunctuationFinalsAndDigitsCountOneGraphemePerKey() {
+        let keys = ConvertFixtures.strokes("lo,.;i1")
+        XCTAssertEqual(s.typed(keys, in: IDs.abc), "lo,.;i1")
+        XCTAssertEqual(s.typed(keys, in: IDs.hebrew), "ךםתץףן1")
+        XCTAssertEqual(s.render(keys, from: IDs.abc)?.text, "ךםתץףן1")
+        XCTAssertEqual(s.render(keys, from: IDs.hebrew)?.text, "lo,.;i1")
+        XCTAssertEqual(s.typed(keys, in: IDs.hebrew)?.count, keys.count)
+        // Shift on ABC: `Akuo` is 4 graphemes and renders as plain Hebrew letters (the P2-7 case rule).
+        let shifted = [Stroke(keyCode: 0, layer: .shift)] + Array(akuo.dropFirst())
+        XCTAssertEqual(s.typed(shifted, in: IDs.abc), "Akuo")
+        XCTAssertEqual(s.render(shifted, from: IDs.abc)?.text, "שלום")
+    }
+
+    /// P2-21 QA: Hebrew ⌥W types a qamats that joins the letter before it: Backspace may delete only the mark
+    /// (browsers) or the whole cluster (Cocoa), so the count is unknown and the AX path is used.
+    func testACombiningMarkJoiningTheLetterBeforeMakesTheScreenUnknown() {
+        let shinQamats = [Stroke(keyCode: 0, layer: .plain), Stroke(keyCode: 13, layer: .option)]
+        XCTAssertNil(s.typed(shinQamats, in: IDs.hebrew))
+        XCTAssertEqual(s.typed([Stroke(keyCode: 0, layer: .shift)], in: IDs.hebrew), "שׁ",
+                       "one key that types a pointed letter is one grapheme: counted")
+    }
+
     func testGuessAndConvert() {
         XCTAssertEqual(s.guessSource(of: "akuo"), IDs.abc)
         XCTAssertEqual(s.guessSource(of: "שלום"), IDs.hebrew)

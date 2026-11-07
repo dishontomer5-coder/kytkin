@@ -18,6 +18,7 @@ protocol KeyWatching: AnyObject, Sendable {
     /// The replacement worker, right before its first write (B3). False = abandon.
     func claimPosting(gen: UInt64) -> Bool
     /// Every generation a `.doubleShift` / `.wordEnded` signal armed must end here, whatever happened, so held keys
-    /// replay at once instead of waiting for the deadline (or the 1 s hard cap).
+    /// replay at once instead of waiting for the deadline (or the 1 s hard cap). `bufferAfter`: nil = keep the
+    /// buffer, [] = forget it (the text changed, no strokes describe it), else the current word's new strokes.
     func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?)
 }

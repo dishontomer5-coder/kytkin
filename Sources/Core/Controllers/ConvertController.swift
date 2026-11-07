@@ -25,7 +25,8 @@
 //     target layout), and the switch is flagged "keeps the buffer" (P2-52 item 7): a second double-Shift converts
 //     straight back (001 §3 (c) step 9, the MVP undo).
 //   - any other text change (not switched, selection, AX path, halted) → `bufferAfter: []`: the strokes no longer
-//     describe what is on screen, so the current word is dropped and the next convert counts only new keys.
+//     describe what is on screen, so the tap forgets the whole buffer (P2-21 QA: keeping the earlier words let a
+//     Backspace make one "current" again over changed text), as after a click.
 //   - nothing written → `nil, nil` (the buffer is untouched).
 // Undo: 001 defines no Backspace-undo for a manual convert in the MVP (that is P4-8, for auto-fix only). Double-Shift
 // again is the undo.
