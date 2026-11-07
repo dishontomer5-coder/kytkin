@@ -16,6 +16,9 @@ extension Preferences {
         var menuBarLabel: MenuBarLabel = .languageCode
         /// The optional daily update check (P6). The only network call Kytkin may make.
         var checkForUpdates = true
+        /// P2-26: the welcome window was shown once (001 §6.1). Absent → false, so a fresh install (or a file
+        /// from before P2-26) shows it once. Not a privacy concern: one flag, nothing typed.
+        var onboardingSeen = false
 
         init() {}
     }
@@ -23,7 +26,7 @@ extension Preferences {
 
 extension Preferences.General: Codable {
     private enum CodingKeys: String, CodingKey {
-        case enabled, learnFromManualSwitches, defaultBehavior, menuBarLabel, checkForUpdates
+        case enabled, learnFromManualSwitches, defaultBehavior, menuBarLabel, checkForUpdates, onboardingSeen
     }
 
     init(from decoder: Decoder) throws {
@@ -34,5 +37,6 @@ extension Preferences.General: Codable {
         if let v = c.lenient(DefaultBehavior.self, .defaultBehavior) { defaultBehavior = v }
         if let v = c.lenient(MenuBarLabel.self, .menuBarLabel) { menuBarLabel = v }
         if let v = c.lenient(Bool.self, .checkForUpdates) { checkForUpdates = v }
+        if let v = c.lenient(Bool.self, .onboardingSeen) { onboardingSeen = v }
     }
 }

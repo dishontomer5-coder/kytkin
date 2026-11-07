@@ -6,6 +6,8 @@ import SwiftUI
 
 struct GeneralSettingsView: View {
     @Bindable var model: GeneralSettingsModel
+    /// P2-26: reopens the welcome window (user click only).
+    let showWelcome: @MainActor () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -44,6 +46,12 @@ struct GeneralSettingsView: View {
                     if let error = model.loginItemError {
                         Text(error).font(.caption).foregroundStyle(.red)
                     }
+                }
+
+                Section {
+                    Button("Show Welcome Again…") { showWelcome() }
+                    Text("Opens the welcome window again: what Kytkin does, your two languages and Accessibility.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
