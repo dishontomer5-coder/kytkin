@@ -5,7 +5,8 @@
 //   - didTerminateApplication → onTerminate(pid)
 //   - activeSpaceDidChange → re-read the frontmost app (the activation isn't always sent on a Space change)
 //   - didWake, sessionDidBecomeActive → re-read the frontmost app (P2-41, 001 §14.5: the front app can change while
-//     the Mac sleeps or another user's session is in front, and no activation is posted for it)
+//     the Mac sleeps or another user's session is in front, and no activation is posted for it), then onWake (P3-14)
+//   - sessionDidResignActive → onSessionResign (P3-14: the browser watcher detaches while another session is in front)
 // and reports the frontmost app on `start()` (there is no initial notification).
 // Thin by design: Kytkin's own activations, empty bundle IDs and duplicates are filtered by ContextAssembler.
 // It only reads; it never activates, hides or messages another app.
@@ -15,6 +16,8 @@ import AppKit
 @MainActor final class WorkspaceAppActivationSource: AppActivationSource {
     var onActivate: (@MainActor (String, Int32) -> Void)?
     var onTerminate: (@MainActor (Int32) -> Void)?
+    var onWake: (@MainActor () -> Void)?
+    var onSessionResign: (@MainActor () -> Void)?
 
     private let center: NotificationCenter
     private let frontmost: @MainActor () -> NSRunningApplication?
@@ -41,9 +44,14 @@ import AppKit
             },
             observe(NSWorkspace.didWakeNotification) { source, _ in
                 source.reportFrontmost()
+                source.onWake?()
             },
             observe(NSWorkspace.sessionDidBecomeActiveNotification) { source, _ in
                 source.reportFrontmost()
+                source.onWake?()
+            },
+            observe(NSWorkspace.sessionDidResignActiveNotification) { source, _ in
+                source.onSessionResign?()
             },
         ]
         reportFrontmost()

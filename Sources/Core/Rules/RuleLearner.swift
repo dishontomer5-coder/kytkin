@@ -20,6 +20,8 @@
 //   - `isPrivateWindow == true` → nothing, not even app-level (plan.md Decision, P2-9 QA: stricter than
 //     001 §3 (b) step 4). nil (unknown) counts as not private until P1-20.
 //   - P3-9: `pageState == .editingAddress` → nothing (D2); `.unknown`, or `.page` without a site → nothing (D3).
+//     P3-14 (P3-20 decision): a Context whose site was read only from the Gecko address bar → nothing (applied, never
+//     learned).
 //     Only the candidate's own scope is checked for a pin, so a site is learned in a browser pinned to another
 //     language (site beats the app pin, 001 §14.6).
 //   - a **pinned** rule exists for the scope → nothing; pins stay fixed (plan.md Decision, 001 §11 Q2).
@@ -61,6 +63,8 @@ enum LearnOutcome: Sendable, Equatable {
         case editingAddress
         /// P3-9: the browser's page couldn't be read (`.unknown`), or a `.page` came without a site: D3.
         case siteUnknown
+        /// P3-14 (P3-20 decision): the site came only from the Gecko address bar, which can hold half-typed text.
+        case siteFromAddressBar
         /// Within `settleAfterContextChange` of a context change.
         case tooSoonAfterContextChange
         case pinned
@@ -188,9 +192,14 @@ struct RuleLearner {
         switch c.pageState {
         case .editingAddress?: return .editingAddress
         case .unknown?: return .siteUnknown
-        case .page?: return HostNormalizer.normalized(c.siteDomain) == nil ? .siteUnknown : nil
-        case .notWebPage?, nil: return nil
+        case .page?:
+            if HostNormalizer.normalized(c.siteDomain) == nil { return .siteUnknown }
+        case .notWebPage?, nil:
+            break
         }
+        // P3-14 (P3-20 decision): an answer read only from the Gecko address bar is applied, never learned. Firefox can
+        // keep half-typed text in an unfocused bar (`ynet.co`), and nothing tells it apart from the real address.
+        return c.readFromAddressBar ? .siteFromAddressBar : nil
     }
 
     private func ruleReason(_ scope: RuleScope, _ id: InputSourceID) -> LearnOutcome.DiscardReason? {

@@ -18,12 +18,15 @@ struct Context: Sendable, Equatable {
     var chatKey: ChatKey?
     /// P3-5: what the browser window shows (001 §14.2). nil = not a watched browser (or no read yet).
     var pageState: BrowserPageState?
+    /// P3-14 (P3-20 decision): the site came only from the Gecko address bar (no web-area `AXURL`). Rules apply; the
+    /// learner discards it (`.siteFromAddressBar`). A flag only: no address text is ever kept.
+    var readFromAddressBar: Bool
     /// Increments on every change.
     let generation: UInt64
 
     init(bundleID: String, pid: Int32, host: String? = nil, siteDomain: String? = nil,
          isPrivateWindow: Bool? = nil, chatKey: ChatKey? = nil, pageState: BrowserPageState? = nil,
-         generation: UInt64) {
+         readFromAddressBar: Bool = false, generation: UInt64) {
         self.bundleID = bundleID
         self.pid = pid
         self.host = host
@@ -31,6 +34,7 @@ struct Context: Sendable, Equatable {
         self.isPrivateWindow = isPrivateWindow
         self.chatKey = chatKey
         self.pageState = pageState
+        self.readFromAddressBar = readFromAddressBar
         self.generation = generation
     }
 }

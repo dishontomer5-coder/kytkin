@@ -42,7 +42,11 @@ import AppKit
         importedLayouts = ImportedLayoutStore(directory: ImportedLayoutStore.directory(forPreferencesFile: fileURL),
                                               fileSystem: LocalLayoutFileSystem())
         layoutCatalog = LayoutMapCatalog(system: layoutMaps, imported: importedLayouts)
-        contextMonitor = ContextMonitor(source: WorkspaceAppActivationSource(), clock: clock)
+        // P3-14: the browser watcher exists only when the bundled Public Suffix List loaded (D11: without it no browser
+        // is watched, and Settings → Browsers & Sites says so). Its AX thread starts on the first attach.
+        let extractor = DomainExtractor.bundled
+        contextMonitor = ContextMonitor(source: WorkspaceAppActivationSource(),
+                                        browsers: extractor.map { BrowserWatcher.live(extractor: $0) }, clock: clock)
         permissions = PermissionsManager(probe: SystemPermissionProbe(), requester: SystemPermissionRequester(),
                                          clock: clock)
         conflicts = ConflictDetector(clock: clock)
@@ -69,7 +73,9 @@ import AppKit
                                    permissions: permissions, conflicts: conflicts, keyWatcher: keyWatcher,
                                    ticker: MainRunLoopTicker(), convert: convert, clock: clock,
                                    scheduler: MainRunLoopOneShot(),          // P2-52 item 1
-                                   frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier })
+                                   frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+                                   suffixListLoaded: extractor != nil,                // P3-14 (D11)
+                                   webLinkHandlers: { BrowserInventory.webLinkHandlers() })
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
         wire()

@@ -29,7 +29,7 @@ protocol BrowserWatchEngineDriving: AnyObject, Sendable {
 
 final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificationObserving>: BrowserWatchEngineDriving,
     @unchecked Sendable where Observer.Node == Tree.Node { // @unchecked: confined to the AX thread (see above)
-    typealias Deliver = @Sendable (_ pid: Int32, _ attachID: UInt64, BrowserObservation) -> Void
+    typealias Deliver = @Sendable (_ pid: Int32, _ attachID: UInt64, BrowserObservation, _ sawWindow: Bool) -> Void
 
     /// R2: observer registration retry (§14.3.4).
     static var observerRetryFirstNanos: UInt64 { 100_000_000 }
@@ -165,7 +165,7 @@ final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificatio
         let changed = a.lastPosted.map { !observation.hasSameFacts(as: $0) } ?? true
         if changed { a.lastPosted = observation }
         attached = a
-        if changed { deliver(a.pid, a.attachID, observation) }
+        if changed { deliver(a.pid, a.attachID, observation, sawWindow) }
     }
 
     /// Gecko: keep `AXValueChanged` registered on the window's cached address bar (re-registered when it changes).

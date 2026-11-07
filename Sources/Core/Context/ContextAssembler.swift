@@ -128,8 +128,10 @@ struct ContextAssembler {
     /// key, the private flag, the page state, or a host that has an override changed. The first observation
     /// for a browser activation held by the site grace releases it at once, app and site together.
     /// nil = no change, stale pid, or held.
+    /// P3-14: `readFromAddressBar` (the P3-20 decision) counts as a change too: it decides whether the site may be
+    /// learned, so bar → `AXURL` on the same site must reach the learner.
     mutating func browserObserved(site: SiteAddress?, pageState: BrowserPageState, isPrivate: Bool?,
-                                  pid: Int32) -> Context? {
+                                  readFromAddressBar: Bool = false, pid: Int32) -> Context? {
         guard var next = latest, next.pid == pid else { return nil }
         let host = site?.host, domain = site?.siteKey
         observedHost = host
@@ -140,23 +142,46 @@ struct ContextAssembler {
             next.siteDomain = domain
             next.isPrivateWindow = isPrivate
             next.pageState = pageState
+            next.readFromAddressBar = readFromAddressBar
             latest = next
             // Held only by the grace → emit now. Also part of a burst → the burst's deadline emits the merge.
             return burstDeadlineNanos == nil ? release() : nil
         }
         let oldHost = Self.normalizedHost(next.host), newHost = Self.normalizedHost(host)
         guard next.siteDomain != domain || next.isPrivateWindow != isPrivate || next.pageState != pageState
-                || hostMatters(oldHost, newHost) else { return nil }
+                || next.readFromAddressBar != readFromAddressBar || hostMatters(oldHost, newHost) else { return nil }
         next.host = host
         next.siteDomain = domain
         next.isPrivateWindow = isPrivate
         next.pageState = pageState
+        next.readFromAddressBar = readFromAddressBar
         return apply(next)
     }
 
     /// 001 §14.2/§14.5 signature: one browser read (P3-6's `BrowserObservation`; `via` is for diagnostics only).
     mutating func browserObserved(_ o: BrowserObservation, pid: Int32) -> Context? {
-        browserObserved(site: o.site, pageState: o.pageState, isPrivate: o.isPrivate, pid: pid)
+        browserObserved(site: o.site, pageState: o.pageState, isPrivate: o.isPrivate,
+                        readFromAddressBar: o.readFromAddressBar, pid: pid)
+    }
+
+    /// P3-14: Kytkin stopped watching browser `pid` while it is still in front (the site policy changed: Kytkin
+    /// paused or off, Accessibility revoked, site rules turned off for it). Its site fields and page state go back to
+    /// nil, so the browser's own app rule applies, as for any app. A grace still waiting for its first read ends now.
+    /// nil = no change, stale pid, or held.
+    mutating func browserUnwatched(pid: Int32) -> Context? {
+        guard var next = latest, next.pid == pid else { return nil }
+        if let grace = siteGrace, grace.pid == pid {
+            siteGrace = nil
+            return burstDeadlineNanos == nil ? release() : nil   // held only by the grace: emit the app now
+        }
+        guard next.pageState != nil || next.siteDomain != nil || next.host != nil else { return nil }
+        observedHost = nil
+        next.host = nil
+        next.siteDomain = nil
+        next.isPrivateWindow = nil
+        next.pageState = nil
+        next.readFromAddressBar = false
+        return apply(next)
     }
 
     /// P3-5: the hosts of all siteHost rules changed (AppController, on every preferences change). If the newest
@@ -196,6 +221,7 @@ struct ContextAssembler {
         var isPrivateWindow: Bool?
         var chatKey: ChatKey?
         var pageState: BrowserPageState?
+        var readFromAddressBar = false
 
         init(bundleID: String, pid: Int32) {
             self.bundleID = bundleID
@@ -210,6 +236,7 @@ struct ContextAssembler {
             isPrivateWindow = c.isPrivateWindow
             chatKey = c.chatKey
             pageState = c.pageState
+            readFromAddressBar = c.readFromAddressBar
         }
     }
 
@@ -273,7 +300,8 @@ struct ContextAssembler {
         generation += 1
         let context = Context(bundleID: latest.bundleID, pid: latest.pid, host: latest.host,
                               siteDomain: latest.siteDomain, isPrivateWindow: latest.isPrivateWindow,
-                              chatKey: latest.chatKey, pageState: latest.pageState, generation: generation)
+                              chatKey: latest.chatKey, pageState: latest.pageState,
+                              readFromAddressBar: latest.readFromAddressBar, generation: generation)
         current = context
         currentAppIsGone = false
         return context

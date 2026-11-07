@@ -68,10 +68,12 @@ func describe(_ state: BrowserPageState) -> String {
     var attachedName: String?
 
     init() {
-        watcher.onObservation = { [unowned self] _, _, o in
+        watcher.onObservation = { [unowned self] _, _, o, _ in
             let domain = o.site?.siteKey ?? "-"
             let priv = o.isPrivate.map { $0 ? "private" : "normal" } ?? "private?"
-            print("\(stamp())  \(attachedName ?? "?")  \(domain)  \(describe(o.pageState))  \(priv)")
+            // P3-14: "bar" = read only from Zen/Firefox's address bar (applied, never learned: the P3-20 decision).
+            let bar = o.readFromAddressBar ? "  bar" : ""
+            print("\(stamp())  \(attachedName ?? "?")  \(domain)  \(describe(o.pageState))  \(priv)\(bar)")
         }
     }
 

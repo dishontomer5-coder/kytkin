@@ -29,6 +29,9 @@ struct MenuState: Equatable {
     /// P2-55: DEBUG line about learning (gate, candidate, last decision). IDs and reasons only, never typed text,
     /// site domains or chat keys. MenuModel shows it in Debug builds.
     var learnerDebug: String?
+    /// P3-14: DEBUG line about the browser watch (engine, attach, update count, last page state and source). Never a
+    /// host, a URL or a title.
+    var siteDebug: String?
     /// "Quit & Reopen" hint (P2-46).
     var showsQuitAndReopen = false
     /// P2-22: the grants as last read (silently). `.unknown` = not read yet: no warning.
