@@ -250,3 +250,53 @@ final class WelcomeAtLaunchTests: XCTestCase {
         XCTAssertEqual(permissions.promptingCalls, [])
     }
 }
+
+// MARK: - QA (P3-12): more launch states
+
+@MainActor
+final class WelcomeAtLaunchQATests: XCTestCase {
+    private let url = URL(fileURLWithPath: "/tmp/kytkin-tests-never-written/preferences.json")
+
+    private func store(_ fs: InMemoryPreferencesFileSystem) -> PreferencesStore {
+        PreferencesStore(fileURL: url, clock: FakeClock(), fileSystem: fs)
+    }
+
+    func testANewerSchemaFileCountsAsAnExistingInstall() {
+        let newer = Data(#"{"schemaVersion":99,"general":{"onboardingSeen":false}}"#.utf8)
+        let s = store(InMemoryPreferencesFileSystem(files: [url: newer]))
+        XCTAssertEqual(s.loadIssue, .newerSchemaReadOnly)
+        XCTAssertTrue(s.foundFileAtLoad)
+        XCTAssertFalse(OnboardingModel.shouldShowAtLaunch(s))
+    }
+
+    func testALossyFileCountsAsAnExistingInstall() {
+        // Mistyped fields are defaulted (a lossy load); the file was still there.
+        let lossy = Data(#"{"schemaVersion":1,"general":{"enabled":"yes","onboardingSeen":"no"}}"#.utf8)
+        let s = store(InMemoryPreferencesFileSystem(files: [url: lossy]))
+        XCTAssertTrue(s.loadWasLossy)
+        XCTAssertTrue(s.foundFileAtLoad)
+        XCTAssertFalse(s.isReadOnly)
+        XCTAssertFalse(s.prefs.general.onboardingSeen)
+        XCTAssertFalse(OnboardingModel.shouldShowAtLaunch(s))
+    }
+
+    func testFoundFileAtLoadNeverChangesDuringTheRun() {
+        // True first launch: the file written later in the same run doesn't flip it.
+        let fs = InMemoryPreferencesFileSystem()
+        let s = store(fs)
+        s.update { $0.general.onboardingSeen = true }
+        s.flush()
+        XCTAssertNotNil(fs[url])
+        XCTAssertFalse(s.foundFileAtLoad)
+    }
+
+    func testADeletedFileIsAFreshStartAndShowsItAgain() {
+        // Documented choice (OnboardingModel header): deleting preferences.json means starting over.
+        let fs = InMemoryPreferencesFileSystem()
+        let first = store(fs)
+        first.update { $0.general.onboardingSeen = true }
+        first.flush()
+        fs[url] = nil
+        XCTAssertTrue(OnboardingModel.shouldShowAtLaunch(store(fs)))
+    }
+}
