@@ -89,6 +89,28 @@ struct PublicSuffixList: Sendable {
 
     private final class BundleToken {}
 
+    /// P3-15: the list's `// VERSION:` header line ("2026-11-06_09-01-47_UTC"), for About's acknowledgements.
+    /// Only the first lines are looked at; nil when there is no such line.
+    static func version(inHeader text: Substring) -> String? {
+        for line in text.split(separator: "\n", maxSplits: 40, omittingEmptySubsequences: true).prefix(40) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard t.hasPrefix("//") else { continue }
+            let body = t.dropFirst(2).trimmingCharacters(in: .whitespaces)
+            guard body.hasPrefix("VERSION:") else { continue }
+            let v = body.dropFirst("VERSION:".count).trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? nil : v
+        }
+        return nil
+    }
+
+    /// P3-15: the bundled list's version (the first 4 KB of the file are read; nil if it is missing).
+    static var bundledVersion: String? {
+        guard let url = bundledURL, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4096) else { return nil }
+        return version(inHeader: Substring(String(decoding: data, as: UTF8.self)))
+    }
+
     // MARK: - Matching
 
     /// The registrable domain (eTLD+1) of `host`, normalized (lowercase, ASCII/Punycode, no trailing dot):

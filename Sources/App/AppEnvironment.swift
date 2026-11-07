@@ -183,16 +183,40 @@ import AppKit
                                                       relaunch: { AppRelauncher.quitAndReopen() })
         // P2-25: Rules, Convert and Apps. Names come from LaunchServices; running apps only when Settings opens.
         let rules = RulesSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
-                                       sources: { switcher.sources(includeDisabled: true) })
+                                       sources: { switcher.sources(includeDisabled: true) },
+                                       extractor: DomainExtractor.bundled)   // P3-15: "Add Website…"
+        // P3-15: Browsers & Sites. The inventory is read when Settings opens (P3-22: AppController re-reads the
+        // web-link handlers and re-pushes the policy if they changed); LaunchServices lookups only.
+        let browsers = BrowsersSettingsModel(
+            store: store, appName: StatusItemController.lookUpAppName, suffixListLoaded: controller.suffixListLoaded,
+            ownBundleIDPrefix: KnownSwitchers.ownBundleIDPrefix,
+            inventory: {
+                BrowserInventorySnapshot(installedCatalog: BrowserInventory.installedCatalogBrowsers(),
+                                         webLinkHandlers: controller.refreshWebLinkHandlers())
+            },
+            support: { controller.browserSupport(for: $0) })
         let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                      runningApps: Self.runningApps,
                                      ownBundleID: Bundle.main.bundleIdentifier ?? "")
+        let fileURL = store.fileURL
         return SettingsWindowController(general: general,
-                                        about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:]),
+                                        about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:],
+                                                         suffixListVersion: PublicSuffixList.bundledVersion),
                                         tabs: .init(languages: languages, rules: rules,
                                                     convert: ConvertSettingsModel(store: store), apps: apps,
-                                                    permissions: permissionsTab),
-                                        showWelcome: { [weak self] in self?.openOnboarding() })
+                                                    permissions: permissionsTab, browsers: browsers),
+                                        showWelcome: { [weak self] in self?.openOnboarding() },
+                                        openSettingsFolder: { Self.openSettingsFolder(fileURL) })
+    }
+
+    /// P3-15: About → "Open Settings Folder" (a click only): Finder shows the preferences file, or its folder.
+    private static func openSettingsFolder(_ fileURL: URL) {
+        let exists = { (url: URL) in FileManager.default.fileExists(atPath: url.path) }
+        switch SettingsFolderTarget.decide(fileURL: fileURL, exists: exists) {
+        case .revealFile(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .openFolder(let url): NSWorkspace.shared.open(url)
+        case .unavailable: NSSound.beep()
+        }
     }
 
     /// P2-25: regular (Dock) apps that are running, for Settings → Apps "Add Running App".

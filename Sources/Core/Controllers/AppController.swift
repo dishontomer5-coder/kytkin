@@ -78,7 +78,8 @@ import Observation
 
     /// P3-14 (D11): the bundled Public Suffix List loaded. Without it no browser is watched and Settings says why.
     let suffixListLoaded: Bool
-    /// P3-14: apps registered for https links (D1, "best effort" browsers). Read once, at `start()`.
+    /// P3-14: apps registered for https links (D1, "best effort" browsers). Read at `start()`, and again when Settings
+    /// opens (P3-22, `refreshWebLinkHandlers`).
     private let webLinkHandlers: @MainActor () -> Set<String>
     private var webLinkHandlerIDs: Set<String> = []
     /// P3-14: the policy last pushed to the context monitor (nil before `start()`).
@@ -529,14 +530,32 @@ import Observation
     }
 
     /// P3-14, for Settings → Browsers & Sites (P3-15): what Kytkin knows about reading `bundleID` this session.
+    /// P3-15: the request comes from the browser preferences as they are now, not from the pushed policy, so a
+    /// "Use website rules" switch just flipped in Settings shows at once (the push follows a moment later, through
+    /// the preferences observation).
     func browserSupport(for bundleID: String) -> BrowserSupport {
-        context.browserSupport.status(bundleID: bundleID, request: sitePolicy?.request(for: bundleID),
-                                      availability: availability, suffixListLoaded: suffixListLoaded)
+        let policy = SitePolicy(availability: availability, browsers: store.prefs.browsers,
+                                suffixListLoaded: suffixListLoaded, webLinkHandlers: webLinkHandlerIDs,
+                                ownBundleIDPrefix: KnownSwitchers.ownBundleIDPrefix)
+        return context.browserSupport.status(bundleID: bundleID, request: policy.request(for: bundleID),
+                                             availability: availability, suffixListLoaded: suffixListLoaded)
     }
 
     /// P3-14: the "best effort" browsers (apps registered for https links, read at `start()`), for P3-15's list.
     var otherBrowserBundleIDs: Set<String> {
         webLinkHandlerIDs.filter { BrowserCatalog.known[$0] == nil }
+    }
+
+    /// P3-22: Settings opened (or came to the front): read the web-link handlers again, so a browser installed since
+    /// launch is listed and watched. Pushes a new policy only when the set changed. Returns every handler.
+    @discardableResult func refreshWebLinkHandlers() -> Set<String> {
+        guard isStarted else { return webLinkHandlerIDs }
+        let fresh = webLinkHandlers()
+        if fresh != webLinkHandlerIDs {
+            webLinkHandlerIDs = fresh
+            updateSitePolicy()
+        }
+        return webLinkHandlerIDs
     }
 
     private func apply(_ action: TapModePolicy.Action) {
