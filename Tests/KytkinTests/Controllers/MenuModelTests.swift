@@ -292,7 +292,7 @@ final class MenuModelTests: XCTestCase {
     func testKeyboardSlowdownOffersARestartOnlyWhenItCanHelp() {
         var s = MenuState()
         s.degradedByWatchdog = true
-        XCTAssertEqual(warningLines(s), [.info("Keyboard features turned down after a slowdown")])
+        XCTAssertEqual(warningLines(s), [.info("Some keyboard features stopped after a slowdown")])
         s.canRestartKeyboard = true
         XCTAssertEqual(warningLines(s)[1], .action("Restart Keyboard Features", .restartKeyboard, indent: 1))
         s.degradedByWatchdog = false

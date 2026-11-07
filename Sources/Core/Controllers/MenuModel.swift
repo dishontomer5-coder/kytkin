@@ -143,7 +143,7 @@ enum MenuModel {
             return [.info("Learning paused: macOS switches language per document"),
                     .info("Turn it off in System Settings → Keyboard → Input Sources", indent: 1)]
         case .keyboardSlowedDown(let canRestart):
-            var out: [MenuItemModel] = [.info("Keyboard features turned down after a slowdown")]
+            var out: [MenuItemModel] = [.info("Some keyboard features stopped after a slowdown")]
             if canRestart { out.append(.action("Restart Keyboard Features", .restartKeyboard, indent: 1)) }
             return out
         case .secureInput:

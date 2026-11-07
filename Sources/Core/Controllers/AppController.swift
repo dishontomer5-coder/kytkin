@@ -359,10 +359,14 @@ import Observation
     }
 
     /// Re-arms after every change: Observation reports once per registration, before the value changes.
+    /// P2-22 QA: also the file flags the menu warns about (a debounced save failing or recovering, the kept
+    /// original's URL), so the label's dot follows them without waiting for the next app switch.
     private func observePreferences() {
         guard isStarted else { return }
         withObservationTracking {
             _ = store.prefs
+            _ = store.lastSaveFailed
+            _ = store.originalBackupURL
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isStarted else { return }

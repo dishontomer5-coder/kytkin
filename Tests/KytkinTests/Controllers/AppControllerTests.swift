@@ -662,4 +662,26 @@ final class AppControllerTests: XCTestCase {
         sut.setPaused(true)
         XCTAssertGreaterThan(displayChanges, 0)
     }
+
+    /// P2-22 QA: a debounced save failing (or recovering) changes the menu's warnings and the label's dot, so it
+    /// refreshes the display without waiting for the next app switch.
+    func testASaveFailureRefreshesTheDisplay() async {
+        let url = URL(fileURLWithPath: "/tmp/kytkin-tests-never-written/preferences.json")
+        let fs = InMemoryPreferencesFileSystem()
+        let clock = FakeClock(nowNanos: 1)
+        make(store: PreferencesStore(fileURL: url, clock: clock, fileSystem: fs))
+        fs.failWrites = true
+        store.update { $0.convert.doubleShiftWindowMs = 450 }
+        for _ in 0..<50 where watcher.configs.isEmpty { await Task.yield() }
+        XCTAssertFalse(watcher.configs.isEmpty, "the preference change was observed")
+        for _ in 0..<50 { await Task.yield() }
+        displayChanges = 0
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(displayChanges, 0, "settled")
+        store.flush()
+        XCTAssertTrue(store.lastSaveFailed)
+        for _ in 0..<50 where displayChanges == 0 { await Task.yield() }
+        XCTAssertGreaterThan(displayChanges, 0, "the failed save refreshed the label")
+        XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
+    }
 }
