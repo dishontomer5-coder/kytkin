@@ -134,9 +134,32 @@ final class BrowserWatchEngineTests: XCTestCase {
         XCTAssertEqual(delivered.items.count, 1)
         XCTAssertEqual(delivered.items.first?.pid, 7)
         XCTAssertEqual(delivered.items.first?.attachID, 3)
-        XCTAssertEqual(delivered.items.first?.observation.pageState, .unknown, "placeholder strategy until P3-13")
-        XCTAssertEqual(timer.deadline, t0 + 250_000_000, "an .unknown read keeps the readiness retries going")
+        // The app's own Gecko strategy (P3-13) reads Zen's page: a real site, so the next deadline is the 2 s poll.
+        XCTAssertEqual(delivered.items.first?.observation.pageState, .page)
+        XCTAssertEqual(delivered.items.first?.observation.site?.registrableDomain, "example.com")
+        XCTAssertEqual(timer.deadline, t0 + 2_000_000_000, "a site was read: no readiness retry, the 2 s poll")
         XCTAssertFalse(zen.tree.calls.isEmpty)
+    }
+
+    /// The engine's plumbing for a browser that isn't ready: a stand-in strategy that always answers `.unknown` keeps
+    /// the readiness retries (250 ms, 500 ms, 1 s, 2 s after the attach) going, then falls back to the 2 s poll.
+    func testUnknownReadsKeepTheReadinessRetriesGoing() {
+        let probe = ProbeStrategy()
+        probe.scripted = .unknown
+        strategy = probe
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(), attachID: 1)
+        XCTAssertEqual(delivered.items.first?.observation.pageState, .unknown)
+        XCTAssertEqual(timer.deadline, t0 + 250_000_000, "an .unknown read keeps the readiness retries going")
+        var deadlines: [UInt64] = []
+        for _ in 0..<5 {
+            fire(engine)
+            deadlines.append(((timer.deadline ?? t0) - t0) / 1_000_000)
+        }
+        XCTAssertEqual(engine.readCount, 6)
+        XCTAssertEqual(probe.calls, 6)
+        XCTAssertEqual(deadlines, [500, 1000, 2000, 4000, 6000], "retries at 0.25, 0.5, 1 and 2 s, then the 2 s poll")
+        XCTAssertEqual(delivered.items.count, 1, "same .unknown facts: posted once")
     }
 
     func testDetachRemovesObserverAndTimerAndStopsAllAXCalls() {
@@ -289,15 +312,23 @@ final class BrowserWatchEngineTests: XCTestCase {
 
     // MARK: - B13 through the engine
 
-    func testEngineGivesEveryReadTheWallClockBudget() throws {
+    /// A read whose browser hangs mid-way (the first timeout, with the app's own Gecko strategy) still ends, and
+    /// reports `.unknown` with the window's kept site; the change from `.page` is posted. The 0.5 s wall-clock budget
+    /// itself is pinned by `testEngineReadStopsOnceTheWallClockBudgetIsSpent`.
+    func testEngineReadThatHangsMidWayEndsWithTheKeptSite() throws {
         let engine = makeEngine()
         engine.attach(pid: 7, request: request(), attachID: 1)
-        // The engine set the reader's deadline clock: a read whose browser hangs mid-way still ends.
-        zen.tree.hangAfterCalls = zen.tree.calls.count + 1
+        XCTAssertEqual(delivered.items.first?.observation.pageState, .page)
+        // Focused element and main window answer; the browser hangs during the focus walk (the window was seen).
+        zen.tree.hangAfterCalls = zen.tree.calls.count + 2
         engine.trigger(.titleChanged)
         fire(engine)
         XCTAssertEqual(engine.readCount, 2)
-        XCTAssertEqual(delivered.items.count, 1)
+        XCTAssertEqual(delivered.items.count, 2, "the page state went from .page to .unknown")
+        let last = try XCTUnwrap(delivered.items.last?.observation)
+        XCTAssertEqual(last.pageState, .unknown)
+        XCTAssertEqual(last.site?.registrableDomain, "example.com", "the kept site, not nil")
+        XCTAssertEqual(last.via, .kept)
     }
 
     /// QA P3-10: the engine really arms the 0.5 s wall-clock budget (not only the first-timeout rule): a strategy
