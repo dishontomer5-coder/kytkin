@@ -136,7 +136,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         case .chromium: UnsupportedEngineStrategy<Latched>()   // P3-11
         case .webkit: UnsupportedEngineStrategy<Latched>()     // P3-11
         case .unknown: UnsupportedEngineStrategy<Latched>()    // P3-11
-        case .gecko: UnsupportedEngineStrategy<Latched>()      // P3-13
+        case .gecko: GeckoReadStrategy<Latched>()              // P3-13
         }
     }
 

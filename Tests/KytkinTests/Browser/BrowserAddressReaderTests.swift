@@ -329,7 +329,7 @@ final class BrowserAddressReaderTests: XCTestCase {
     // MARK: Default strategies (until P3-11/P3-13)
 
     func testEveryEngineHasAStrategyThatReadsNothingYet() {
-        for engine in [BrowserEngine.chromium, .gecko, .webkit, .unknown] {
+        for engine in [BrowserEngine.chromium, .webkit, .unknown] {   // P3-13: Gecko reads now (GeckoReadStrategyTests)
             let arc = BrowserFixtures.arc()
             var r = BrowserAddressReader<FakeAXTree>(request: request(engine), siteReader: siteReader)
             let (o, sawWindow) = r.read(arc.tree, now: 0)
