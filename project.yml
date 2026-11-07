@@ -49,6 +49,10 @@ targets:
           # Settings → Privacy & Security never lists two entries both called "Kytkin".
           PRODUCT_NAME: Kytkin Dev
           INFOPLIST_KEY_CFBundleDisplayName: Kytkin Dev
+          # P2-53: no separate "<name>.debug.dylib" (Xcode's previews split). With the hardened runtime and a
+          # self-signed cert (no Team ID), library validation refuses to load it and the app dies at launch
+          # ("Library missing ... different Team IDs"). One binary has nothing to validate.
+          ENABLE_DEBUG_DYLIB: NO
         Release:
           # P2-3: don't inject com.apple.security.get-task-allow (debugger attach) into Release;
           # notarization rejects it (R8 §2).
