@@ -4,12 +4,11 @@
 //
 // - One window, created on first use and reused: `show(tab:)` on an open window only switches the tab and brings
 //   it to the front.
-// - Bringing it forward in an LSUIElement (accessory) app: macOS 14 activation is cooperative, so `NSApp.activate()`
-//   works when the user just clicked our menu (the system hands us activation) but may be refused otherwise.
-//   `makeKeyAndOrderFront` + `orderFrontRegardless` make sure the window is at least on top in either case.
-// - Closing it: an accessory app with no window would stay the active app (keys go nowhere), so when the last
-//   titled window closes Kytkin hides itself and macOS activates the app you were in. That resign is what
-//   AppController handles (P2-39 / P2-52 item 1).
+// - Bringing it forward and closing it go through `WindowPresenter` (P2-56: unhide first, activate, fall back to
+//   `activate(ignoringOtherApps:)` if the window didn't get the keyboard; hide Kytkin when its last window closes, so
+//   macOS activates the app you were in). That resign is what AppController handles (P2-39 / P2-52 item 1).
+//   ⌘W (hidden main menu) and Esc (`KytkinWindow`) close it.
+// - P2-26: while the Permissions tab is showing in an open window, the permission poll runs every 1 s.
 // - Kytkin's own window is not a context (001 §12 W2): ContextMonitor ignores it; AppController hears about it
 //   through the app's didBecomeActive / didResignActive notifications (AppEnvironment).
 
@@ -29,12 +28,18 @@ import SwiftUI
         let rules: RulesSettingsModel
         let convert: ConvertSettingsModel
         let apps: AppsSettingsModel
+        let permissions: PermissionsSettingsModel   // P2-26
     }
 
-    init(general: GeneralSettingsModel, about: AboutInfo, tabs: TabModels) {
+    /// P2-26: General → "Show Welcome Again".
+    private let showWelcome: @MainActor () -> Void
+
+    init(general: GeneralSettingsModel, about: AboutInfo, tabs: TabModels,
+         showWelcome: @escaping @MainActor () -> Void) {
         self.general = general
         self.about = about
         self.tabs = tabs
+        self.showWelcome = showWelcome
         super.init()
     }
 
@@ -46,20 +51,32 @@ import SwiftUI
         general.refresh()          // fresh login-item status and layout list (R8: don't cache the status)
         refreshTabs()
         let window = self.window ?? makeWindow()
-        if !window.isVisible { window.center() }
-        NSApp.unhide(nil)          // closing hid the app; a hidden app's windows stay hidden even when ordered front
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
+        WindowPresenter.show(window)   // P2-56
+        updatePermissionsPolling()
+    }
+
+    /// P2-26: a grant, the tap mode or Secure Input changed (the root's display fan-out). Silent.
+    func permissionsChanged() {
+        guard isOpen else { return }
+        tabs.permissions.reload()
+    }
+
+    /// P2-26: the 1 s permission poll runs only while the Permissions tab shows in an open window.
+    private func updatePermissionsPolling() {
+        tabs.permissions.setVisible(isOpen && selection.tab == .permissions)
     }
 
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about,
                                                                  rules: tabs.rules, convert: tabs.convert,
-                                                                 apps: tabs.apps)
+                                                                 apps: tabs.apps, permissions: tabs.permissions,
+                                                                 showWelcome: showWelcome,
+                                                                 tabChanged: { [weak self] in
+                                                                     self?.updatePermissionsPolling()
+                                                                 })
             .environment(tabs.languages))   // P2-24: the Languages model goes through the environment
         hosting.sizingOptions = []
-        let window = NSWindow(contentViewController: hosting)
+        let window = KytkinWindow(contentViewController: hosting)   // P2-56: Esc closes it
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
         // nowhere) and skips windowWillClose, so Kytkin never hides; Settings windows don't minimize anyway.
         window.styleMask = [.titled, .closable]
@@ -85,10 +102,11 @@ import SwiftUI
         tabs.languages.refresh()
         tabs.rules.refresh()
         tabs.apps.refresh()
+        tabs.permissions.reload()
     }
 
     func windowWillClose(_ notification: Notification) {
-        let others = NSApp.windows.filter { $0 !== window && $0.isVisible && $0.styleMask.contains(.titled) }
-        if others.isEmpty { NSApp.hide(nil) }
+        tabs.permissions.setVisible(false)
+        if let window { WindowPresenter.willClose(window) }
     }
 }
