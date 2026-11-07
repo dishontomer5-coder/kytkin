@@ -1,7 +1,8 @@
 // P2-56: A main menu for an app with no menu bar. Kytkin is an accessory (LSUIElement) app, so macOS never shows
 // this menu, but its key equivalents still work while one of Kytkin's windows is in front: ⌘W closes the window,
 // ⌘Q quits, and the Edit shortcuts (⌘C, ⌘V, ⌘A, ⌘Z…) work in text fields such as the Rules filter. Esc closes a
-// window through `KytkinWindow.cancelOperation`. Installed once at launch; nothing here runs on its own.
+// window through `KytkinWindow.cancelOperation` (P3-12: after clearing and leaving a text field first).
+// Installed once at launch; nothing here runs on its own.
 
 import AppKit
 

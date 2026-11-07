@@ -47,6 +47,12 @@ import Observation
         if visible { reload() }
     }
 
+    /// P3-12: the Settings window is hidden or fully covered (true), or back on screen (false). No poll while covered.
+    func setCovered(_ covered: Bool) {
+        polling.set(.permissionsTab, covered: covered)
+        if !covered { reload() }
+    }
+
     // MARK: - Rows
 
     var rows: [PermissionRow] {
