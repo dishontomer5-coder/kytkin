@@ -17,6 +17,13 @@
 //     claim is taken before the step starts, which also puts the stale-range check under the claim: the deadline
 //     flush can't replay held keys between that check and `AXSelectedText`. Read-only steps never ask.
 //   - The whole run is bounded by `budgetNanos` (001 §7 B5: a convert gives up after 400 ms).
+//   - P2-49 (enforced by the executor, so every plan shape gets it): nothing is written, and the chain ends
+//     without a key, when (2) a type-over's selection has become a caret or changed length since `focusInfo`
+//     (typing would insert the text twice); (3) the focused element is no longer the one `focusInfo` read
+//     (`CFEqual` through `FocusedElementIdentity`), checked before every key step; (5) the app timed out once:
+//     no further AX call (and no key step) in this replacement, and a write that timed out counts as unknown, so
+//     the chain halts; (6) the subrole read failed or had the wrong type: the field counts as secure and the
+//     planner refuses. AX writes still go to the element `focusInfo` read, so (3) only gates keys.
 
 import Foundation
 

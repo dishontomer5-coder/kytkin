@@ -15,6 +15,10 @@ final class FakeTextField: AXTextElement {
         case garble
         /// Returns an error and changes nothing.
         case fails
+        /// P2-49: the app hangs: writes the text, then the call times out (the state is unknown to the caller).
+        case writesThenTimesOut
+        /// P2-49: the app hangs: the call times out and nothing is written.
+        case timesOut
     }
 
     var role: String? = "AXTextArea"
@@ -29,8 +33,15 @@ final class FakeTextField: AXTextElement {
     var writeBehavior = WriteBehavior.normal
     /// Reported instead of the real selection (R5: WebKit's garbage range).
     var reportedRange: TextRange?
+    /// QA P2-49: the selected-range read fails with this error (the selection itself is unchanged).
+    var selectedRangeError: AXAccessError?
     /// Reads of these attributes time out.
     var timeouts: Set<AXTextAttribute> = []
+    /// P2-49 item 6: the subrole read answers this instead (e.g. `.failure(.failed)`: an error or a wrong type).
+    var subroleResult: Result<String, AXAccessError>?
+    /// P2-49 item 5: true once any call answered `.timeout`; every AX call after that is counted here.
+    private(set) var hasTimedOut = false
+    private(set) var callsAfterTimeout = 0
     /// P2-59: setting a caret (an empty range) fails, so a selection can't be collapsed.
     var rejectsCaretRanges = false
     /// P2-59: `AXStringForRange` answers this instead of the real text (an app returning the wrong length).
@@ -43,7 +54,12 @@ final class FakeTextField: AXTextElement {
 
     /// P2-59c: the owning process, and the identity the undo record compares (the same object = the same element).
     var processID: Int32? = 4242
-    func isSameElement(as other: any FocusedElementIdentity) -> Bool { other === self }
+    /// P2-49: the AX element this fake stands for. Two fakes with the same id are two copies of one element (live:
+    /// `CFEqual` on two `AXUIElement`s); a new fake is a different element.
+    lazy var elementID = ObjectIdentifier(self)
+    func isSameElement(as other: any FocusedElementIdentity) -> Bool {
+        (other as? FakeTextField)?.elementID == elementID
+    }
 
     init(_ text: String, selection: TextRange? = nil) {
         units = Array(text.utf16)
@@ -52,9 +68,14 @@ final class FakeTextField: AXTextElement {
 
     var text: String { String(decoding: units, as: UTF16.self) }
 
+    /// Counts every call made after the app first timed out (P2-49 item 5: there should be none).
+    private func call() { if hasTimedOut { callsAfterTimeout += 1 } }
+    private func timedOut<T>() -> Result<T, AXAccessError> { hasTimedOut = true; return .failure(.timeout) }
+
     private func read<T>(_ a: AXTextAttribute, _ value: () -> T?) -> Result<T, AXAccessError> {
+        call()
         reads.append(a)
-        if timeouts.contains(a) { return .failure(.timeout) }
+        if timeouts.contains(a) { return timedOut() }
         guard let v = value() else { return .failure(.noValue) }
         return .success(v)
     }
@@ -62,29 +83,37 @@ final class FakeTextField: AXTextElement {
     func string(_ a: AXTextAttribute) -> Result<String, AXAccessError> {
         switch a {
         case .role: return read(a) { role }
-        case .subrole: return read(a) { subrole }
+        case .subrole:
+            if let subroleResult { call(); reads.append(a); return subroleResult }
+            return read(a) { subrole }
         case .value: return read(a) { text }
         case .selectedText: return read(a) { String(decoding: units[selection.location..<selection.end], as: UTF16.self) }
         case .webKitMarkedText:
+            call()
             reads.append(a)
-            return timeouts.contains(a) ? .failure(.timeout) : webKitMarked
-        default: reads.append(a); return .failure(.failed)
+            return timeouts.contains(a) ? timedOut() : webKitMarked
+        default: call(); reads.append(a); return .failure(.failed)
         }
     }
 
     func integer(_ a: AXTextAttribute) -> Result<Int, AXAccessError> {
-        a == .numberOfCharacters ? read(a) { units.count } : .failure(.unsupported)
+        if a != .numberOfCharacters { call(); return .failure(.unsupported) }
+        return read(a) { units.count }
     }
 
     func range(_ a: AXTextAttribute) -> Result<TextRange, AXAccessError> {
         switch a {
-        case .selectedTextRange: return read(a) { reportedRange ?? selection }
+        case .selectedTextRange:
+            if let selectedRangeError { call(); reads.append(a); return .failure(selectedRangeError) }
+            return read(a) { reportedRange ?? selection }
         case .markedTextRange: return read(a) { markedRange }
-        default: return .failure(.unsupported)
+        default: call(); return .failure(.unsupported)
         }
     }
 
     func isSettable(_ a: AXTextAttribute) -> Result<Bool, AXAccessError> {
+        call()
+        if timeouts.contains(a) { return timedOut() }
         switch a {
         case .selectedText: return .success(selTextSettable)
         case .selectedTextRange: return .success(selRangeSettable)
@@ -93,6 +122,7 @@ final class FakeTextField: AXTextElement {
     }
 
     func string(in r: TextRange) -> Result<String, AXAccessError> {
+        call()
         guard supportsStringForRangeValue else { return .failure(.unsupported) }
         stringRangesRead.append(r)
         if let stringForRangeOverride { return .success(stringForRangeOverride) }
@@ -100,9 +130,10 @@ final class FakeTextField: AXTextElement {
         return .success(String(decoding: units[r.location..<r.end], as: UTF16.self))
     }
 
-    func supportsStringForRange() -> Result<Bool, AXAccessError> { .success(supportsStringForRangeValue) }
+    func supportsStringForRange() -> Result<Bool, AXAccessError> { call(); return .success(supportsStringForRangeValue) }
 
     func setString(_ value: String, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
+        call()
         writes.append(a)
         guard a == .selectedText, selTextSettable else { return .failure(.failed) }
         switch writeBehavior {
@@ -114,11 +145,14 @@ final class FakeTextField: AXTextElement {
         case .silentNoop: break
         case .garble: replaceSelection(with: "?")
         case .fails: return .failure(.failed)
+        case .writesThenTimesOut: replaceSelection(with: value); return timedOut()
+        case .timesOut: return timedOut()
         }
         return .success(())
     }
 
     func setRange(_ value: TextRange, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
+        call()
         writes.append(a)
         guard a == .selectedTextRange, selRangeSettable, value.end <= units.count,
               !(rejectsCaretRanges && value.isCaret) else { return .failure(.failed) }
