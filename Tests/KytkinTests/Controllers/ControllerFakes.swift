@@ -103,6 +103,11 @@ enum IDs {
     func requestAccessibility() { XCTFailNoPrompt() }
     func requestInputMonitoring() { XCTFailNoPrompt() }
     func openSystemSettings(_ pane: PermissionPane) { XCTFailNoPrompt() }
+    /// P3-7: silent checks asked for, in order.
+    private(set) var automationRefreshes: [Set<String>] = []
+    func refreshAutomation(for bundleIDs: Set<String>) { automationRefreshes.append(bundleIDs) }
+    func requestAutomation(for bundleID: String) { XCTFailNoPrompt() }
+    func openAutomationSettings() { XCTFailNoPrompt() }
 
     func grant(accessibility: PermissionState, inputMonitoring: PermissionState = .notDetermined,
                needsRelaunch: Bool = false) {

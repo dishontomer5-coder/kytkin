@@ -22,4 +22,12 @@ import Foundation
     func requestAccessibility()
     func requestInputMonitoring()
     func openSystemSettings(_ pane: PermissionPane)
+
+    // P3-7: Automation per browser (001 §14.7).
+    /// Silent checks (never a prompt), ≤ 1 per 5 s per browser. Results arrive later through `status`/`onChange`.
+    func refreshAutomation(for bundleIDs: Set<String>)
+    /// User click only: shows the macOS Automation prompt for `bundleID` if it was never answered.
+    func requestAutomation(for bundleID: String)
+    /// User click only: System Settings → Privacy & Security → Automation.
+    func openAutomationSettings()
 }
