@@ -14,6 +14,7 @@ mkdir -p "$(dirname "$BIN")"
 SOURCES=(
   Tools/dump-layoutmap/main.swift
   Sources/System/Input/UCKeyTranslateLayoutMapProvider.swift
+  Sources/System/Input/DistributedNotificationRelay.swift
   Sources/Core/Layout/*.swift
   Sources/Core/Model/InputSourceID.swift
   Sources/Core/Model/InputSourceInfo.swift

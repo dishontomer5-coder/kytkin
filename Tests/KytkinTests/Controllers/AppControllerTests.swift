@@ -1,0 +1,352 @@
+// P2-20: AppController (the decisions behind AppEnvironment) with fakes for every adapter: the callback fan-out,
+// tap-mode starts (§12 W7), config pushes (P2-50), Secure Input → dwell (P2-45), double-Shift generations always
+// finished, Pause, the menu hooks (P2-48), and preferences observed through Observation.
+
+import XCTest
+
+@MainActor
+final class AppControllerTests: XCTestCase {
+    private var clock: FakeClock!
+    private var switcher: FakeSwitcher!
+    private var monitor: FakeContextMonitor!
+    private var permissions: FakePermissions!
+    private var conflicts: FakeConflicts!
+    private var watcher: FakeKeyWatcher!
+    private var ticker: FakeTicker!
+    private var convert: FakeConvert?
+    private var store: PreferencesStore!
+    private var sut: AppController!
+    private var displayChanges = 0
+    private let notes = "com.apple.Notes"
+    private let snapshot = WordSnapshot(strokes: [], previousWords: [], renderedIn: nil, isValid: true)
+
+    /// Wires the fakes the way AppEnvironment wires the real adapters.
+    private func make(_ prefs: Preferences = Preferences(), accessibility: PermissionState = .granted,
+                      inputMonitoring: PermissionState = .notDetermined, withConvert: Bool = false,
+                      start: Bool = true) {
+        clock = FakeClock(nowNanos: 1_000_000_000)
+        switcher = FakeSwitcher()
+        monitor = FakeContextMonitor()
+        permissions = FakePermissions()
+        permissions.statusOnStart = PermissionStatus(grants: PermissionGrants(accessibility: accessibility,
+                                                                             inputMonitoring: inputMonitoring))
+        conflicts = FakeConflicts()
+        watcher = FakeKeyWatcher()
+        ticker = FakeTicker()
+        convert = withConvert ? FakeConvert() : nil
+        store = makeStore(prefs, clock: clock)
+        sut = AppController(switcher: switcher, context: monitor, store: store, permissions: permissions,
+                            conflicts: conflicts, keyWatcher: watcher, ticker: ticker, convert: convert, clock: clock)
+        switcher.onChange = { [unowned self] in self.sut.inputSourceDidChange($0) }
+        monitor.onChange = { [unowned self] in self.sut.contextDidChange($0) }
+        permissions.onChange = { [unowned self] in self.sut.permissionsDidChange($0) }
+        conflicts.onChange = { [unowned self] in self.sut.conflictsDidChange($0) }
+        sut.onDisplayChange = { [unowned self] in self.displayChanges += 1 }
+        if start { sut.start() }
+    }
+
+    // MARK: - Start / stop
+
+    func testStartStartsEverythingAndTheTapOnce() {
+        make()
+        XCTAssertEqual(conflicts.startCount, 1)
+        XCTAssertEqual(permissions.startCount, 1)
+        XCTAssertEqual(monitor.startCount, 1)
+        XCTAssertEqual(watcher.starts, [.active], "one start, never repeated")
+        XCTAssertEqual(watcher.configs, [PreferencesMapping.processorConfig(Preferences())])
+        XCTAssertTrue(sut.availability.doubleShiftConvert)
+        sut.start()
+        XCTAssertEqual(watcher.starts, [.active])
+    }
+
+    func testStartWithNoGrantsInstallsNoTap() {
+        make(accessibility: .notDetermined)
+        XCTAssertTrue(watcher.starts.isEmpty)
+        XCTAssertEqual(watcher.stops, 0)
+        XCTAssertTrue(sut.availability.appSwitching)
+        XCTAssertTrue(sut.availability.learningByDwell)
+    }
+
+    func testInputMonitoringOnlyStartsListenOnly() {
+        make(accessibility: .denied, inputMonitoring: .granted)
+        XCTAssertEqual(watcher.starts, [.listenOnly])
+        XCTAssertTrue(sut.availability.doubleShiftToggleOnly)
+    }
+
+    func testFrontmostAppRuleAppliesAtLaunch() {
+        var p = Preferences()
+        p.rules = [.app(notes, IDs.hebrew)]
+        make(p, start: false)
+        monitor.emitOnStart = Context(bundleID: notes, pid: 10, generation: 1)
+        sut.start()
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+    }
+
+    func testStopStopsEverything() {
+        make()
+        sut.stop()
+        XCTAssertEqual(watcher.stops, 1)
+        XCTAssertEqual(monitor.stopCount, 1)
+        XCTAssertEqual(permissions.stopCount, 1)
+        XCTAssertEqual(conflicts.stopCount, 1)
+        XCTAssertEqual(sut.policy.achieved, .off)
+        sut.stop()
+        XCTAssertEqual(watcher.stops, 1)
+    }
+
+    // MARK: - Fan-out
+
+    func testContextChangeFansOut() {
+        make()
+        watcher.clear()
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.calls, [.perform(.reset(.contextChange)), .checkSecureInput])
+        XCTAssertGreaterThan(displayChanges, 0)
+    }
+
+    func testInputSourceChangesFanOut() {
+        make()
+        watcher.clear()
+        sut.inputSourceDidChange(.ours(IDs.hebrew))
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))
+        XCTAssertEqual(watcher.calls, [.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: true)),
+                                       .perform(.inputSourceChanged(to: IDs.abc, isOurs: false))])
+        XCTAssertEqual(conflicts.externalSwitches, 1)
+    }
+
+    func testRuleSwitchReachesTheTapAsOurs() {
+        var p = Preferences()
+        p.rules = [.app(notes, IDs.hebrew)]
+        make(p)
+        monitor.activate(notes, pid: 10)
+        sut.inputSourceDidChange(.ours(IDs.hebrew))   // the notification of our own select
+        XCTAssertEqual(conflicts.ourSwitches, 1)
+        XCTAssertEqual(conflicts.externalSwitches, 0)
+        XCTAssertTrue(watcher.calls.contains(.perform(.inputSourceChanged(to: IDs.hebrew, isOurs: true))))
+    }
+
+    func testWordBoundariesReachTheLearner() {
+        make()
+        monitor.activate(notes, pid: 10)
+        clock.advance(byMilliseconds: 600)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        sut.keySignal(.wordBoundary)
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(store.prefs.rules.first?.scope, .app(bundleID: notes))
+    }
+
+    func testConflictsChangeUpdatesTheLearningFlag() {
+        make()
+        XCTAssertTrue(sut.switching.learner.learningEnabled)
+        conflicts.setPerDocument(true)
+        XCTAssertFalse(sut.switching.learner.learningEnabled)
+        conflicts.setPerDocument(false)
+        XCTAssertTrue(sut.switching.learner.learningEnabled)
+    }
+
+    // MARK: - Tap mode (§12 W7)
+
+    func testGrantChangeRetriesOnlyWhenItCanHelp() {
+        make(accessibility: .notDetermined)
+        XCTAssertTrue(watcher.starts.isEmpty)
+        permissions.grant(accessibility: .granted)
+        XCTAssertEqual(watcher.starts, [.active])
+        permissions.grant(accessibility: .granted, inputMonitoring: .granted)
+        XCTAssertEqual(watcher.starts, [.active], "already active: no restart")
+    }
+
+    func testFailedStartIsRetriedOnTheNextGrantChangeOnly() {
+        make(accessibility: .denied, inputMonitoring: .granted, start: false)
+        watcher.startAnswer = .off       // Input Monitoring usually needs a relaunch
+        permissions.statusOnStart = PermissionStatus(grants: PermissionGrants(accessibility: .denied,
+                                                                             inputMonitoring: .granted),
+                                                     inputMonitoringNeedsRelaunch: true)
+        sut.start()
+        XCTAssertEqual(watcher.starts, [.listenOnly])
+        XCTAssertTrue(sut.menuState.showsQuitAndReopen)
+        sut.preferencesDidChange()
+        sut.keyWatcherStatusDidChange(KeyWatcherStatus())
+        XCTAssertEqual(watcher.starts, [.listenOnly], "no retry without a grant change")
+        watcher.startAnswer = nil
+        permissions.grant(accessibility: .granted, inputMonitoring: .granted)
+        XCTAssertEqual(watcher.starts, [.listenOnly, .active])
+        XCTAssertFalse(sut.menuState.showsQuitAndReopen)
+    }
+
+    func testRevokeStopsTheTap() {
+        make()
+        permissions.grant(accessibility: .denied)
+        XCTAssertEqual(watcher.stops, 1)
+        XCTAssertEqual(sut.policy.achieved, .off)
+        XCTAssertFalse(sut.availability.doubleShiftConvert)
+    }
+
+    func testWatchdogDowngradeIsNotFoughtButShown() {
+        make()
+        var status = KeyWatcherStatus()
+        status.health.mode = .listenOnly
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        XCTAssertEqual(watcher.starts, [.active])
+        XCTAssertEqual(sut.menuState.tapMode, .listenOnly)
+        XCTAssertTrue(sut.menuState.degradedByWatchdog)
+        XCTAssertFalse(sut.availability.doubleShiftConvert)
+    }
+
+    func testTurningAllTypingFeaturesOffStopsTheTap() {
+        make()
+        store.update {
+            $0.convert.doubleShiftEnabled = false
+            $0.general.learnFromManualSwitches = false
+        }
+        sut.preferencesDidChange()
+        XCTAssertEqual(watcher.stops, 1)
+    }
+
+    // MARK: - Secure Input (P2-45) → dwell
+
+    func testSecureInputMakesLearningUseTheDwell() {
+        make()
+        XCTAssertTrue(sut.switching.learner.keyboardTapAvailable)
+        var status = KeyWatcherStatus()
+        status.health.mode = .active
+        status.secureInputOn = true
+        sut.keyWatcherStatusDidChange(status)
+        XCTAssertFalse(sut.availability.learningWithWords)
+        XCTAssertFalse(sut.switching.learner.keyboardTapAvailable)
+        XCTAssertTrue(sut.menuState.secureInputOn)
+        XCTAssertEqual(watcher.starts, [.active], "Secure Input never restarts the tap")
+    }
+
+    func testDwellTickerRunsOnlyWhileACandidateWaits() {
+        make(accessibility: .notDetermined)
+        monitor.activate(notes, pid: 10)
+        XCTAssertFalse(ticker.isRunning)
+        clock.advance(byMilliseconds: 600)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        XCTAssertTrue(ticker.isRunning)
+        clock.advance(bySeconds: 4)
+        ticker.fire()
+        XCTAssertEqual(store.prefs.rules.count, 1)
+        XCTAssertFalse(ticker.isRunning)
+        XCTAssertEqual(ticker.startCount, 1)
+    }
+
+    // MARK: - Preferences → config (P2-50)
+
+    func testConfigIsPushedOnlyWhenItChanges() {
+        make()
+        watcher.clear()
+        store.update { $0.rules = [.app(self.notes, IDs.hebrew)] }
+        sut.preferencesDidChange()
+        XCTAssertTrue(watcher.configs.isEmpty, "rules don't touch the tap")
+        store.update { $0.convert.doubleShiftWindowMs = 450 }
+        sut.preferencesDidChange()
+        sut.preferencesDidChange()
+        XCTAssertEqual(watcher.configs.count, 1)
+        XCTAssertEqual(watcher.configs.first?.doubleShift.windowNanos, 450_000_000)
+        XCTAssertTrue(watcher.starts.isEmpty, "a config change never restarts the tap")
+    }
+
+    func testPreferencesAreObserved() async {
+        make()
+        watcher.clear()
+        store.update { $0.convert.doubleShiftSides = .either }
+        for _ in 0..<50 where watcher.configs.isEmpty { await Task.yield() }
+        XCTAssertEqual(watcher.configs.map(\.doubleShift.sides), [.either])
+        store.update { $0.convert.doubleShiftSides = .leftOnly }
+        for _ in 0..<50 where watcher.configs.count < 2 { await Task.yield() }
+        XCTAssertEqual(watcher.configs.map(\.doubleShift.sides), [.either, .leftOnly], "observation re-armed")
+    }
+
+    func testMethodHintsArePushedToTheConvertController() {
+        var p = Preferences()
+        p.apps["com.apple.Terminal"] = .init(replacementMethod: .terminal)
+        make(p, withConvert: true)
+        XCTAssertEqual(convert?.hints.last, ["com.apple.Terminal": .terminal])
+        store.update { $0.apps[self.notes] = .init(convertEnabled: false) }
+        sut.preferencesDidChange()
+        XCTAssertEqual(convert?.hints.last, ["com.apple.Terminal": .terminal, notes: .disabled])
+        XCTAssertEqual(convert?.hints.count, 2)
+    }
+
+    // MARK: - Double-Shift: every generation is finished
+
+    func testPlaceholderFinishesEveryGenerationAtOnce() {
+        make()
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 7))
+        sut.keySignal(.wordEnded(snapshot, gen: 8))
+        sut.keySignal(.undoCandidate(gen: 9))
+        XCTAssertEqual(watcher.finishes, [7, 8, 9])
+        XCTAssertEqual(sut.menuState.doubleShiftCount, 1)
+    }
+
+    func testDoubleShiftIsHandedToTheConvertControllerWithItsMode() {
+        make(withConvert: true)
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert)])
+        XCTAssertTrue(watcher.finishes.isEmpty, "the convert controller finishes it")
+
+        make(accessibility: .denied, inputMonitoring: .granted, withConvert: true)
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 2))
+        XCTAssertEqual(convert?.requests.map(\.mode), [.toggleOnly])
+    }
+
+    func testDoubleShiftIsFinishedWhenItMustNotRun() {
+        var p = Preferences()
+        p.apps[notes] = .init(convertEnabled: false)
+        make(p, withConvert: true)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))            // no context yet
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 2))            // convert off for Notes
+        monitor.activate("com.apple.TextEdit", pid: 11)
+        sut.kytkinDidBecomeActive()
+        sut.keySignal(.doubleShift(snapshot, gen: 3))            // typed in Kytkin's own window
+        sut.kytkinDidResignActive(frontmostPID: 11)
+        sut.setPaused(true)
+        sut.keySignal(.doubleShift(snapshot, gen: 4))            // paused (a late signal)
+        XCTAssertEqual(watcher.finishes, [1, 2, 3, 4])
+        XCTAssertEqual(convert?.requests, [])
+    }
+
+    // MARK: - Pause and menu
+
+    func testPauseStopsTheTapAndResumeStartsIt() {
+        make()
+        sut.setPaused(true)
+        XCTAssertEqual(watcher.stops, 1)
+        XCTAssertTrue(sut.menuState.paused)
+        XCTAssertFalse(sut.availability.appSwitching)
+        sut.setPaused(false)
+        XCTAssertEqual(watcher.starts, [.active, .active])
+        XCTAssertFalse(sut.menuState.paused)
+    }
+
+    func testMenuWillOpenRefreshesSilently() {
+        make()
+        sut.menuWillOpen()
+        XCTAssertEqual(conflicts.refreshCount, 1)
+        XCTAssertEqual(permissions.refreshCount, 1)
+    }
+
+    func testMenuPinAndForget() {
+        make()
+        monitor.activate(notes, pid: 10)
+        switcher.current = IDs.hebrew
+        sut.pinCurrent()
+        XCTAssertEqual(sut.menuState.currentRule?.resolution.matched?.origin, .pinned)
+        XCTAssertEqual(sut.menuState.currentRule?.resolution.target, IDs.hebrew)
+        sut.forgetCurrent()
+        XCTAssertNil(sut.menuState.currentRule?.resolution.matched)
+        XCTAssertTrue(store.prefs.rules.isEmpty)
+    }
+
+    func testMenuSelectIsOurs() {
+        make()
+        XCTAssertTrue(sut.selectFromMenu(IDs.hebrew))
+        XCTAssertEqual(conflicts.ourSwitches, 1)
+    }
+}

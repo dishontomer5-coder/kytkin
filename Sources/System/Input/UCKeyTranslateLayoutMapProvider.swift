@@ -9,20 +9,15 @@ import Foundation
 @MainActor final class UCKeyTranslateLayoutMapProvider: LayoutMapProviding {
     private var cache: [InputSourceID: LayoutMap] = [:]
     private var cachedKbdType: Int?
-    nonisolated(unsafe) private var observer: (any NSObjectProtocol)?
+    /// P2-43: the sources-changed notification arrives through `DistributedNotificationRelay` (`.deliverImmediately`),
+    /// like the switcher's, so an inactive menu-bar app isn't sent it late. The relay unregisters itself in its deinit.
+    private var relay: DistributedNotificationRelay?
 
     init() {
         // P2-6: rebuild when layouts are added, removed, enabled or disabled (001 §2.2).
-        observer = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name(kTISNotifyEnabledKeyboardInputSourcesChanged as String),
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.invalidate() }
+        relay = DistributedNotificationRelay(name: kTISNotifyEnabledKeyboardInputSourcesChanged as String) {
+            [weak self] in self?.invalidate()
         }
-    }
-
-    deinit {
-        if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
     }
 
     func invalidate() { cache.removeAll() }
