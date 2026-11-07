@@ -4,6 +4,7 @@
 //
 // Fan-out (001 §2.2, §3):
 //   context change      → SwitchController (rule + learner), KeyWatcher `.reset(.contextChange)` + `checkSecureInputNow()` (P2-45)
+//   Kytkin active/resign → SwitchController (P2-39), KeyWatcher `.reset(.contextChange)` (+ Secure Input check on resign)
 //   input-source change → SwitchController (learner / fights / re-assert), KeyWatcher `.inputSourceChanged`
 //   permission change   → FeatureAvailability + TapModePolicy (retry only on a real change, §12 W7)
 //   conflicts change    → the learning flag (P2-38)
@@ -145,13 +146,20 @@ import Observation
         afterEvent()
     }
 
+    /// P2-20 QA: ContextMonitor ignores Kytkin, so no `.contextChange` reset happens when Kytkin's own window comes
+    /// to the front or goes away. Without these resets the word buffer would carry the previous app's word into
+    /// Settings, and (worse) words typed in Settings back into that app when the user returns with ⌘Tab (a
+    /// duplicate activation, so no new Context): a later double-Shift there would backspace over the wrong text.
     func kytkinDidBecomeActive() {
         switching.kytkinDidBecomeActive()
+        keyWatcher.perform(.reset(.contextChange))
         afterEvent()
     }
 
     func kytkinDidResignActive(frontmostPID: Int32?) {
         switching.kytkinDidResignActive(frontmostPID: frontmostPID)
+        keyWatcher.perform(.reset(.contextChange))
+        keyWatcher.checkSecureInputNow()      // P2-45: like any other app change
         afterEvent()
     }
 

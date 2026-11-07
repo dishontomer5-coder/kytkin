@@ -349,4 +349,93 @@ final class AppControllerTests: XCTestCase {
         XCTAssertTrue(sut.selectFromMenu(IDs.hebrew))
         XCTAssertEqual(conflicts.ourSwitches, 1)
     }
+
+    // MARK: - P2-20 QA
+
+    /// Kytkin's own window is not a Context, so the root must reset the word buffer itself: otherwise a word typed in
+    /// Settings would still be in the buffer after ⌘Tab back to the same app (no new Context) and a double-Shift there
+    /// would replace the wrong text once P2-21 converts.
+    func testOwnWindowActivationAndResignResetTheWordBuffer() {
+        make()
+        monitor.activate(notes, pid: 10)
+        watcher.clear()
+        sut.kytkinDidBecomeActive()
+        XCTAssertEqual(watcher.calls, [.perform(.reset(.contextChange))])
+        watcher.clear()
+        sut.kytkinDidResignActive(frontmostPID: 10)
+        XCTAssertEqual(watcher.calls, [.perform(.reset(.contextChange)), .checkSecureInput])
+        XCTAssertTrue(watcher.starts.isEmpty, "never a tap restart")
+    }
+
+    /// `start` blocks main up to 1–2 s: a burst of app changes, status reports, menu opens, preference writes and
+    /// permission callbacks that don't change what is wanted must never call it again.
+    func testNoTapStartOrStopInABurstOfEvents() {
+        make()
+        var status = KeyWatcherStatus()
+        status.health.mode = .active
+        for i in 0..<200 {
+            monitor.activate(i.isMultiple(of: 2) ? notes : "com.apple.Terminal", pid: Int32(10 + i % 2))
+            sut.keyWatcherStatusDidChange(status)
+            sut.menuWillOpen()
+            sut.preferencesDidChange()
+            permissions.grant(accessibility: .granted)   // same grants (the real manager wouldn't even call back)
+            sut.keySignal(.wordBoundary)
+            sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+            clock.advance(byMilliseconds: 10)
+        }
+        XCTAssertEqual(watcher.starts, [.active])
+        XCTAssertEqual(watcher.stops, 0)
+    }
+
+    /// One start per real change of the desired mode (Accessibility revoked with Input Monitoring kept, and back).
+    func testEachDesiredModeChangeStartsOnce() {
+        make(accessibility: .granted, inputMonitoring: .granted)
+        permissions.grant(accessibility: .denied, inputMonitoring: .granted)
+        permissions.grant(accessibility: .denied, inputMonitoring: .granted)
+        permissions.grant(accessibility: .granted, inputMonitoring: .granted)
+        XCTAssertEqual(watcher.starts, [.active, .listenOnly, .active])
+        XCTAssertEqual(watcher.stops, 0)
+    }
+
+    /// Auto-fix is P4: even with `autoFix.enabled` on in the file it is off end to end (no Space hold-back), and a
+    /// `.wordEnded` / `.undoCandidate` that still arrived is finished at once, never handed on.
+    func testAutoFixStaysOffEndToEnd() {
+        var p = Preferences()
+        p.autoFix.enabled = true
+        make(p, withConvert: true)
+        XCTAssertFalse(AppController.initialProcessorConfig(store).autoFixEnabled)
+        XCTAssertFalse(watcher.configs.isEmpty)
+        XCTAssertTrue(watcher.configs.allSatisfy { !$0.autoFixEnabled })
+        XCTAssertFalse(sut.availability.autoFix)
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.wordEnded(snapshot, gen: 3))
+        sut.keySignal(.undoCandidate(gen: 4))
+        XCTAssertEqual(watcher.finishes, [3, 4])
+        XCTAssertEqual(convert?.requests, [])
+    }
+
+    /// Pause, per-document input and Kytkin's own window are session state: nothing reaches the preferences.
+    func testSessionOnlyStateIsNeverWritten() {
+        var p = Preferences()
+        p.rules = [.app(notes, IDs.hebrew)]
+        make(p)
+        let before = store.prefs
+        sut.setPaused(true)
+        conflicts.setPerDocument(true)
+        sut.kytkinDidBecomeActive()
+        sut.kytkinDidResignActive(frontmostPID: nil)
+        sut.setPaused(false)
+        conflicts.setPerDocument(false)
+        XCTAssertEqual(store.prefs, before)
+    }
+
+    /// A signal that was already queued on main when the app stopped is still finished, and nothing restarts.
+    func testSignalAfterStopIsStillFinished() {
+        make()
+        monitor.activate(notes, pid: 10)
+        sut.stop()
+        sut.keySignal(.doubleShift(snapshot, gen: 5))
+        XCTAssertEqual(watcher.finishes, [5])
+        XCTAssertEqual(watcher.starts, [.active])
+    }
 }

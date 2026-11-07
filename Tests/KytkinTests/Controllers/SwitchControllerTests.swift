@@ -368,4 +368,68 @@ final class SwitchControllerTests: XCTestCase {
         XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
         XCTAssertNotNil(sut.learner.pending)
     }
+
+    // MARK: - P2-20 QA
+
+    func testNoReassertWhilePaused() {
+        make(prefs(rules: [.app(notes, IDs.hebrew)]))
+        monitor.activate(notes, pid: 10)
+        sut.setPaused(true)
+        clock.advance(byMilliseconds: 50)
+        switcher.current = IDs.abc
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew], "paused: no fight back")
+    }
+
+    /// The resign re-apply (P2-39) is a new rule switch in the same Context; together with the first one there is
+    /// still at most one re-assert for that app change. A new app change gets its own single re-assert.
+    func testAtMostOneReassertPerAppChangeAcrossResignReapply() {
+        make(prefs(rules: [.app(notes, IDs.hebrew)]))
+        monitor.activate(notes, pid: 10)
+        clock.advance(byMilliseconds: 50)
+        switcher.current = IDs.abc
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))   // re-assert
+        sut.kytkinDidBecomeActive()
+        switcher.current = IDs.abc
+        sut.kytkinDidResignActive(frontmostPID: 10)                              // re-apply
+        clock.advance(byMilliseconds: 50)
+        switcher.current = IDs.abc
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew, IDs.hebrew, IDs.hebrew], "no second re-assert")
+        monitor.activate(terminal, pid: 11)
+        monitor.activate(notes, pid: 10)
+        clock.advance(byMilliseconds: 50)
+        switcher.current = IDs.abc
+        sut.inputSourceDidChange(.external(IDs.abc, atNanos: clock.nowNanos))
+        XCTAssertEqual(switcher.selectedIDs.count, 5)
+    }
+
+    /// Learning off (Settings) or Kytkin disabled: a manual switch never becomes a rule, by words or by dwell.
+    func testNothingLearnedWhenLearningOrKytkinIsOff() {
+        for setting in 0..<2 {
+            var p = Preferences()
+            if setting == 0 { p.general.learnFromManualSwitches = false } else { p.general.enabled = false }
+            make(p, tap: false)
+            monitor.activate(notes, pid: 10)
+            userSwitch(to: IDs.hebrew)
+            clock.advance(bySeconds: 5)
+            sut.tick()
+            sut.wordBoundary(); sut.wordBoundary()
+            XCTAssertTrue(store.prefs.rules.isEmpty, "setting \(setting)")
+            XCTAssertTrue(switcher.selects.isEmpty)
+        }
+    }
+
+    /// A rule for a source that is no longer enabled: the switcher refuses, nothing counts as ours, and no re-assert
+    /// follows (it is tried again only on the next app change).
+    func testRuleForADisabledSourceIsTriedOncePerAppChange() {
+        make(prefs(rules: [.app(notes, IDs.russian)]))
+        switcher.selectSucceeds = false
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.russian])
+        XCTAssertEqual(conflicts.ourSwitches, 0)
+        clock.advance(byMilliseconds: 50)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        XCTAssertEqual(switcher.selectedIDs, [IDs.russian])
+    }
 }
