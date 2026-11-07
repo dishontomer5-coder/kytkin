@@ -23,7 +23,7 @@ final class AppControllerTests: XCTestCase {
     /// Wires the fakes the way AppEnvironment wires the real adapters.
     private func make(_ prefs: Preferences = Preferences(), accessibility: PermissionState = .granted,
                       inputMonitoring: PermissionState = .notDetermined, withConvert: Bool = false,
-                      start: Bool = true) {
+                      store customStore: PreferencesStore? = nil, start: Bool = true) {
         clock = FakeClock(nowNanos: 1_000_000_000)
         switcher = FakeSwitcher()
         monitor = FakeContextMonitor()
@@ -34,7 +34,7 @@ final class AppControllerTests: XCTestCase {
         watcher = FakeKeyWatcher()
         ticker = FakeTicker()
         convert = withConvert ? FakeConvert() : nil
-        store = makeStore(prefs, clock: clock)
+        store = customStore ?? makeStore(prefs, clock: clock)
         sut = AppController(switcher: switcher, context: monitor, store: store, permissions: permissions,
                             conflicts: conflicts, keyWatcher: watcher, ticker: ticker, convert: convert, clock: clock)
         switcher.onChange = { [unowned self] in self.sut.inputSourceDidChange($0) }
@@ -550,5 +550,138 @@ final class AppControllerTests: XCTestCase {
         sut.setPaused(false)
         sut.stop()
         XCTAssertFalse(sut.switchAfterConvert(to: IDs.hebrew, keepsBuffer: false), "stopped: no switch")
+    }
+
+    // MARK: - P2-22: menu state, restart, display refreshes
+
+    func testMenuStateCarriesGrantsEnabledAndConflicts() {
+        make(accessibility: .denied, inputMonitoring: .granted)
+        conflicts.conflicts = Conflicts(runningSwitchers: ["FlicKey"], perDocumentInputEnabled: false)
+        var state = sut.menuState
+        XCTAssertEqual(state.accessibility, .denied)
+        XCTAssertEqual(state.inputMonitoring, .granted)
+        XCTAssertTrue(state.enabled)
+        XCTAssertEqual(state.conflicts.runningSwitchers, ["FlicKey"])
+        XCTAssertEqual(state.store, MenuState.StoreFlags())
+        store.update { $0.general.enabled = false }
+        sut.preferencesDidChange()
+        state = sut.menuState
+        XCTAssertFalse(state.enabled)
+        XCTAssertEqual(MenuWarning.list(for: state).first, .kytkinOff)
+    }
+
+    func testMenuStateCarriesTheStoreFlags() {
+        let url = URL(fileURLWithPath: "/tmp/kytkin-tests-never-written/preferences.json")
+        let fs = InMemoryPreferencesFileSystem()
+        fs[url] = Data("{}".utf8)
+        fs.failReads = true
+        let clock = FakeClock(nowNanos: 1)
+        make(store: PreferencesStore(fileURL: url, clock: clock, fileSystem: fs))
+        XCTAssertEqual(sut.menuState.store.loadIssue, .unreadable)
+        XCTAssertTrue(sut.menuState.store.isReadOnly)
+        XCTAssertEqual(MenuWarning.list(for: sut.menuState), [.settingsReadOnly(newerVersion: false)])
+    }
+
+    func testRestartKeyboardAfterAWatchdogDowngrade() {
+        make()
+        XCTAssertFalse(sut.menuState.canRestartKeyboard)
+        sut.restartKeyboard()
+        XCTAssertEqual(watcher.starts, [.active], "not degraded: nothing to restart")
+
+        var status = KeyWatcherStatus()
+        status.health.mode = .listenOnly
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        XCTAssertTrue(sut.menuState.canRestartKeyboard)
+        sut.restartKeyboard()
+        XCTAssertEqual(watcher.starts, [.active, .active])
+        XCTAssertEqual(sut.policy.achieved, .active)
+        XCTAssertTrue(sut.availability.doubleShiftConvert)
+
+        // The real KeyWatcher clears the flag on a user-initiated start and reports it.
+        var cleared = KeyWatcherStatus()
+        cleared.health.mode = .active
+        sut.keyWatcherStatusDidChange(cleared)
+        XCTAssertFalse(sut.menuState.canRestartKeyboard)
+        sut.preferencesDidChange()
+        permissions.grant(accessibility: .granted)
+        XCTAssertEqual(watcher.starts, [.active, .active], "the restart isn't repeated by later events")
+    }
+
+    func testRestartKeyboardDoesNothingWhilePausedOrStopped() {
+        make()
+        var status = KeyWatcherStatus()
+        status.health.mode = .off
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        sut.setPaused(true)
+        XCTAssertFalse(sut.menuState.canRestartKeyboard, "paused: nothing wants the keyboard")
+        sut.restartKeyboard()
+        XCTAssertEqual(watcher.starts, [.active])
+        sut.setPaused(false)          // resume starts it anyway
+        XCTAssertEqual(watcher.starts, [.active, .active])
+        sut.keyWatcherStatusDidChange(status)
+        sut.stop()
+        watcher.clear()
+        sut.restartKeyboard()
+        XCTAssertTrue(watcher.starts.isEmpty, "stopped: never")
+    }
+
+    func testRestartKeyboardWhenListenOnlyWasLowered() {
+        make(accessibility: .denied, inputMonitoring: .granted)
+        var status = KeyWatcherStatus()
+        status.health.mode = .off
+        status.degradedByWatchdog = true
+        sut.keyWatcherStatusDidChange(status)
+        sut.restartKeyboard()
+        XCTAssertEqual(watcher.starts, [.listenOnly, .listenOnly])
+    }
+
+    /// P2-52 item 4: key signals never refresh the label (the menu reads everything when it opens).
+    func testKeySignalsDoNotRefreshTheDisplay() {
+        make()
+        monitor.activate(notes, pid: 10)
+        displayChanges = 0
+        for gen in UInt64(1)...50 {
+            sut.keySignal(.wordBoundary)
+            sut.keySignal(.bufferInvalidated)
+            sut.keySignal(.doubleShift(snapshot, gen: gen))
+        }
+        XCTAssertEqual(displayChanges, 0)
+        sut.inputSourceDidChange(.external(IDs.hebrew, atNanos: clock.nowNanos))
+        XCTAssertEqual(displayChanges, 1, "a language change does")
+    }
+
+    func testMenuActionsRefreshTheDisplay() {
+        make()
+        monitor.activate(notes, pid: 10)
+        displayChanges = 0
+        sut.pinCurrent()
+        XCTAssertGreaterThan(displayChanges, 0)
+        displayChanges = 0
+        sut.setPaused(true)
+        XCTAssertGreaterThan(displayChanges, 0)
+    }
+
+    /// P2-22 QA: a debounced save failing (or recovering) changes the menu's warnings and the label's dot, so it
+    /// refreshes the display without waiting for the next app switch.
+    func testASaveFailureRefreshesTheDisplay() async {
+        let url = URL(fileURLWithPath: "/tmp/kytkin-tests-never-written/preferences.json")
+        let fs = InMemoryPreferencesFileSystem()
+        let clock = FakeClock(nowNanos: 1)
+        make(store: PreferencesStore(fileURL: url, clock: clock, fileSystem: fs))
+        fs.failWrites = true
+        store.update { $0.convert.doubleShiftWindowMs = 450 }
+        for _ in 0..<50 where watcher.configs.isEmpty { await Task.yield() }
+        XCTAssertFalse(watcher.configs.isEmpty, "the preference change was observed")
+        for _ in 0..<50 { await Task.yield() }
+        displayChanges = 0
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(displayChanges, 0, "settled")
+        store.flush()
+        XCTAssertTrue(store.lastSaveFailed)
+        for _ in 0..<50 where displayChanges == 0 { await Task.yield() }
+        XCTAssertGreaterThan(displayChanges, 0, "the failed save refreshed the label")
+        XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
     }
 }

@@ -16,6 +16,8 @@
 //   KeyWatcher signal   → word boundary → learner; double-Shift → ConvertControlling or finished at once
 //   after-convert switch ← ConvertController (P2-21, via the root's hook) → SwitchController.selectAfterConvert
 //   preferences change  → rules, learning flag, `.updateConfig` (only when it changed, clamped), method hints, tap mode
+//   menu (P2-22)        → MenuState for MenuModel; "Restart Keyboard Features" → TapModePolicy.restartAction
+// The label/menu refresh (`onDisplayChange`) runs after every event except key signals (P2-52 item 4).
 // FeatureSettings come from the preferences plus the session-only Pause (PreferencesMapping).
 
 import Foundation
@@ -179,7 +181,7 @@ import Observation
         case let .wordEnded(_, gen), let .undoCandidate(gen):
             finish(gen)   // auto-fix is P4: nothing may keep these keys waiting
         }
-        afterEvent()
+        afterEvent(refreshDisplay: false)
     }
 
     /// P2-20 QA: ContextMonitor ignores Kytkin, so no `.contextChange` reset happens when Kytkin's own window comes
@@ -240,13 +242,20 @@ import Observation
     // MARK: - MenuControlling
 
     var menuState: MenuState {
-        MenuState(currentRule: switching.currentRule, paused: switching.paused, tapMode: policy.achieved,
-                  secureInputOn: keyWatcherStatus.secureInputOn,
-                  degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
-                  tapReEnableCount: keyWatcherStatus.health.reEnableCount, doubleShiftCount: doubleShiftCount,
-                  conflicts: conflicts.conflicts,
-                  showsQuitAndReopen: policy.showsQuitAndReopen(
-                    needsRelaunch: permissions.status.inputMonitoringNeedsRelaunch))
+        let status = permissions.status
+        return MenuState(
+            currentRule: switching.currentRule, paused: switching.paused, enabled: store.prefs.general.enabled,
+            tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
+            degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
+            canRestartKeyboard: keyWatcherStatus.degradedByWatchdog && isStarted
+                && policy.restartAction(desired: desiredTapMode()) != nil,
+            tapReEnableCount: keyWatcherStatus.health.reEnableCount, doubleShiftCount: doubleShiftCount,
+            conflicts: conflicts.conflicts,
+            showsQuitAndReopen: policy.showsQuitAndReopen(needsRelaunch: status.inputMonitoringNeedsRelaunch),
+            accessibility: status.grants.accessibility, inputMonitoring: status.grants.inputMonitoring,
+            store: MenuState.StoreFlags(loadIssue: store.loadIssue, isReadOnly: store.isReadOnly,
+                                        lastSaveFailed: store.lastSaveFailed, loadWasLossy: store.loadWasLossy,
+                                        originalBackupURL: store.originalBackupURL))
     }
 
     func menuWillOpen() {
@@ -274,6 +283,16 @@ import Observation
 
     @discardableResult func selectFromMenu(_ id: InputSourceID) -> Bool {
         switching.selectFromMenu(id)
+    }
+
+    /// P2-22: "Restart Keyboard Features" (a user click, shown only after a watchdog downgrade): start the desired
+    /// mode again through the policy. A user-initiated start clears the watchdog's history (KeyTapEngine).
+    func restartKeyboard() {
+        guard isStarted, keyWatcherStatus.degradedByWatchdog,
+              let action = policy.restartAction(desired: desiredTapMode()) else { return }
+        if case .start(let mode) = action { policy.restarting(mode) }
+        apply(action)
+        recompute(grantsChanged: false)
     }
 
     /// P2-21: ConvertController's switch after a convert or toggle (flow (c) step 8), hopped onto main by the root.
@@ -353,14 +372,7 @@ import Observation
         let settings = PreferencesMapping.featureSettings(store.prefs, paused: switching.paused)
         let desired = FeatureAvailability.desiredTapMode(grants: grants, settings: settings)
         if isStarted, let action = policy.decide(desired: desired, grantsChanged: grantsChanged) {
-            switch action {
-            case .start(let mode):
-                // Blocks main ≤ 1 s (≈ 2 s right after a timed-out stop, P2-50); only on a real change.
-                policy.started(achieved: keyWatcher.start(mode: mode))
-            case .stop:
-                keyWatcher.stop()
-                policy.stopped()   // a timed-out stop is treated as `.off`
-            }
+            apply(action)
         }
         availability = FeatureAvailability.compute(grants: grants, tapMode: policy.achieved,
                                                    secureInput: keyWatcherStatus.secureInputOn, settings: settings)
@@ -368,20 +380,43 @@ import Observation
         afterEvent()
     }
 
-    private func afterEvent() {
+    private func apply(_ action: TapModePolicy.Action) {
+        switch action {
+        case .start(let mode):
+            // Blocks main ≤ 1 s (≈ 2 s right after a timed-out stop, P2-50); only on a real change or a user click.
+            policy.started(achieved: keyWatcher.start(mode: mode))
+        case .stop:
+            keyWatcher.stop()
+            policy.stopped()   // a timed-out stop is treated as `.off`
+        }
+    }
+
+    private func desiredTapMode() -> TapMode {
+        FeatureAvailability.desiredTapMode(
+            grants: permissions.status.grants,
+            settings: PreferencesMapping.featureSettings(store.prefs, paused: switching.paused))
+    }
+
+    /// `refreshDisplay: false` for key signals (P2-52 item 4): they never change the label (language, Pause,
+    /// warnings), and the menu reads everything fresh when it opens, so a refresh per word is wasted work.
+    private func afterEvent(refreshDisplay: Bool = true) {
         if switching.wantsTicks {
             if !ticker.isRunning { ticker.start { [weak self] in self?.tick() } }
         } else if ticker.isRunning {
             ticker.stop()
         }
-        onDisplayChange?()
+        if refreshDisplay { onDisplayChange?() }
     }
 
     /// Re-arms after every change: Observation reports once per registration, before the value changes.
+    /// P2-22 QA: also the file flags the menu warns about (a debounced save failing or recovering, the kept
+    /// original's URL), so the label's dot follows them without waiting for the next app switch.
     private func observePreferences() {
         guard isStarted else { return }
         withObservationTracking {
             _ = store.prefs
+            _ = store.lastSaveFailed
+            _ = store.originalBackupURL
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isStarted else { return }
