@@ -109,6 +109,7 @@ case "$ACTION" in
   test)
     # P2-4: Core import + logging lints run before the tests.
     ./scripts/lint.sh
+    ./scripts/lint.sh --self-test   # P3-6: the rules still catch a Logger( in a Browser/ folder, etc.
     if ! "${XCB[@]}" test >>"$LOG" 2>&1; then
       print_failure "Tests"
       exit 1
