@@ -57,6 +57,20 @@ struct DomainExtractor: Sendable {
         return suffixList.isKnownTopLevelDomain(host[host.index(after: dot)...])
     }
 
+    /// P3-6: The scheme the text states (lowercased), or nil when it has none. "host:port" ("localhost:8080",
+    /// "example.com:443/x") is not a scheme, exactly as `extract` reads it. SiteReader uses this to accept
+    /// scheme-less text only from a Gecko address bar (P3-4, 001 §14.3.6).
+    static func explicitScheme(of text: String) -> String? {
+        let s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let colon = s.firstIndex(of: ":"), isScheme(s[..<colon]) else { return nil }
+        let afterColon = s[s.index(after: colon)...]
+        if !afterColon.hasPrefix("//") {
+            let port = afterColon.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+            if !port.isEmpty, port.allSatisfy({ $0.isASCII && $0.isNumber }) { return nil }
+        }
+        return s[..<colon].lowercased()
+    }
+
     // MARK: - Parsing
 
     /// The authority part plus whether a scheme was present; nil when the scheme isn't http(s).
