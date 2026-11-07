@@ -621,4 +621,56 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertNotNil(x.focusInfo(timeout: 0.25), "a new replacement starts with a fresh latch")
         XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .done)
     }
+
+    // MARK: - QA P2-49: an unusable range falls back to the selected text
+
+    @TextActor func testTypeOverWithAnUnusableRangeRefusesWhenTheSelectedTextChanged() async {
+        // AX lies about (or won't give) the range, and the selection really changed: typing would insert twice.
+        let unusable: [(String, (FakeTextField) -> Void)] = [
+            ("garbage", { $0.reportedRange = TextRange(location: 6, length: 4_294_967_292) }),
+            ("negative", { $0.reportedRange = TextRange(location: -1, length: 4) }),
+            ("unsupported", { $0.selectedRangeError = .unsupported }),
+            ("noValue", { $0.selectedRangeError = .noValue }),
+            ("wrong type", { $0.selectedRangeError = .failed }),
+        ]
+        for (name, breakRange) in unusable {
+            for changed in [sel(10, 0), sel(6, 3), sel(0, 4)] {
+                let f = FakeTextField("hello akuo", selection: sel(6, 4))
+                let x = makeExecutor(f)
+                _ = x.focusInfo(timeout: 0.25)
+                f.selection = changed
+                breakRange(f)
+                XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable,
+                               "\(name) \(changed)")
+                XCTAssertTrue(poster.events.isEmpty, "\(name) \(changed)")
+            }
+            // The selection is still "akuo": typing goes ahead, as before P2-49.
+            let f = FakeTextField("hello akuo", selection: sel(6, 4))
+            let x = makeExecutor(f)
+            _ = x.focusInfo(timeout: 0.25)
+            breakRange(f)
+            XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .done, name)
+            XCTAssertEqual(poster.typed, "שלום", name)
+        }
+    }
+
+    @TextActor func testTypeOverWithAnUnusableRangeRefusesWhenTheSelectedTextCantBeRead() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        f.selectedRangeError = .unsupported
+        f.timeouts = [.selectedText]
+        XCTAssertEqual(x.perform(.typeOverSelection, old: "akuo", new: "שלום"), .unavailable)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testFocusedElementIsTheUnwrappedElementForTheUndoRecord() async {
+        let f = FakeTextField("hello akuo", selection: sel(6, 4))
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertTrue((x.focusedElement as? FakeTextField) === f, "LastRun compares the raw element, not the latch")
+        XCTAssertTrue(f.isSameElement(as: x.focusedElement!))
+        x.endReplacement()
+        XCTAssertNil(x.focusedElement)
+    }
 }

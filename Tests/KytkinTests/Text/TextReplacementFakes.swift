@@ -33,6 +33,8 @@ final class FakeTextField: AXTextElement {
     var writeBehavior = WriteBehavior.normal
     /// Reported instead of the real selection (R5: WebKit's garbage range).
     var reportedRange: TextRange?
+    /// QA P2-49: the selected-range read fails with this error (the selection itself is unchanged).
+    var selectedRangeError: AXAccessError?
     /// Reads of these attributes time out.
     var timeouts: Set<AXTextAttribute> = []
     /// P2-49 item 6: the subrole read answers this instead (e.g. `.failure(.failed)`: an error or a wrong type).
@@ -101,7 +103,9 @@ final class FakeTextField: AXTextElement {
 
     func range(_ a: AXTextAttribute) -> Result<TextRange, AXAccessError> {
         switch a {
-        case .selectedTextRange: return read(a) { reportedRange ?? selection }
+        case .selectedTextRange:
+            if let selectedRangeError { call(); reads.append(a); return .failure(selectedRangeError) }
+            return read(a) { reportedRange ?? selection }
         case .markedTextRange: return read(a) { markedRange }
         default: call(); return .failure(.unsupported)
         }

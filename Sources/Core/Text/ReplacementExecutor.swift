@@ -245,21 +245,29 @@ import Foundation
     /// P2-49 item 2: re-read the selected range right before typing over it. If it became a caret (an earlier
     /// step or the app dropped it) or its length changed, typing would insert `new` beside the text instead of
     /// replacing it: the text would appear twice. Refuse then. A range AX won't give (absent, unsupported, wrong
-    /// type) or reports implausibly (R5: WebKit's `(5, 4294967292)`) can't be checked, so typing goes ahead as
-    /// before (keys-only apps rely on it); a timeout (latched, item 5) or a vanished element refuses.
+    /// type) or reports implausibly (R5: WebKit's `(5, 4294967292)`) can't be checked, so the selected *text* must
+    /// still be exactly `old` instead (QA P2-49: the planner only types over a selection `focusInfo` read as text,
+    /// so that read works in these apps; a collapsed selection reads as ""). A timeout (latched, item 5) or a
+    /// vanished element refuses.
     private func selectionStillSpans(_ old: String) -> Bool {
         guard let el = element else { return false }
         switch el.range(.selectedTextRange) {
-        case .failure(let e): return !e.abortsFocusRead
+        case .failure(let e): return !e.abortsFocusRead && selectedTextIs(old, el)
         case .success(let r):
-            guard r.location >= 0, r.length >= 0 else { return true }   // implausible: can't tell
+            guard r.location >= 0, r.length >= 0 else { return selectedTextIs(old, el) }   // implausible
             switch el.integer(.numberOfCharacters) {
-            case .success(let n) where r.end > n: return true             // implausible: can't tell
+            case .success(let n) where r.end > n: return selectedTextIs(old, el)          // implausible
             case .failure(let e) where e.abortsFocusRead: return false
             default: break
             }
             return !r.isCaret && r.length == old.utf16.count
         }
+    }
+
+    /// The selected text reads back as exactly `old` (same scalars). Any failure = can't tell = no.
+    private func selectedTextIs(_ old: String, _ el: any AXTextElement) -> Bool {
+        guard case .success(let s) = el.string(.selectedText) else { return false }
+        return s.unicodeScalars.elementsEqual(old.unicodeScalars)
     }
 
     /// P2-49 item 3: keys go to whatever has focus, so before a key step the focused element must still be the

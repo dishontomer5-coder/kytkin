@@ -791,6 +791,26 @@ final class ReplacementChainTests: XCTestCase {
         }
     }
 
+    @TextActor func testSelectionThatChangedBehindAGarbageRangePostsNothing() async {
+        // QA P2-49: AX reports an implausible range (R5 WebKit) while the selection really collapsed: the type-over
+        // falls back to the selected text, which no longer matches, so nothing is typed (not "akuo" twice).
+        for steps in Self.writePlans where steps.contains(.typeOverSelection) {
+            poster = RecordingPoster()
+            let f = field(for: steps)
+            f.writeBehavior = .silentNoop
+            let x = executor(f)
+            let focus = x.focusInfo(timeout: 0.25)
+            f.selection = sel(10, 0)
+            f.reportedRange = sel(6, 4_294_967_292)
+            var caps = ReplacementCapabilities()
+            let out = ReplacementChain.run(.steps(steps), on: x, bundleID: app, old: focus?.selection,
+                                           convert: convert, capabilities: &caps)
+            XCTAssertFalse(out.succeeded, "\(steps)")
+            XCTAssertTrue(poster.events.isEmpty, "\(steps)")
+            XCTAssertEqual(f.text, "hello akuo world", "\(steps)")
+        }
+    }
+
     @TextActor func testHungAppCostsOneTimeoutAndPostsNothingOnEveryPlanShape() async {
         for steps in Self.writePlans {
             for behavior in [FakeTextField.WriteBehavior.timesOut, .writesThenTimesOut] {
