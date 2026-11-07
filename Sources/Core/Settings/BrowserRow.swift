@@ -9,10 +9,11 @@ struct BrowserRow: Identifiable, Equatable, Sendable {
         case openPermissions
     }
 
-    /// P3-7's slot: whether a "Use Automation" control belongs on this row.
+    /// P3-7: whether a "Use Automation" control belongs on this row, and its state.
     enum Automation: Equatable, Sendable {
-        /// Chromium / Safari family with an AppleScript dictionary: P3-7 puts the opt-in toggle here.
-        case available(AppleScriptDialect)
+        /// Chromium / Safari family with an AppleScript dictionary: the opt-in toggle, its state (Off / Allowed /
+        /// Denied / Not asked / Checking) and its button (Ask / Open System Settings), from `AutomationControlling`.
+        case available(BrowserAutomationState)
         /// No dictionary (Firefox family, Orion, other browsers): this line instead.
         case notAvailable(String)
     }
@@ -35,4 +36,12 @@ struct BrowserRow: Identifiable, Equatable, Sendable {
     let automation: Automation
 
     var isWorking: Bool { support == .works || support == .worksWithAutomation }
+
+    /// P3-7: the Automation state of an `.available` row; nil = no toggle on this row.
+    var automationState: BrowserAutomationState? {
+        if case .available(let state) = automation { state } else { nil }
+    }
+
+    /// P3-7: the line under the "Use Automation" toggle ("Off", "Allowed", "Denied. To allow it, …").
+    var automationStatusText: String? { automationState?.statusText(browserName: name) }
 }

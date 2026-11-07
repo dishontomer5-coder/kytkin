@@ -91,6 +91,14 @@ struct PermissionMonitor {
         return next
     }
 
+    /// P3-7: the Automation states per browser (from `AutomationPermissionTracker`). Kept here so the next `ingest`
+    /// carries them on. Returns the new status when it changed, else nil.
+    mutating func setAutomation(_ automation: [String: PermissionState]) -> PermissionStatus? {
+        guard automation != status.grants.automation else { return nil }
+        status.grants.automation = automation
+        return status
+    }
+
     private func state(_ granted: Bool, _ pane: PermissionPane) -> PermissionState {
         if granted { return .granted }
         return requested.contains(pane) ? .denied : .notDetermined

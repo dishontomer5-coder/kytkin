@@ -7,8 +7,10 @@
 // - "Use website rules" per browser (`browsers.siteRulesEnabled`, absent = on; stored only when off, so the file
 //   holds only real differences) and "Don't use website rules in private windows"
 //   (`browsers.ignorePrivateWindowsCompletely`; owner meaning: don't read the address, use the browser's own rule, D12).
-// - Automation (P3-7): each row says whether an Automation control belongs on it (`BrowserRow.Automation`). P3-7 owns
-//   the toggle, the permission state and the click-only prompt; nothing here asks for anything.
+// - Automation (P3-7): Chromium/Arc/Safari rows carry the "Use Automation" toggle and its state from
+//   `AutomationControlling` (AppEnvironment.automation); Gecko, Orion and other browsers say it isn't available. The
+//   toggle, "Ask" and "Open System Settings" are user clicks passed straight through (the prompt only from a click);
+//   `refresh()` asks for silent checks of the opted-in browsers listed (≤ 1 per 5 s per browser, never a prompt).
 // - Missing Public Suffix List (D11): a notice at the top, every status says so, and nothing else changes.
 // - No list of website rules here (D7): a count and "Show in Rules".
 // - Read-only preferences (§12 S1): every switch is disabled and the setters do nothing.
@@ -35,6 +37,8 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     @ObservationIgnored private let readInventory: @MainActor () -> BrowserInventorySnapshot
     @ObservationIgnored private let readSupport: @MainActor (String) -> BrowserSupport
     @ObservationIgnored private let ownBundleIDPrefix: String
+    /// P3-7: nil = no Automation controller (tests that don't test it): rows show the stored choice, never checked.
+    @ObservationIgnored private let automation: (any AutomationControlling)?
     let suffixListLoaded: Bool
 
     /// Read on `refresh()`.
@@ -44,8 +48,10 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
 
     init(store: PreferencesStore, appName: @escaping @MainActor (String) -> String?, suffixListLoaded: Bool,
          ownBundleIDPrefix: String, inventory: @escaping @MainActor () -> BrowserInventorySnapshot,
-         support: @escaping @MainActor (String) -> BrowserSupport) {
+         support: @escaping @MainActor (String) -> BrowserSupport,
+         automation: (any AutomationControlling)? = nil) {
         self.store = store
+        self.automation = automation
         self.appNames = AppDisplayNames(lookup: appName)
         self.suffixListLoaded = suffixListLoaded
         self.ownBundleIDPrefix = ownBundleIDPrefix
@@ -58,6 +64,14 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         let next = readInventory()
         if next != inventory { inventory = next }
         statusGeneration += 1
+        // P3-7: silent Automation checks (never a prompt) for the listed browsers the user turned it on for, so a
+        // grant or revoke made in System Settings shows here. The controller throttles them (≤ 1 per 5 s each).
+        if let automation {
+            let optedIn = store.prefs.browsers.appleEventsOptIn.filter(\.value).keys
+            let listed = Set(rows.map(\.bundleID))
+            let ids = optedIn.filter { listed.contains($0) }.sorted()
+            if !ids.isEmpty { automation.refreshAutomation(for: ids) }
+        }
     }
 
     var isEditable: Bool { !store.isReadOnly }
@@ -113,8 +127,8 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         let engine = known?.engine ?? .unknown
         var engineText = Self.engineTitle(engine)
         if let known, !known.verified { engineText += " · not yet tested" }
-        let automation: BrowserRow.Automation = if let dialect = known?.appleScript {
-            .available(dialect)
+        let automation: BrowserRow.Automation = if known?.appleScript != nil {
+            .available(automationState(for: bundleID))
         } else if engine == .gecko {
             .notAvailable("Automation isn't available for Firefox-based browsers.")
         } else {
@@ -144,8 +158,14 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         case .worksWithAutomation: return ("Works (using Automation)", nil, nil)
         case .notSeenYet: return ("Not checked yet", "Open \(name) and visit a website to check.", nil)
         case .cantRead:
-            if case .available = automation {
-                return ("Can't read this browser", "Kytkin can't see the page address. Automation can help.", nil)
+            // P3-24: point to the Automation toggle on this row when the browser supports it.
+            if case .available(let state) = automation {
+                let hint = switch state.status {
+                case .allowed: "Kytkin can't see the page address, even with Automation."
+                case .denied, .notAsked, .checking: "Kytkin can't see the page address. Allow Automation below."
+                default: "Kytkin can't see the page address. Turn on Automation below."
+                }
+                return ("Can't read this browser", hint, nil)
             }
             return ("Can't read this browser", "Kytkin can't see the page address here. Not supported yet.", nil)
         case .needsAccessibility:
@@ -184,6 +204,40 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     func setSiteRulesEnabled(_ on: Bool, for bundleID: String) {
         guard isEditable, !bundleID.isEmpty, siteRulesEnabled(bundleID) != on else { return }
         store.update { $0.browsers.siteRulesEnabled[bundleID] = on ? nil : false }
+    }
+
+    // MARK: - Automation (P3-7, 001 §14.7–14.8)
+
+    static let automationToggleTitle = "Use Automation"
+    static let automationExplanation = "When Kytkin can't read the page address, it can ask the browser for it. "
+        + "macOS asks you once."
+
+    /// The row's Automation state; without a controller, the stored choice only (never checked).
+    func automationState(for bundleID: String) -> BrowserAutomationState {
+        if let automation { return automation.automationState(for: bundleID) }
+        return BrowserAutomationState.make(bundleID: bundleID,
+                                           optedIn: store.prefs.browsers.appleEventsOptIn[bundleID] == true,
+                                           permission: nil, browserIsRunning: false)
+    }
+
+    /// User click only (the "Use Automation" toggle). Turning it on while the browser runs shows the macOS question.
+    func setAutomationEnabled(_ on: Bool, for bundleID: String) {
+        guard isEditable, !bundleID.isEmpty else { return }
+        let state = automationState(for: bundleID)
+        guard state.isAvailable, state.isOn != on else { return }   // a repeated set never asks again
+        automation?.setAutomationEnabled(on, for: bundleID)
+    }
+
+    /// User click only (the row's "Ask" button).
+    func askAutomation(for bundleID: String) {
+        let state = automationState(for: bundleID)
+        guard state.action == .ask, state.actionEnabled else { return }
+        automation?.askAutomation(for: bundleID)
+    }
+
+    /// User click only (the row's "Open System Settings" button).
+    func openAutomationSettings() {
+        automation?.openAutomationSettings()
     }
 
     var ignorePrivateWindows: Bool {

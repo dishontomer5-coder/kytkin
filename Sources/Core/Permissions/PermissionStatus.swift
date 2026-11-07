@@ -6,7 +6,7 @@
 import Foundation
 
 struct PermissionStatus: Sendable, Equatable {
-    /// `.unknown` until the first read. `automation` stays empty until Phase 3 (P3-7).
+    /// `.unknown` until the first read. P3-7: `automation` holds only the browsers checked so far (absent = unknown).
     var grants: PermissionGrants
     /// Input Monitoring was granted while Kytkin was running. A listen-only tap usually can't be created
     /// until Kytkin is relaunched (keyboard-event-tap.md §1), so the UI offers "Quit & Reopen".

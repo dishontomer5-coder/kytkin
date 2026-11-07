@@ -7,6 +7,9 @@
 //   browser came back to the front) → no re-attach, just a read; the current attachID is returned.
 // - A result is delivered only if it is for the current attach (pid and attachID). After `detach()` nothing more is
 //   delivered; ContextMonitor drops stale attachIDs again (§14.1).
+// - P3-7: the Apple Event gate opens for the attached pid only when its request carries a dialect (opted in ∧
+//   granted ∧ Kytkin on), and closes on detach, on main and at once, so a read already queued on the AX thread can't
+//   send to a browser that is no longer in front or while Kytkin is paused or off.
 // - `isolated deinit` detaches the engine, so a released watcher leaves no observer or timer on the AX thread.
 // Never logs (Browser/ folder, lint rule 2b).
 
@@ -28,6 +31,7 @@ import Foundation
     private let makeThread: () -> any AXThreadExecuting
     private let makeEngine: MakeEngine
     private let postToMain: PostToMain
+    private let appleEventGate: AppleEventSendGate?
     private var thread: (any AXThreadExecuting)?
     private var engine: (any BrowserWatchEngineDriving)?
     private var current: Current?
@@ -38,13 +42,16 @@ import Foundation
     ///   - makeEngine: builds the engine; `deliver` is the only way results reach main.
     ///   - postToMain: runs a block on main later; never synchronously.
     init(makeThread: @escaping () -> any AXThreadExecuting, makeEngine: @escaping MakeEngine,
-         postToMain: @escaping PostToMain = { block in DispatchQueue.main.async { block() } }) {
+         postToMain: @escaping PostToMain = { block in DispatchQueue.main.async { block() } },
+         appleEventGate: AppleEventSendGate? = nil) {
         self.makeThread = makeThread
+        self.appleEventGate = appleEventGate
         self.makeEngine = makeEngine
         self.postToMain = postToMain
     }
 
     isolated deinit {
+        appleEventGate?.allow(pid: nil)
         if let engine, let thread, current != nil {
             thread.async { engine.detach() }
         }
@@ -56,6 +63,7 @@ import Foundation
     @discardableResult
     func attach(pid: Int32, bundleID: String, request: BrowserWatchRequest) -> UInt64 {
         let (thread, engine) = started()
+        appleEventGate?.allow(pid: request.appleScript != nil ? pid : nil)   // P3-7
         if let current, current.pid == pid, current.request == request {
             thread.async { engine.reread() }
             return current.attachID
@@ -68,6 +76,7 @@ import Foundation
     }
 
     func detach() {
+        appleEventGate?.allow(pid: nil)   // P3-7: before anything else, even if nothing was attached
         guard current != nil else { return }
         current = nil
         guard let thread, let engine else { return }

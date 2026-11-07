@@ -97,8 +97,10 @@ final class BrowsersSettingsModelTests: XCTestCase {
         support = [zen: .cantRead, chrome: .cantRead]
         make()
         sut.refresh()
-        XCTAssertTrue(try XCTUnwrap(row(chrome).statusHint).contains("Automation can help"))
+        XCTAssertEqual(try row(chrome).statusHint, "Kytkin can't see the page address. Turn on Automation below.",
+                       "P3-24")
         XCTAssertTrue(try XCTUnwrap(row(zen).statusHint).contains("Not supported yet"))
+        XCTAssertFalse(try XCTUnwrap(row(zen).statusHint).contains("Automation"))
     }
 
     func testOffSaysWhy() throws {
@@ -130,9 +132,12 @@ final class BrowsersSettingsModelTests: XCTestCase {
                                              webLinkHandlers: [other])
         make()
         sut.refresh()
-        XCTAssertEqual(try row(chrome).automation, .available(.chromium))
-        XCTAssertEqual(try row(safari).automation, .available(.safari))
-        XCTAssertEqual(try row("company.thebrowser.Browser").automation, .available(.arc))
+        let off = BrowserAutomationState(status: .off, browserIsRunning: false)
+        XCTAssertEqual(try row(chrome).automation, .available(off))
+        XCTAssertEqual(try row(safari).automation, .available(off))
+        XCTAssertEqual(try row("company.thebrowser.Browser").automation, .available(off))
+        XCTAssertNil(try row(zen).automationState)
+        XCTAssertNil(try row("com.kagi.kagimacOS").automationState, "Orion: no toggle")
         XCTAssertEqual(try row(zen).automation, .notAvailable("Automation isn't available for Firefox-based browsers."),
                        "no Automation toggle for Gecko")
         XCTAssertEqual(try row("com.kagi.kagimacOS").automation,

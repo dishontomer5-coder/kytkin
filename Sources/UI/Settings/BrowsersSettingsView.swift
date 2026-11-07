@@ -1,6 +1,6 @@
 // P3-15: Settings → Browsers & Sites (001 §14.8). Layout only; `BrowsersSettingsModel` (Core) builds every row and
 // text and writes the switches, and is tested. Read-only preferences disable the switches (the notice says why).
-// The Automation control is P3-7's: `automationSlot` is where it goes.
+// P3-7: `automationSlot` holds the per-browser "Use Automation" toggle and its Ask / Open System Settings button.
 
 import SwiftUI
 
@@ -84,12 +84,34 @@ struct BrowsersSettingsView: View {
         .padding(.vertical, 2)
     }
 
-    /// P3-7 hook: the "Use Automation" opt-in (and its Allowed / Denied / Ask state) goes here for `.available` rows.
-    /// Until P3-7 lands, those rows show nothing; rows without an AppleScript dictionary say why there is none.
+    /// P3-7: the "Use Automation" opt-in, its state (Off / Allowed / Denied / Not asked / Checking) and its button
+    /// (Ask / Open System Settings). Every control here is a user click passed to the model. Rows without an
+    /// AppleScript dictionary (Zen, Firefox, Orion, other browsers) have no toggle and say why.
     @ViewBuilder private func automationSlot(_ row: BrowserRow) -> some View {
         switch row.automation {
-        case .available:
-            EmptyView()   // P3-7
+        case .available(let state):
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline) {
+                    Toggle(BrowsersSettingsModel.automationToggleTitle, isOn: Binding(
+                        get: { state.isOn },
+                        set: { model.setAutomationEnabled($0, for: row.bundleID) }))
+                        .disabled(!model.isEditable)
+                    Spacer()
+                    if let title = state.actionTitle() {
+                        Button(title) {
+                            switch state.action {
+                            case .ask: model.askAutomation(for: row.bundleID)
+                            case .openSystemSettings: model.openAutomationSettings()
+                            case nil: break
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled(!state.actionEnabled)
+                    }
+                }
+                if let text = row.automationStatusText { caption(text) }
+                if !state.isOn { caption(BrowsersSettingsModel.automationExplanation) }
+            }
         case .notAvailable(let text):
             caption(text)
         }

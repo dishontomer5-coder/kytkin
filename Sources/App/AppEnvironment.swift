@@ -16,6 +16,8 @@ import AppKit
     let layoutCatalog: LayoutMapCatalog
     let contextMonitor: ContextMonitor
     let permissions: PermissionsManager
+    /// P3-7: the Automation toggle per browser, for Settings → Browsers & Sites (P3-15 binds to it).
+    let automation: BrowserAutomationController
     let conflicts: ConflictDetector
     let keyWatcher: KeyWatcher
     let convert: ConvertDispatcher
@@ -47,8 +49,12 @@ import AppKit
         let extractor = DomainExtractor.bundled
         contextMonitor = ContextMonitor(source: WorkspaceAppActivationSource(),
                                         browsers: extractor.map { BrowserWatcher.live(extractor: $0) }, clock: clock)
+        // P3-7: silent Automation checks; the requester asks only from a click (BrowserAutomationController).
         permissions = PermissionsManager(probe: SystemPermissionProbe(), requester: SystemPermissionRequester(),
-                                         clock: clock)
+                                         clock: clock, automationProbe: SystemAutomationPermission(),
+                                         automationRequester: SystemAutomationRequester())
+        automation = BrowserAutomationController(store: store, permissions: permissions,
+                                                 isRunning: { SystemAutomationPermission.runningPid($0) != nil })
         conflicts = ConflictDetector(clock: clock)
 
         // KeyWatcher delivers on the main queue; the box lets its closures reach the controller built after it.
@@ -194,7 +200,8 @@ import AppKit
                 BrowserInventorySnapshot(installedCatalog: BrowserInventory.installedCatalogBrowsers(),
                                          webLinkHandlers: controller.refreshWebLinkHandlers())
             },
-            support: { controller.browserSupport(for: $0) })
+            support: { controller.browserSupport(for: $0) },
+            automation: automation)   // P3-7: the toggle, its state, Ask / Open System Settings; silent refresh
         let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                      runningApps: Self.runningApps,
                                      ownBundleID: Bundle.main.bundleIdentifier ?? "")
