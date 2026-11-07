@@ -16,10 +16,11 @@ enum RunCharClass: Sendable, Equatable {
     case hardStop
     /// `Character.isWhitespace` and not a hard stop (space, no-break space).
     case space
-    /// Only that side's layout types it.
+    /// Only that side's layout types it. P2-60 QA: on Apple Hebrew / ABC that includes non-letters (ASCII `'` `"` vs
+    /// `׳` `״`); `RunBeforeCaret` lets only letters pick the side or start a run.
     case strong(PairSide)
-    /// Both layouts type it: digits, most punctuation, and on HE/EN `,` `.` `;` `/` `'`. Direction-ambiguous,
-    /// converted per the run's side.
+    /// Both layouts type it: digits, most punctuation, and on Apple Hebrew / ABC `,` `.` `;` `/` (`'` only on
+    /// Hebrew-PC). Direction-ambiguous, converted per the run's side.
     case shared
     /// Neither layout types it and it is a letter (another script, e.g. Cyrillic in a HE/EN pair). Ends the run.
     case foreignLetter

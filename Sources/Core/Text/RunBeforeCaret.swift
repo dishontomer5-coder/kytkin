@@ -16,6 +16,11 @@
 //   5. The right end is the caret: trailing spaces and weak tokens are part of the run.
 //   6. Cap: if the run took in the window's first token, which starts at the window's first grapheme, and the start
 //      is not known, that token may be cut: drop it, trim again. No `strong(S)` left → `.tooLong`.
+// P2-60 QA: only **letters** decide the direction and start a run. A non-letter only one layout types (on Apple
+// Hebrew / ABC: ASCII `'` `"` `&` `\` `` ` `` vs `׳` `״` `₪`) still ends a run of the other side (the converter has no
+// key for it, so it would pass through and not round-trip), but it never picks the side and never starts a cut token.
+// Otherwise correct Hebrew such as `מס' 5 tkhk|` or `פרופ'|` (ASCII apostrophe, common in pasted text) had its `'`
+// converted to `,`.
 // Text is only held for the call; nothing is logged (B12).
 
 import Foundation
@@ -122,7 +127,7 @@ enum RunBeforeCaret {
     /// Step 2.
     private static func direction(_ tokens: [Token], _ g: [Grapheme]) -> PairSide? {
         for t in tokens.reversed() {
-            if let k = t.range.last(where: { isStrongOrForeignLetter(g[$0].cls) }) {
+            if let k = t.range.last(where: { isStrongOrForeignLetter(g[$0]) }) {
                 if case .strong(let side) = g[k].cls { return side }
                 return nil   // a foreign letter nearest the caret: another script
             }
@@ -135,11 +140,16 @@ enum RunBeforeCaret {
     private static func trim(from runStart: Int, cut: Token?, tokens: [Token], side: PairSide,
                              _ g: [Grapheme]) -> Int? {
         if let cut, cut.start == runStart,
-           let first = cut.range.first(where: { g[$0].cls == .strong(side) }) {
+           let first = cut.range.first(where: { isStrongLetter(g[$0], side) }) {
             return first
         }
         let from = cut.map { $0.start == runStart ? $0.end : runStart } ?? runStart
-        return tokens.first { $0.start >= from && hasStrong($0, side, g) }?.start
+        return tokens.first { t in t.start >= from && t.range.contains { isStrongLetter(g[$0], side) } }?.start
+    }
+
+    /// P2-60 QA: a run starts at a letter only that side types (never at a one-sided `'` or `"`).
+    private static func isStrongLetter(_ x: Grapheme, _ side: PairSide) -> Bool {
+        x.isLetter && x.cls == .strong(side)
     }
 
     private static func hasStrong(_ t: Token, _ side: PairSide, _ g: [Grapheme]) -> Bool {
@@ -151,8 +161,9 @@ enum RunBeforeCaret {
         cls == .strong(side.other) || cls == .foreignLetter
     }
 
-    private static func isStrongOrForeignLetter(_ cls: RunCharClass) -> Bool {
-        if case .strong = cls { return true }
-        return cls == .foreignLetter
+    /// Step 2. P2-60 QA: a one-sided non-letter (`'`, `"`) doesn't decide; the letters around it do.
+    private static func isStrongOrForeignLetter(_ x: Grapheme) -> Bool {
+        if case .strong = x.cls { return x.isLetter }
+        return x.cls == .foreignLetter
     }
 }
