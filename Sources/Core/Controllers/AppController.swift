@@ -5,6 +5,8 @@
 // Fan-out (001 §2.2, §3):
 //   context change      → SwitchController (rule + learner), KeyWatcher `.reset(.contextChange)` + `checkSecureInputNow()` (P2-45)
 //   Kytkin active/resign → SwitchController (P2-39), KeyWatcher `.reset(.contextChange)` (+ Secure Input check on resign)
+//                         P2-52 item 1: a resign whose frontmost app still reads as Kytkin (or unknown) is looked at
+//                         again after 150 ms (up to 3 times) → SwitchController.recheckAfterResign
 //   input-source change → SwitchController (learner / fights / re-assert), KeyWatcher `.inputSourceChanged`
 //                         (P2-52 item 7: `isOurs: true`, "keep the buffer", only for our own after-convert switch
 //                         that re-rendered the buffer; rule, menu and toggle switches reset it like any change)
@@ -48,10 +50,24 @@ import Observation
     private var bufferKeepingSwitch: (target: InputSourceID, untilNanos: UInt64)?
     static let bufferKeepingSwitchWindowNanos: UInt64 = 500_000_000
 
+    /// P2-52 item 1: right after Kytkin resigns, `frontmostApplication` can still be Kytkin. Look again this much
+    /// later, at most this many times, until another app is in front.
+    static let resignRecheckDelayNanos: UInt64 = 150_000_000
+    static let resignRecheckAttempts = 3
+    private let ownPID: Int32
+    private let frontmostPID: @MainActor () -> Int32?
+    private let scheduler: (any OneShotScheduling)?
+    private var resignRechecksLeft = 0
+
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
          permissions: any PermissionsProviding, conflicts: any ConflictDetecting, keyWatcher: any KeyWatching,
          ticker: any RepeatingTicking, convert: (any ConvertControlling)? = nil, clock: any Clock,
-         now: @escaping () -> Date = Date.init) {
+         now: @escaping () -> Date = Date.init, scheduler: (any OneShotScheduling)? = nil,
+         ownPID: Int32 = ProcessInfo.processInfo.processIdentifier,
+         frontmostPID: @escaping @MainActor () -> Int32? = { nil }) {
+        self.scheduler = scheduler
+        self.ownPID = ownPID
+        self.frontmostPID = frontmostPID
         self.switcher = switcher
         self.context = context
         self.store = store
@@ -97,6 +113,7 @@ import Observation
     func stop() {
         guard isStarted else { return }
         isStarted = false
+        cancelResignRecheck()
         ticker.stop()
         context.stop()
         keyWatcher.stop()
@@ -109,6 +126,7 @@ import Observation
     // MARK: - Events (one per callback the root owns)
 
     func contextDidChange(_ c: Context) {
+        cancelResignRecheck()                 // the new app got its own rule
         switching.contextDidChange(c)
         keyWatcher.perform(.reset(.contextChange))
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
@@ -169,16 +187,48 @@ import Observation
     /// Settings, and (worse) words typed in Settings back into that app when the user returns with ⌘Tab (a
     /// duplicate activation, so no new Context): a later double-Shift there would backspace over the wrong text.
     func kytkinDidBecomeActive() {
+        cancelResignRecheck()
         switching.kytkinDidBecomeActive()
         keyWatcher.perform(.reset(.contextChange))
         afterEvent()
     }
 
     func kytkinDidResignActive(frontmostPID: Int32?) {
-        switching.kytkinDidResignActive(frontmostPID: frontmostPID)
+        let known = frontmostPID.flatMap { $0 == ownPID ? nil : $0 }
+        switching.kytkinDidResignActive(frontmostPID: known)
         keyWatcher.perform(.reset(.contextChange))
         keyWatcher.checkSecureInputNow()      // P2-45: like any other app change
+        if known == nil {
+            resignRechecksLeft = Self.resignRecheckAttempts
+            scheduleResignRecheck()
+        } else {
+            cancelResignRecheck()
+        }
         afterEvent()
+    }
+
+    // MARK: - P2-52 item 1: the second look after a resign
+
+    private func scheduleResignRecheck() {
+        guard isStarted, let scheduler, resignRechecksLeft > 0 else { return }
+        resignRechecksLeft -= 1
+        scheduler.schedule(afterNanos: Self.resignRecheckDelayNanos) { [weak self] in self?.resignRecheck() }
+    }
+
+    private func resignRecheck() {
+        guard isStarted, !switching.isOwnAppActive else { return }
+        if let pid = frontmostPID(), pid != ownPID {
+            resignRechecksLeft = 0
+            switching.recheckAfterResign(frontmostPID: pid)
+            afterEvent()
+        } else {
+            scheduleResignRecheck()
+        }
+    }
+
+    private func cancelResignRecheck() {
+        resignRechecksLeft = 0
+        scheduler?.cancel()
     }
 
     /// Any writer changed the preferences (Settings, our own learn/pin/forget). Idempotent.
