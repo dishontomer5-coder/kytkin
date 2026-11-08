@@ -1,6 +1,7 @@
 // P3-9: SwitchController on sites (001 §14.6): page-state-only changes cancel learning but don't re-apply rules (D5),
 // a site rule beats a pinned browser, learning on a site vs the app, Pin in a private window (owner Q1), Forget on a
 // site acts only on a site or siteHost rule (D6), Punycode storage, and the DEBUG learner line without the domain.
+// P3-29: with "Use the browser's language in the address bar" off (the old behaviour).
 
 import XCTest
 
@@ -15,9 +16,12 @@ final class SiteSwitchControllerTests: XCTestCase {
     private let date = Date(timeIntervalSince1970: 5_000)
     private var generation: UInt64 = 100
 
+    /// P3-29: these tests pin the pre-P3-29 behaviour (D5 for the address bar too), so they run with "Use the
+    /// browser's language in the address bar" off; `AddressBarSwitchTests` covers it on.
     private func make(_ rules: [Rule] = [], current: InputSourceID = IDs.abc) {
         var p = Preferences()
         p.rules = rules
+        p.browsers.browserLanguageInAddressBar = false
         clock = FakeClock(nowNanos: 1_000_000_000)
         switcher = FakeSwitcher(current: current)
         monitor = FakeContextMonitor()

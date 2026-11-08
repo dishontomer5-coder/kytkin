@@ -192,6 +192,18 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertFalse(store.prefs.browsers.ignorePrivateWindowsCompletely)
     }
 
+    func testAddressBarSwitch() {
+        // P3-29: "Use the browser's language in the address bar", on by default.
+        make()
+        XCTAssertTrue(sut.browserLanguageInAddressBar)
+        sut.browserLanguageInAddressBar = false
+        XCTAssertFalse(store.prefs.browsers.browserLanguageInAddressBar)
+        sut.browserLanguageInAddressBar = true
+        XCTAssertTrue(store.prefs.browsers.browserLanguageInAddressBar)
+        XCTAssertEqual(BrowsersSettingsModel.addressBarToggleTitle, "Use the browser's language in the address bar")
+        XCTAssertTrue(BrowsersSettingsModel.addressBarExplanation.contains("English"))
+    }
+
     func testReadOnlyPreferencesChangeNothing() {
         inventory = BrowserInventorySnapshot(installedCatalog: [zen])
         make(readOnly: true)
@@ -201,6 +213,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
         sut.siteRulesOn = false
         sut.setUseAutomation(true)
         sut.ignorePrivateWindows = true
+        sut.browserLanguageInAddressBar = false   // P3-29
         XCTAssertEqual(store.prefs.browsers, Preferences.Browsers())
     }
 

@@ -66,7 +66,7 @@ final class BrowserReadSchedulerTests: XCTestCase {
         s.attached(now: now)
         let t0 = runNext()!
         clock.advance(byMilliseconds: 300)
-        s.trigger(.focusedElementChanged, now: now)
+        s.trigger(.loadComplete, now: now)   // P3-29: a focus change reads at once instead (tests below)
         XCTAssertEqual(s.nextDeadlineNanos, now + 150 * ms)
         clock.advance(byMilliseconds: 100)
         s.trigger(.titleChanged, now: now)
@@ -75,6 +75,51 @@ final class BrowserReadSchedulerTests: XCTestCase {
         XCTAssertFalse(s.takeDue(now: now))
         XCTAssertEqual(runNext(), t0 + 300 * ms + 100 * ms + 150 * ms)
         XCTAssertEqual(s.nextDeadlineNanos, now + 2_000 * ms, "the poll restarts after the read")
+    }
+
+    // MARK: - P3-29: focus changes read at once (⌘L / a click into the address bar)
+
+    func testAFocusChangeReadsAtOnceThenTheTrailingReadFollows() {
+        s.attached(now: now)
+        let t0 = runNext()!
+        clock.advance(byMilliseconds: 300)
+        s.trigger(.focusedElementChanged, now: now)
+        XCTAssertEqual(s.nextDeadlineNanos, now, "leading edge: no 150 ms debounce")
+        XCTAssertTrue(s.takeDue(now: now))
+        XCTAssertEqual(s.nextDeadlineNanos, t0 + 300 * ms + 150 * ms, "the burst's trailing read still follows")
+        XCTAssertEqual(runNext(), t0 + 450 * ms)
+        XCTAssertEqual(s.nextDeadlineNanos, now + 2_000 * ms, "then only the poll")
+    }
+
+    func testFocusReadsAreGappedTo50ms() {
+        s.attached(now: now)
+        _ = runNext()
+        clock.advance(byMilliseconds: 10)
+        s.trigger(.focusedElementChanged, now: now)
+        XCTAssertEqual(s.nextDeadlineNanos, now + 40 * ms, "50 ms after the last read")
+        XCTAssertFalse(s.takeDue(now: now))
+        clock.advance(byMilliseconds: 40)
+        XCTAssertTrue(s.takeDue(now: now))
+        // A storm: one focus change every 5 ms for 1 s → at most one leading read per 50 ms, plus the trailing ones.
+        var reads = 0
+        for _ in 0..<200 {
+            clock.advance(byMilliseconds: 5)
+            s.trigger(.focusedElementChanged, now: now)
+            if s.takeDue(now: now) { reads += 1 }
+        }
+        XCTAssertLessThanOrEqual(reads, 1_000 / 50 + 1 + 2)
+        XCTAssertGreaterThanOrEqual(reads, 1_000 / 50 - 1)
+    }
+
+    func testAFocusReadInsideABurstStillLetsTheBurstEnd() {
+        s.attached(now: now)
+        _ = runNext()
+        clock.advance(byMilliseconds: 500)
+        s.trigger(.titleChanged, now: now)
+        clock.advance(byMilliseconds: 100)
+        s.trigger(.focusedElementChanged, now: now)
+        XCTAssertTrue(s.takeDue(now: now), "the focus read doesn't wait for the title burst")
+        XCTAssertEqual(s.nextDeadlineNanos, now + 150 * ms, "the burst ends 150 ms after its last trigger")
     }
 
     func testEndlessBurstStillReadsWithin500ms() {

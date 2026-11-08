@@ -22,6 +22,11 @@ extension Preferences {
         /// P3-26: "Use Automation when a browser can't be read", for every browser that supports Automation (was
         /// per browser in `appleEventsOptIn`, R3). Ignored for browsers without a scripting dictionary. Off unless set.
         var useAutomation = false
+        /// P3-29 (plan.md decision 2026-11-08, owner): "Use the browser's language in the address bar". On: while a
+        /// text field outside the page has focus (`.editingAddress`), the browser's app rule applies, else the
+        /// Latin-script language of the pair; site rules apply only inside web pages. Off: the old behaviour (the
+        /// site's rule stays while the address bar is focused). On unless set.
+        var browserLanguageInAddressBar = true
         /// P3-26: the browsers the old per-browser switch turned off, from a file written before P3-26; empty once
         /// resolved (or for a new file). Never written under its own name: see the file comment.
         var legacySiteRulesOff: Set<String> = []
@@ -54,6 +59,7 @@ extension Preferences {
 extension Preferences.Browsers: Codable {
     private enum CodingKeys: String, CodingKey {
         case ignorePrivateWindowsCompletely, siteRulesOn, useAutomation
+        case browserLanguageInAddressBar   // P3-29
         // P3-26: the pre-P3-26 per-browser keys; read when the new key is missing.
         case siteRulesEnabled, appleEventsOptIn
     }
@@ -73,12 +79,14 @@ extension Preferences.Browsers: Codable {
         } else if let v = c.lenient([String: Lossy<Bool>].self, .appleEventsOptIn) {
             useAutomation = v.compactMapValues(\.value).values.contains(true)
         }
+        if let v = c.lenient(Bool.self, .browserLanguageInAddressBar) { browserLanguageInAddressBar = v }   // P3-29
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(ignorePrivateWindowsCompletely, forKey: .ignorePrivateWindowsCompletely)
         try c.encode(useAutomation, forKey: .useAutomation)
+        try c.encode(browserLanguageInAddressBar, forKey: .browserLanguageInAddressBar)   // P3-29
         if legacySiteRulesOff.isEmpty {
             try c.encode(siteRulesOn, forKey: .siteRulesOn)
         } else {

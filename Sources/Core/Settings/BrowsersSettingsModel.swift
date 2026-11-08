@@ -7,7 +7,8 @@
 //   holds the global switches: "Use website rules" (`browsers.siteRulesOn`), "Use Automation when a browser can't be
 //   read" (`browsers.useAutomation`; ignored for browsers without a dictionary) and "Don't use website rules in private
 //   windows" (`browsers.ignorePrivateWindowsCompletely`; owner meaning: don't read the address, use the browser's own
-//   rule, D12). Below, a "Browser" dropdown (`rows`) shows ONE browser (`selectedRow`): its status, engine, Automation
+//   rule, D12). P3-29: also "Use the browser's language in the address bar" (`browsers.browserLanguageInAddressBar`,
+//   on by default). Below, a "Browser" dropdown (`rows`) shows ONE browser (`selectedRow`): its status, engine, Automation
 //   permission (Ask / Open System Settings, or "not available") and "Open Permissions" where it applies. No
 //   per-browser overrides. The choice is UI state only (`selectedBrowserID`, never stored); by default the browser
 //   most recently in front this session, else the first working one, else the first.
@@ -248,6 +249,21 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         set {
             guard isEditable, newValue != ignorePrivateWindows else { return }
             store.update { $0.browsers.ignorePrivateWindowsCompletely = newValue }
+        }
+    }
+
+    // MARK: - Address bar (P3-29, plan.md decision 2026-11-08)
+
+    static let addressBarToggleTitle = "Use the browser's language in the address bar"
+    static let addressBarExplanation = "While you type in the address bar, Kytkin uses the browser's own language: "
+        + "its rule, or English if it has none. Inside web pages it uses the website's language."
+
+    /// P3-29: `browsers.browserLanguageInAddressBar` (on by default).
+    var browserLanguageInAddressBar: Bool {
+        get { store.prefs.browsers.browserLanguageInAddressBar }
+        set {
+            guard isEditable, newValue != browserLanguageInAddressBar else { return }
+            store.update { $0.browsers.browserLanguageInAddressBar = newValue }
         }
     }
 

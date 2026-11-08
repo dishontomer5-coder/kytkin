@@ -97,7 +97,8 @@ import Observation
          ownPID: Int32 = ProcessInfo.processInfo.processIdentifier,
          frontmostPID: @escaping @MainActor () -> Int32? = { nil },
          suffixListLoaded: Bool = false,
-         webLinkHandlers: @escaping @MainActor () -> Set<String> = { [] }) {
+         webLinkHandlers: @escaping @MainActor () -> Set<String> = { [] },
+         addressBarLanguage: (@MainActor (LanguagePair) -> InputSourceID?)? = nil) {
         self.suffixListLoaded = suffixListLoaded
         self.webLinkHandlers = webLinkHandlers
         self.scheduler = scheduler
@@ -116,7 +117,7 @@ import Observation
             keyWatcher.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
         }
         switching = SwitchController(switcher: switcher, context: context, store: store, conflicts: conflicts,
-                                     clock: clock, now: now)
+                                     clock: clock, now: now, addressBarLanguage: addressBarLanguage)   // P3-29
         availability = FeatureAvailability.compute(
             grants: permissions.status.grants, tapMode: .off, secureInput: false,
             settings: PreferencesMapping.featureSettings(store.prefs, paused: false))
@@ -241,6 +242,7 @@ import Observation
     }
 
     func sourcesListDidChange() {
+        switching.preferencesDidChange()   // P3-29: the pair's Latin member may only now be installed
         onDisplayChange?()
     }
 
