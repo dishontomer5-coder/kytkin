@@ -201,11 +201,22 @@ final class BrowserWatchEngineTests: XCTestCase {
         let engine = makeEngine()
         engine.attach(pid: 7, request: request(), attachID: 1)
         clock.advance(byMilliseconds: 100)
-        engine.trigger(.focusedElementChanged)
+        engine.trigger(.loadComplete)
         XCTAssertEqual(timer.deadline, clock.nowNanos + 150_000_000)
         XCTAssertEqual(engine.readCount, 1)
         fire(engine)
         XCTAssertEqual(engine.readCount, 2)
+    }
+
+    func testAFocusChangeReadsBeforeTheTriggerReturns() {
+        // P3-29: ⌘L posts AXFocusedUIElementChanged; the read runs inside that callback (no timer wait), so the
+        // address-bar Context is on its way to main a few ms after the focus moved.
+        let engine = makeEngine()
+        engine.attach(pid: 7, request: request(), attachID: 1)
+        clock.advance(byMilliseconds: 100)
+        engine.trigger(.focusedElementChanged)
+        XCTAssertEqual(engine.readCount, 2)
+        XCTAssertEqual(timer.deadline, clock.nowNanos + 150_000_000, "the trailing read is still aimed at")
     }
 
     func testPostsOnlyWhenTheFactsChange() {

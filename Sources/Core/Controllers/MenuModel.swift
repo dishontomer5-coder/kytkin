@@ -102,6 +102,8 @@ enum MenuModel {
         if let matched = resolution.matched {
             line = "\(scopeName(matched.scope, appName: appName)): \(sourceName(matched.inputSource)) "
                 + "(\(matched.origin.rawValue))"
+        } else if resolution.level == .addressBar, let target = resolution.target {
+            line = "\(here): \(sourceName(target)) (address bar)"   // P3-29
         } else if resolution.level == .defaultRule, let target = resolution.target {
             line = "\(here): \(sourceName(target)) (default)"
         } else {
@@ -140,6 +142,8 @@ enum MenuModel {
             case .site, .siteHost, .chat: why = matched.origin.rawValue
             }
             line = "\(head): \(sourceName(matched.inputSource)) (\(why))"
+        } else if resolution.level == .addressBar, let target = resolution.target {
+            line = "\(head): \(sourceName(target)) (address bar)"   // P3-29: the browser's language in the bar
         } else if resolution.level == .defaultRule, let target = resolution.target {
             line = "\(head): \(sourceName(target)) (default)"
         } else {

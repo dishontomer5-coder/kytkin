@@ -251,7 +251,10 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         }
         if isPrivate == nil { isPrivate = appleEventPrivateFlag(now: now) }   // P3-7: only when AX can't tell
         guard request.readsAddress(isPrivate: isPrivate) else {
-            return BrowserObservation(site: nil, pageState: .unknown, isPrivate: true, via: .kept)   // D12: not read
+            // D12: not read. P3-29: the focus class is still told (no address involved), so the address bar of an
+            // ignored private window also gets the browser's language.
+            let state: BrowserPageState = walk.focusClass == .editing ? .editingAddress : .unknown
+            return BrowserObservation(site: nil, pageState: state, isPrivate: true, via: .kept)
         }
 
         let prelude = BrowserReadPrelude(focused: focused, window: window, focusClass: walk.focusClass,

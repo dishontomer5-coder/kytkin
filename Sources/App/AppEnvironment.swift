@@ -81,7 +81,12 @@ import AppKit
                                    scheduler: MainRunLoopOneShot(),          // P2-52 item 1
                                    frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
                                    suffixListLoaded: extractor != nil,                // P3-14 (D11)
-                                   webLinkHandlers: { BrowserInventory.webLinkHandlers() })
+                                   webLinkHandlers: { BrowserInventory.webLinkHandlers() },
+                                   addressBarLanguage: { [layoutCatalog] pair in       // P3-29: imported maps too
+                                       AddressBarLanguage.latinSource(
+                                           pair: pair, layouts: layoutCatalog.convertibleLayouts(includeDisabled: true),
+                                           inputSource: layoutCatalog.inputSource(for:))
+                                   })
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
         wire()

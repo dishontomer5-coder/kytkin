@@ -7,7 +7,10 @@
 //     to another source, in the same context → re-assert once (design.md: "re-assert at most once"), never again.
 //     P3-9 (D5): a Context that differs from the last one only in `pageState` reaches the learner but re-applies
 //     nothing (P3-14: the same for a change of `readFromAddressBar` alone). P3-19: such a change keeps the one fight
-//     re-assert of the rule switch it follows. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
+//     re-assert of the rule switch it follows. P3-29: with "Use the browser's language in the address bar" on, a move
+//     into or out of `.editingAddress` is a full change: the rule is applied (the browser's language in the bar, the
+//     site's again on the page). QA (P3-29): a `.unknown` read in the same window keeps whichever of the two applied
+//     (`inAddressBar`), so one AX timeout while typing in the bar doesn't flip the language and back. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
 //     only on a site or siteHost rule (D6).
 // (b) `.external` change → `conflicts.noteExternalSwitch()` and, unless Kytkin's own window is active, paused or
 //     the app disabled, learner `externalSwitch`; `.ours` → learner `ourSwitch`. Word boundaries and dwell ticks feed
@@ -68,6 +71,8 @@ import Foundation
     private let conflicts: any ConflictDetecting
     private let clock: any Clock
     private let now: () -> Date
+    /// P3-29: the pair's Latin member for the address bar (`AddressBarLanguage`); asked on every engine rebuild.
+    private let addressBarLanguage: @MainActor (LanguagePair) -> InputSourceID?
 
     private(set) var learner: RuleLearner
     private(set) var engine: RuleEngine
@@ -83,18 +88,29 @@ import Foundation
     private var lastLearnerNote: String?
     /// P3-9 (D5): the last Context delivered to `contextDidChange`, to spot a page-state-only change.
     private var lastDelivered: Context?
+    /// QA (P3-29): whether `lastDelivered` counted as "in the address bar" (see `inAddressBar`).
+    private var lastInBar = false
+    /// QA (P3-29): the generation of a `.unknown` Context that kept the address bar's language (see `inAddressBar`).
+    private var stickyBarGeneration: UInt64?
     /// QA (P3-14): a Resume / turn-on re-apply is waiting for the browser's first site read (`reapply`).
     private var reapplyOnNextContext = false
 
     init(switcher: any InputSourceSwitching, context: any ContextMonitoring, store: PreferencesStore,
-         conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init) {
+         conflicts: any ConflictDetecting, clock: any Clock, now: @escaping () -> Date = Date.init,
+         addressBarLanguage: (@MainActor (LanguagePair) -> InputSourceID?)? = nil) {
         self.switcher = switcher
         self.context = context
         self.store = store
         self.conflicts = conflicts
         self.clock = clock
         self.now = now
-        let engine = Self.makeEngine(store.prefs)
+        // P3-29: by default from the switcher's layouts (system layouts only); AppEnvironment passes one that also
+        // knows imported maps.
+        let language = addressBarLanguage ?? { [switcher] pair in
+            AddressBarLanguage.latinSource(pair: pair, layouts: switcher.sources(includeDisabled: true))
+        }
+        self.addressBarLanguage = language
+        let engine = Self.makeEngine(store.prefs, addressBarSource: language(store.prefs.languagePair))
         self.engine = engine
         wasEnabled = store.prefs.general.enabled
         learner = RuleLearner(engine: engine, learningEnabled: false, keyboardTapAvailable: false,
@@ -115,8 +131,13 @@ import Foundation
     @discardableResult func contextDidChange(_ c: Context) -> ContextChange {
         isOwnAppActive = false   // P2-55: another app is frontmost, so Kytkin's own window can't be
         let previous = lastDelivered
-        let pageStateOnly = previous.map { Self.differsOnlyInPageState($0, c, engine: engine) } ?? false
+        let inBar = Self.inAddressBar(c, previous: previous, previousInBar: lastInBar, engine: engine)
+        let pageStateOnly = previous.map {
+            Self.differsOnlyInPageState($0, c, engine: engine, aInBar: lastInBar, bInBar: inBar)
+        } ?? false
         lastDelivered = c
+        lastInBar = inBar
+        stickyBarGeneration = inBar && c.pageState == .unknown ? c.generation : nil
         handle(learner.handle(.contextChanged(c, atNanos: clock.nowNanos)))
         // QA (P3-14): a Resume or turn-on re-apply that waited for the browser's site read applies with this Context,
         // whatever changed (the read may add no site: a new tab, or the grace ran out).
@@ -143,16 +164,42 @@ import Foundation
         if reassertedGeneration == old { reassertedGeneration = new }
     }
 
+    /// QA (P3-29): `c` counts as "in the address bar" (the browser's language applies). `.unknown` in the same window
+    /// (same app, pid, site, private flag and chat) keeps the previous answer: one AX timeout while the user types in
+    /// the bar (P3-19 saw `.page` <-> `.unknown` flips) must not switch to the site's language mid-URL and back. The
+    /// next real read (`.page` in the page, `.editingAddress` in the bar) decides again.
+    static func inAddressBar(_ c: Context, previous: Context?, previousInBar: Bool, engine: RuleEngine) -> Bool {
+        guard engine.addressBarUsesBrowserLanguage else { return false }
+        if c.pageState == .unknown, let p = previous, p.bundleID == c.bundleID, p.pid == c.pid,
+           p.siteDomain == c.siteDomain, p.isPrivateWindow == c.isPrivateWindow, p.chatKey == c.chatKey {
+            return previousInBar
+        }
+        return engine.usesBrowserLanguage(c)
+    }
+
+    /// QA (P3-29): the Context the rule is resolved for: a `.unknown` that kept the bar's language resolves as the bar.
+    private func resolvable(_ c: Context) -> Context {
+        guard c.pageState == .unknown, c.generation == stickyBarGeneration else { return c }
+        var bar = c
+        bar.pageState = .editingAddress
+        return bar
+    }
+
     /// P3-9: same app, pid, site, private flag and chat; only `pageState` (and the generation) differs.
+    /// P3-29: a move into or out of the address bar while the browser's language applies there is not "only the page
+    /// state": the rule changes (bar ↔ page), so it is applied.
     /// P3-14: or only `readFromAddressBar` (Gecko bar ↔ `AXURL` on the same site): it changes learning, not the rule.
     /// QA (P3-9): the host counts only as ContextAssembler counts it: when the two differ (after HostNormalizer) and
     /// either has a siteHost rule. The assembler drops a host-only change inside one site, so the host it emits with
     /// the next page-state change can be newer than the last one delivered (www.google.com → mail.google.com, then a
     /// click into the address bar); that must not re-apply the site rule over a manual switch.
-    static func differsOnlyInPageState(_ a: Context, _ b: Context, engine: RuleEngine) -> Bool {
+    /// `aInBar` / `bInBar`: QA (P3-29) the callers' `inAddressBar` answers; nil = `engine.usesBrowserLanguage`.
+    static func differsOnlyInPageState(_ a: Context, _ b: Context, engine: RuleEngine,
+                                       aInBar: Bool? = nil, bInBar: Bool? = nil) -> Bool {
         guard a.pageState != b.pageState || a.readFromAddressBar != b.readFromAddressBar,
               a.bundleID == b.bundleID, a.pid == b.pid,
-              a.siteDomain == b.siteDomain, a.isPrivateWindow == b.isPrivateWindow, a.chatKey == b.chatKey else {
+              a.siteDomain == b.siteDomain, a.isPrivateWindow == b.isPrivateWindow, a.chatKey == b.chatKey,
+              (aInBar ?? engine.usesBrowserLanguage(a)) == (bInBar ?? engine.usesBrowserLanguage(b)) else {
             return false
         }
         let oldHost = HostNormalizer.normalized(a.host), newHost = HostNormalizer.normalized(b.host)
@@ -166,7 +213,7 @@ import Foundation
         // P2-41: the app quit (resign re-apply, resume, Kytkin on again): nothing to switch for. A new Context
         // clears the flag first, so a real app change always applies.
         guard !(context.currentAppIsGone && context.current?.pid == c.pid) else { return }
-        guard let target = engine.resolve(c).target, target != switcher.current else { return }
+        guard let target = engine.resolve(resolvable(c)).target, target != switcher.current else { return }
         guard switcher.select(target, reason: .rule) else { return }
         conflicts.noteOurSwitch()
         lastRuleSelect = (target, clock.nowNanos, c.generation)
@@ -283,7 +330,7 @@ import Foundation
 
     /// Rules or settings changed (any writer, including ours).
     func preferencesDidChange() {
-        engine = Self.makeEngine(store.prefs)
+        engine = Self.makeEngine(store.prefs, addressBarSource: addressBarLanguage(store.prefs.languagePair))
         learner.engine = engine
         refreshLearning()
         enabledMayHaveChanged()
@@ -377,7 +424,7 @@ import Foundation
 
     var currentRule: CurrentRule? {
         guard let c = context.current else { return nil }
-        return CurrentRule(context: c, resolution: engine.resolve(c), pinScope: engine.pinScope(for: c))
+        return CurrentRule(context: c, resolution: engine.resolve(resolvable(c)), pinScope: engine.pinScope(for: c))
     }
 
     /// Pins the current input source for the current (non-Kytkin) app's most specific scope. nil = no context.
@@ -424,8 +471,10 @@ import Foundation
         store.prefs.apps[bundleID]?.disabled == true
     }
 
-    private static func makeEngine(_ p: Preferences) -> RuleEngine {
+    private static func makeEngine(_ p: Preferences, addressBarSource: InputSourceID?) -> RuleEngine {
         RuleEngine(rules: p.rules, defaultBehavior: p.general.defaultBehavior,
-                   ignorePrivateWindowsCompletely: p.browsers.ignorePrivateWindowsCompletely)
+                   ignorePrivateWindowsCompletely: p.browsers.ignorePrivateWindowsCompletely,
+                   addressBarUsesBrowserLanguage: p.browsers.browserLanguageInAddressBar,   // P3-29
+                   addressBarSource: addressBarSource)
     }
 }
