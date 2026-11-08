@@ -19,7 +19,7 @@
 //   - the bundle ID is empty → nothing (todo P2-10).
 //   - `isPrivateWindow == true` → nothing, not even app-level (plan.md Decision, P2-9 QA: stricter than
 //     001 §3 (b) step 4). nil (unknown) counts as not private until P1-20.
-//   - P3-9: `pageState == .editingAddress` → nothing (D2); `.unknown`, or `.page` without a site → nothing (D3).
+//   - P3-9: `pageState == .editingAddress` (P3-31: or `.editingBrowserField`, the Find box) → nothing (D2); `.unknown`, or `.page` without a site → nothing (D3).
 //     P3-14 (P3-20 decision): a Context whose site was read only from the Gecko address bar → nothing (applied, never
 //     learned).
 //     Only the candidate's own scope is checked for a pin, so a site is learned in a browser pinned to another
@@ -190,7 +190,9 @@ struct RuleLearner {
         // Typing in the address bar is no preference for the page underneath, and a switch on a page Kytkin couldn't
         // read must not become the browser's app rule. `.notWebPage` (new tab, settings) learns at app level.
         switch c.pageState {
-        case .editingAddress?: return .editingAddress
+        // P3-31: the Find box or another toolbar field is no preference for the page either (owner: nothing is learned
+        // from any browser-chrome field), so it shares the address bar's reason.
+        case .editingAddress?, .editingBrowserField?: return .editingAddress
         case .unknown?: return .siteUnknown
         case .page?:
             if HostNormalizer.normalized(c.siteDomain) == nil { return .siteUnknown }

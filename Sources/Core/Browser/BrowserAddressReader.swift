@@ -24,6 +24,11 @@
 // `.unknown` with a window (step 5, or an AX timeout) asks for the address by Apple Event. ≤ 1 send per second:
 // a send the rate limit holds back sets `appleEventRetryAt`, and the engine reads again then.
 // Kept sites are hosts in memory only and die with the reader (one reader per attach).
+// P3-31: when a read ends "editing" (focus in a text field outside the page), the request's `AddressBarClassifier`
+// says whether that field is the real address bar (`.editingAddress`, the browser's language) or another field such
+// as the Find box (`.editingBrowserField`, the site's language). Unknown → `.editingAddress` (P3-29). The answer is
+// cached per window for the focused element, so it costs at most one id read per focus change; a failed read
+// (timeout, element gone) gives `.unknown` for this read only and isn't cached.
 
 /// Limits shared by the reader and its strategies (B13). Not inside the generic reader: generic types can't have
 /// stored statics.
@@ -85,6 +90,10 @@ struct BrowserWindowState<Node> {
     /// P3-7: the private flag an Apple Event gave for this window (nil = not asked yet; `.some(nil)` = asked, can't
     /// tell). A window's private mode can't change, so it is asked once per window and kept for the attach.
     var appleEventPrivate: Bool??
+    /// P3-31: the address-bar verdict for the last focused field outside the page (matched with `isSame`), so the
+    /// classifier runs once per focus change. Only definite answers and "can't tell by design" are kept, never a
+    /// verdict a failed read gave.
+    var fieldVerdict: (field: Node, verdict: AddressBarVerdict)?
     /// P3-7: the page state the last Apple Event address gave in this window (`.page` / `.notWebPage`) while AX keeps
     /// answering `.unknown`. A read the rate limit kept from sending reports it, so one held-back send doesn't flip
     /// the page to `.unknown` and back (D5: that would cancel a learning candidate). Cleared by any AX answer.
@@ -105,6 +114,7 @@ struct BrowserWindowState<Node> {
         webArea = nil
         addressBar = nil
         lastFullScanAt = nil
+        fieldVerdict = nil
     }
 }
 
@@ -112,7 +122,8 @@ struct BrowserWindowState<Node> {
 struct BrowserReadOutcome: Sendable, Equatable {
     var read: SiteRead?
     var via: BrowserObservation.Via
-    /// A text field outside the page has focus: the page state is `.editingAddress` whatever was read.
+    /// A text field outside the page has focus: the page state is `.editingAddress` (or, P3-31, `.editingBrowserField`
+    /// for a field known not to be the bar) whatever was read.
     var editing: Bool
 
     init(read: SiteRead?, via: BrowserObservation.Via, editing: Bool = false) {
@@ -148,6 +159,8 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
     /// P3-10: with a clock, a read also stops once it has run for `AXReadLatch.readBudgetNanos` (B13: a slow browser
     /// that answers each call just under the 0.25 s timeout). The AX thread sets it; nil = first-timeout rule only.
     var deadlineClock: (any Clock)?
+    /// P3-31: tells the real address bar from the Find box (from `request.addressBarSignal`; tests may swap it).
+    var addressBarClassifier: AddressBarClassifier
     /// P3-7: set by the engine only when `request.appleScript != nil` (opted in, granted, Kytkin on). nil = no Apple
     /// Events from this reader at all.
     var appleEvents: AppleEventSession?
@@ -164,6 +177,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
     init(request: BrowserWatchRequest, siteReader: SiteReader, strategy: any BrowserReadStrategy<Latched>,
          privateProbe: @escaping PrivateWindowProbe<Latched>) {
         self.request = request
+        addressBarClassifier = AddressBarClassifier(signal: request.addressBarSignal)
         self.siteReader = siteReader
         self.strategy = strategy
         self.privateProbe = privateProbe
@@ -253,20 +267,47 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         guard request.readsAddress(isPrivate: isPrivate) else {
             // D12: not read. P3-29: the focus class is still told (no address involved), so the address bar of an
             // ignored private window also gets the browser's language.
-            let state: BrowserPageState = walk.focusClass == .editing ? .editingAddress : .unknown
+            // P3-31: and a Find box there keeps the site's (here: no site, the app's) language.
+            let state: BrowserPageState = walk.focusClass == .editing
+                ? Self.editingState(fieldVerdict(focused, tree: tree)) : .unknown
             return BrowserObservation(site: nil, pageState: state, isPrivate: true, via: .kept)
         }
 
         let prelude = BrowserReadPrelude(focused: focused, window: window, focusClass: walk.focusClass,
                                          webAreaFromFocus: walk.webArea, webAreaInWindow: walk.webAreaInWindow)
         let outcome = try strategy.read(tree, prelude: prelude, window: &windows[0], siteReader: siteReader, now: now)
-        let observation = Self.observation(from: outcome, window: &windows[0], isPrivate: isPrivate)
+        let verdict: AddressBarVerdict = outcome.editing ? fieldVerdict(focused, tree: tree) : .unknown
+        let observation = Self.observation(from: outcome, window: &windows[0], isPrivate: isPrivate,
+                                           editingState: Self.editingState(verdict))
         switch observation.pageState {
         case .page, .notWebPage: windows[0].appleEventState = nil   // AX answered: it wins
-        case .editingAddress: return observation                     // never an Apple Event while editing (D2)
+        case .editingAddress, .editingBrowserField: return observation   // never an Apple Event while editing (D2)
         case .unknown: break
         }
         return appleEventAddress(after: observation, now: now)
+    }
+
+    // MARK: - Address bar or another field (P3-31)
+
+    /// P3-31: the page state for "a text field outside the page has focus". Only a field known not to be the bar is
+    /// `.editingBrowserField`; unknown stays `.editingAddress` (P3-29).
+    static func editingState(_ verdict: AddressBarVerdict) -> BrowserPageState {
+        verdict == .otherField ? .editingBrowserField : .editingAddress
+    }
+
+    /// P3-31: the classifier's answer for `focused` in `windows[0]`, cached per focused element. A failed AX call
+    /// (timeout, element gone) → `.unknown` for this read, not cached; the observation itself still stands.
+    private mutating func fieldVerdict(_ focused: Tree.Node?, tree: Latched) -> AddressBarVerdict {
+        guard let focused, addressBarClassifier.isActive else { return .unknown }
+        if let cached = windows[0].fieldVerdict, tree.isSame(cached.field, focused) { return cached.verdict }
+        do {
+            let verdict = try addressBarClassifier.classify(focused, window: &windows[0], tree: tree)
+            windows[0].fieldVerdict = (focused, verdict)
+            return verdict
+        } catch {
+            windows[0].fieldVerdict = nil
+            return .unknown
+        }
     }
 
     // MARK: - Apple Events (P3-7, 001 §14.7)
@@ -372,19 +413,20 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         return FocusWalk(focusClass: .other, webArea: nil, webAreaInWindow: false)
     }
 
+    /// `editingState`: P3-31, the state an editing outcome reports (`.editingAddress` or `.editingBrowserField`).
     private static func observation(from outcome: BrowserReadOutcome, window: inout BrowserWindowState<Tree.Node>,
-                                    isPrivate: Bool?) -> BrowserObservation {
+                                    isPrivate: Bool?, editingState: BrowserPageState) -> BrowserObservation {
         switch outcome.read {
         case .site(let site):
             window.lastSite = site
-            return BrowserObservation(site: site, pageState: outcome.editing ? .editingAddress : .page,
+            return BrowserObservation(site: site, pageState: outcome.editing ? editingState : .page,
                                       isPrivate: isPrivate, via: outcome.via)
         case .notWebPage:
             window.lastSite = nil
-            return BrowserObservation(site: nil, pageState: outcome.editing ? .editingAddress : .notWebPage,
+            return BrowserObservation(site: nil, pageState: outcome.editing ? editingState : .notWebPage,
                                       isPrivate: isPrivate, via: outcome.via)
         case .unreadable, nil:
-            return BrowserObservation(site: window.lastSite, pageState: outcome.editing ? .editingAddress : .unknown,
+            return BrowserObservation(site: window.lastSite, pageState: outcome.editing ? editingState : .unknown,
                                       isPrivate: isPrivate, via: .kept)
         }
     }

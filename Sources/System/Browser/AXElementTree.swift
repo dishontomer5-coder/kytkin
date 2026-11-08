@@ -57,6 +57,18 @@ struct AXElementTree: AXNodeReading {
         return value as? String
     }
 
+    /// P3-31: e.g. AXDOMClassList. Only the string items of a CFArray are kept.
+    func strings(_ a: AXStringListAttribute, of n: AXUIElement) throws(AXReadError) -> [String]? {
+        guard let value = try copy(n, Self.name(of: a)), CFGetTypeID(value) == CFArrayGetTypeID() else { return nil }
+        let array = value as! CFArray   // type checked above
+        var result: [String] = []
+        for i in 0..<CFArrayGetCount(array) {
+            let raw = unsafeBitCast(CFArrayGetValueAtIndex(array, i), to: CFTypeRef.self)
+            if CFGetTypeID(raw) == CFStringGetTypeID(), let s = raw as? String { result.append(s) }
+        }
+        return result
+    }
+
     func url(of n: AXUIElement) throws(AXReadError) -> String? {
         guard let value = try copy(n, "AXURL") else { return nil }
         if CFGetTypeID(value) == CFURLGetTypeID() {
@@ -93,6 +105,12 @@ struct AXElementTree: AXNodeReading {
         case .description: "AXDescription"
         case .title: "AXTitle"
         case .value: "AXValue"
+        }
+    }
+
+    private static func name(of a: AXStringListAttribute) -> String {
+        switch a {
+        case .domClassList: "AXDOMClassList"
         }
     }
 

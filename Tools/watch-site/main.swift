@@ -57,6 +57,7 @@ func describe(_ state: BrowserPageState) -> String {
     case .page: "page"
     case .notWebPage: "not-web"
     case .editingAddress: "editing-address"
+    case .editingBrowserField: "editing-browser-field"   // P3-31: the Find box or another toolbar field
     case .unknown: "unknown"
     }
 }
@@ -88,7 +89,8 @@ func describe(_ state: BrowserPageState) -> String {
         let known = BrowserCatalog.known[bundleID]
         let request = BrowserWatchRequest(engine: engine, alwaysPrivate: known?.alwaysPrivate ?? false,
                                           ignorePrivateWindows: false, appleScript: nil,
-                                          privateSignal: known?.privateSignal ?? .none)   // QA P3-16: was always .none
+                                          privateSignal: known?.privateSignal ?? .none,   // QA P3-16: was always .none
+                                          addressBarSignal: known?.addressBarSignal ?? .none)   // P3-31
         attachedName = "\(bundleID) [\(engine.rawValue)]"
         watcher.attach(pid: app.processIdentifier, bundleID: bundleID, request: request)
     }
