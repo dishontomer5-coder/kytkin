@@ -272,8 +272,9 @@ final class BrowsersSettingsModelTests: XCTestCase {
 
     func testTheOwnersNotesAreThere() {
         XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("Safari"))
-        // P3-16: Safari's gap is closed; the detection line names what each browser can do.
-        XCTAssertFalse(BrowsersSettingsModel.safariPrivateNote.contains("doesn't let Kytkin tell"))
+        // P3-30: English only (the shield button is no signal any more); the detection line names each browser.
+        XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("English"))
+        XCTAssertFalse(BrowsersSettingsModel.safariPrivateNote.contains("any language"))
         for name in ["Chrome", "Arc", "Automation", "Tor Browser", "Zen"] {
             XCTAssertTrue(BrowsersSettingsModel.privateDetectionText.contains(name), name)
         }

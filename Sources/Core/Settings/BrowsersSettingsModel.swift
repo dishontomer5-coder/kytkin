@@ -107,9 +107,9 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     static let privateDetectionText = "Kytkin recognizes private windows in Chrome when Chrome is in English or "
         + "Hebrew (in any language with Automation), and in Arc only with Automation. Tor Browser's windows always "
         + "count as private. Kytkin can't tell yet in Zen and other Firefox-based browsers."
-    /// Owner answer 3 accepted a Safari gap; P3-16 closed it: Safari's private window has a privacy button that
-    /// normal windows don't, and its id doesn't depend on the language.
-    static let safariPrivateNote = "In Safari, Kytkin recognizes private windows in any language."
+    /// Owner answer 3 accepted a Safari gap. P3-30: Safari's private windows are recognized only by the English title
+    /// (the privacy button also shows in normal windows when it's added to the toolbar).
+    static let safariPrivateNote = "In Safari, Kytkin recognizes private windows only when Safari is in English."
     /// P3-4: how websites are grouped, and why gov.il is different.
     static let groupingText = "A website rule covers the whole site: ynet.co.il also covers www.ynet.co.il and "
         + "news.ynet.co.il. Some addresses are shared by many separate sites, such as gov.il or github.io. There each "
