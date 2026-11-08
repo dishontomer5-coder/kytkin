@@ -19,6 +19,8 @@ struct BrowserWatchRequest: Sendable, Equatable {
     let ignorePrivateWindows: Bool
     /// P3-26: set only when "Use Automation" is on (global) AND the browser has a dictionary AND macOS allowed it.
     let appleScript: AppleScriptDialect?
+    /// P3-16: which AX private-window probe the reader runs (from the catalog; `.none` for unknown browsers).
+    var privateSignal: PrivateWindowSignal = .none
 
     /// The window's private flag after the catalog's say: Tor Browser is always private.
     func privateFlag(probed: Bool?) -> Bool? {
@@ -72,6 +74,7 @@ struct SitePolicy: Sendable, Equatable {
         let known = BrowserCatalog.known[bundleID]
         let dialect = appleEventsBrowsers.contains(bundleID) ? known?.appleScript : nil
         return BrowserWatchRequest(engine: engine, alwaysPrivate: known?.alwaysPrivate ?? false,
-                                   ignorePrivateWindows: ignorePrivateWindows, appleScript: dialect)
+                                   ignorePrivateWindows: ignorePrivateWindows, appleScript: dialect,
+                                   privateSignal: known?.privateSignal ?? .none)
     }
 }

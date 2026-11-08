@@ -272,6 +272,11 @@ final class BrowsersSettingsModelTests: XCTestCase {
 
     func testTheOwnersNotesAreThere() {
         XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("Safari"))
+        // P3-16: Safari's gap is closed; the detection line names what each browser can do.
+        XCTAssertFalse(BrowsersSettingsModel.safariPrivateNote.contains("doesn't let Kytkin tell"))
+        for name in ["Chrome", "Arc", "Automation", "Tor Browser", "Zen"] {
+            XCTAssertTrue(BrowsersSettingsModel.privateDetectionText.contains(name), name)
+        }
         XCTAssertEqual(BrowsersSettingsModel.skipNote,
                        "Some browsers don't support every option; Kytkin skips what a browser can't do.")
         XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Use Automation when a browser can't be read")

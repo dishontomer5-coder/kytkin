@@ -1,7 +1,7 @@
 // P3-6: The frame every per-engine read plugs into (001 §14.2, §14.3.3): the common prelude, the per-window cache,
 // the private-window gate (D12), the timeout latch and the "kept site" rule. The engine strategies (which element
 // holds the address) are `WebAreaReadStrategy` (P3-11: Chromium, WebKit, unknown) and `GeckoReadStrategy` (P3-13).
-// The private-window probes come in P3-16; until then the probe answers nil (not private).
+// P3-16: the private-window probes per engine are `PrivateWindowProbes`, picked by `request.privateSignal`.
 //
 // One read:
 //   1. F = the app's focused element. W = its main window; else the focused window, only if its subrole is
@@ -11,8 +11,10 @@
 //      this way). Else F's role is a text field, combo box, search field or text area → editing (an address bar,
 //      a find bar). Else other.
 //   3. The window's cache entry (≤ 8 windows, most recent first, matched with `isSame`).
-//   4. The private flag, probed once per window (re-checked after `noteTrigger` of a window or title change). If it's
+//   4. The private flag, probed once per window (re-checked after `noteTrigger` of a window change or attach; a title
+//      change re-checks only a window whose probe couldn't tell, since a window can't become private later). If it's
 //      true and the user ignores private windows → `(nil, .unknown, private)` without reading any address.
+//      Precedence (P3-16): the AX probe's answer wins when non-nil; else the P3-7 Apple Event flag.
 //   5. The strategy reads. A `.site`/`.notWebPage` updates the window's kept site; anything else reports the kept site.
 // The first timeout stops the read (`LatchedAXTree`) → `.unknown` with the kept site. `invalidElement` drops the
 // window's cached handles and allows one rescan.
@@ -123,7 +125,7 @@ protocol BrowserReadStrategy<Tree> {
               siteReader: SiteReader, now: UInt64) throws(AXReadError) -> BrowserReadOutcome
 }
 
-/// P3-16 plugs the per-engine private-window probes in here; it returns only a `Bool?` (§14.4).
+/// P3-16: the per-engine private-window probe (`PrivateWindowProbes`); it returns only a `Bool?` (§14.4).
 typealias PrivateWindowProbe<Tree: AXNodeReading> = (Tree, Tree.Node) throws(AXReadError) -> Bool?
 
 struct BrowserAddressReader<Tree: AXNodeReading> {
@@ -146,7 +148,9 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
 
     init(request: BrowserWatchRequest, siteReader: SiteReader) {
         self.init(request: request, siteReader: siteReader, strategy: Self.defaultStrategy(for: request.engine),
-                  privateProbe: { (_: Latched, _: Tree.Node) throws(AXReadError) -> Bool? in nil })
+                  privateProbe: { [signal = request.privateSignal] (t: Latched, w: Tree.Node) throws(AXReadError) -> Bool? in
+                      try PrivateWindowProbes.isPrivate(signal, tree: t, window: w)   // P3-16
+                  })
     }
 
     init(request: BrowserWatchRequest, siteReader: SiteReader, strategy: any BrowserReadStrategy<Latched>,
@@ -167,11 +171,15 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         }
     }
 
-    /// A window or title change: re-check every cached window's private flag on its next read (§14.4).
+    /// A window change: re-check every cached window's private flag on its next read (§14.4). P3-16: a title change
+    /// re-checks only windows whose probe couldn't tell (a window can't become private later, but a new Chrome window
+    /// may not have its title yet); a `true` stays.
     mutating func noteTrigger(_ t: BrowserTrigger) {
         switch t {
-        case .focusedWindowChanged, .mainWindowChanged, .titleChanged, .attached, .wake:
+        case .focusedWindowChanged, .mainWindowChanged, .attached, .wake:
             for i in windows.indices { windows[i].isPrivate = nil }
+        case .titleChanged:
+            for i in windows.indices where windows[i].isPrivate == .some(nil) { windows[i].isPrivate = nil }
         case .focusedElementChanged, .loadComplete, .addressValueChanged:
             break
         }
@@ -224,7 +232,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             isPrivate = true   // Tor Browser: no probe needed
             windows[0].isPrivate = .some(isPrivate)
         } else {
-            isPrivate = try privateProbe(tree, window)   // P3-16's probe; nil until it lands
+            isPrivate = try privateProbe(tree, window)   // P3-16: true or nil; the title never leaves the probe
             windows[0].isPrivate = .some(isPrivate)
         }
         if isPrivate == nil { isPrivate = appleEventPrivateFlag(now: now) }   // P3-7: only when AX can't tell
