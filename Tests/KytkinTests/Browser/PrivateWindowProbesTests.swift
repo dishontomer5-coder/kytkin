@@ -1,6 +1,6 @@
 // P3-16: the per-engine private-window probes (001 §14.4) on fake trees shaped like the owner's probe of normal vs
 // private windows (2026-11-08, `docs/research/r3b/p3-16-results/`): Chrome's "(Incognito)" title suffix, Safari's
-// `PrivacyReportShieldButton` and "Private Browsing" suffix, Arc's nearly empty private tree, Zen's nil seam. Also the
+// "Private Browsing" suffix (P3-30: the `PrivacyReportShieldButton` is no longer a signal), Arc's nearly empty private tree, Zen's nil seam. Also the
 // precedence with the P3-7 Apple Event flag, the per-window caching, and the catalog's signal per browser.
 
 import XCTest
@@ -127,16 +127,17 @@ final class PrivateWindowProbesTests: XCTestCase {
 
     // MARK: Safari
 
-    func testSafariShieldIdentifierIsPrivateWithoutTheTitle() throws {
+    func testSafariShieldButtonAloneIsNotPrivate() throws {
+        // P3-30: a normal Safari window with the Privacy Report shield added to its toolbar read as private (owner,
+        // 2026-11-08). The shield is no signal any more: one title read, no toolbar scan.
         let s = safari(title: "Example", shield: true)
-        XCTAssertEqual(try probe(.safari, s.tree, s.window), true)
-        XCTAssertEqual(titleReads(s.tree), 1, "QA P3-16: the title is tried first; the id answers when it can't")
-        XCTAssertFalse(s.tree.calls.contains { if case .url = $0 { true } else { false } })
+        XCTAssertNil(try probe(.safari, s.tree, s.window))
+        XCTAssertEqual(s.tree.calls, [.string(.title, s.window)])
     }
 
     func testSafariTitleSuffixAnswersWithoutAToolbarScan() throws {
-        // QA P3-16: an English private window needs one title read, no shield scan.
-        let s = safari(title: "Example — Private Browsing", shield: false)
+        // An English private window: one title read (P3-30: whether or not the shield is on the toolbar).
+        let s = safari(title: "Example — Private Browsing", shield: true)
         XCTAssertEqual(try probe(.safari, s.tree, s.window), true)
         XCTAssertEqual(s.tree.calls, [.string(.title, s.window)])
     }
@@ -151,26 +152,11 @@ final class PrivateWindowProbesTests: XCTestCase {
         XCTAssertNil(try probe(.safari, s.tree, s.window))
     }
 
-    func testSafariShieldScanIsBoundedAndNeverReadsThePage() throws {
-        let s = safari(title: nil, shield: false)
-        // A shield buried below the depth limit isn't found (and the page isn't walked).
-        var deep = s.window
-        for _ in 0..<PrivateWindowProbes.shieldScanDepth { deep = s.tree.add("AXGroup", under: deep) }
-        s.tree.add("AXButton", under: deep, identifier: "PrivacyReportShieldButton")
+    func testSafariProbeNeverWalksTheTree() throws {
+        // P3-30: no identifier scan at all; nothing but the window title is read.
+        let s = safari(title: nil, shield: true)
         XCTAssertNil(try probe(.safari, s.tree, s.window))
-        let identifierReads = s.tree.calls.filter { if case .string(.identifier, _) = $0 { true } else { false } }
-        XCTAssertLessThanOrEqual(identifierReads.count, PrivateWindowProbes.shieldScanNodes)
-        XCTAssertFalse(s.tree.calls.contains { if case .url = $0 { true } else { false } })
-        XCTAssertFalse(s.tree.calls.contains { if case .string(.value, _) = $0 { true } else { false } })
-    }
-
-    func testSafariWideTreeStopsAtTheNodeLimit() throws {
-        let t = FakeAXTree()
-        let window = t.add("AXWindow", subrole: "AXStandardWindow", under: t.add("AXApplication"))
-        for _ in 0..<(PrivateWindowProbes.shieldScanNodes * 2) { t.add("AXGroup", under: window) }
-        t.add("AXButton", under: window, identifier: "PrivacyReportShieldButton")   // past the limit
-        XCTAssertNil(try probe(.safari, t, window))
-        XCTAssertLessThan(t.calls.count, PrivateWindowProbes.shieldScanNodes * 2 + 5)
+        XCTAssertEqual(s.tree.calls, [.string(.title, s.window)])
     }
 
     // MARK: Arc, Zen, none
@@ -295,9 +281,13 @@ final class PrivateWindowProbesTests: XCTestCase {
     }
 
     func testSafariPrivateThroughTheReader() {
-        let s = safari(title: "Example", shield: true)
+        let s = safari(title: "Example - Private Browsing", shield: false)
         var r = reader(request(.webkit, signal: .safari))
         XCTAssertEqual(r.read(s.tree, now: t0).observation.isPrivate, true)
+        // P3-30: a normal window with the shield on its toolbar isn't private.
+        let n = safari(title: "Example", shield: true)
+        var r2 = reader(request(.webkit, signal: .safari))
+        XCTAssertNil(r2.read(n.tree, now: t0).observation.isPrivate)
     }
 
     // MARK: Arc: nothing learned per site, nor at app level

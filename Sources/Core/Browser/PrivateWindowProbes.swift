@@ -14,14 +14,10 @@
 // Per browser (`PrivateWindowSignal`, set in `BrowserCatalog`):
 // - Chromium family: the window's AXTitle ends with Chromium's IDS_ACCESSIBLE_INCOGNITO_WINDOW_TITLE_FORMAT suffix.
 //   Owner probe: Chrome's private window title ends "(Incognito)"; normal windows don't.
-// - Safari: the title ends "Private Browsing" (English only), else an element with AXIdentifier
-//   `PrivacyReportShieldButton` (only in the private window in the owner's probe; identifiers aren't localized).
-//   QA P3-16, known risk: Safari's View > Customize Toolbar offers a "Privacy Report" item. If a user adds it to the
-//   normal toolbar it most likely carries the same identifier, and then every Safari window reads as private: nothing
-//   is learned in Safari (and with "Don't use website rules in private windows" on, only Safari's app rule applies).
-//   The menu shows `, private` on normal windows, so it's visible; checklist §P3-14 step 6 asks the owner to try it.
-//   If it does match, the shield needs a second marker or goes (the English title then is the only signal).
-//   The title is checked first: one call, and an English private window then needs no toolbar scan.
+// - Safari: the title ends "Private Browsing" (English only). P3-30: the `PrivacyReportShieldButton` id is no longer
+//   a signal. The owner found (2026-11-08) that a normal window with the Privacy Report shield added to its toolbar
+//   has it too, so every such window read as private. A Safari private window in another language now reads as
+//   "can't tell" (a documented gap; Safari has no Apple Event private flag either).
 // - Arc: no AX signal. Its private window's AX tree is a window and one split group (no web area), so the site reads
 //   `.unknown` and nothing is learned; only the P3-7 `incognito` Apple Event flag can tell. The probe makes no AX call.
 // - Gecko (Zen, Firefox): no signal found yet at depth ≤ 3 (a deeper Zen probe is pending). This is the seam where
@@ -30,7 +26,7 @@
 /// Which private-window check a browser gets (P3-16). Catalog data, not a user setting.
 enum PrivateWindowSignal: Sendable, Equatable {
     case chromiumTitle   // the window title ends with Chromium's incognito suffix
-    case safari          // the "Private Browsing" title suffix, else Safari's privacy shield button id
+    case safari          // the English "Private Browsing" title suffix (P3-30: no shield button)
     case arc             // nothing in AX: the P3-7 Apple Event flag only
     case gecko           // P3-16: no signal yet (Zen probe pending): returns nil
     case none            // unknown browsers, other WebKit browsers (Orion)
@@ -46,11 +42,6 @@ enum PrivateWindowProbes {
     static let chromiumTitleSuffixes = ["(Incognito)", "(גלישה בסתר)"]
     /// Safari is closed source: only the English suffix the owner's probe saw.
     static let safariTitleSuffixes = ["Private Browsing"]
-    /// Owner probe: present only in Safari's private window (a toolbar button at depth 2).
-    static let safariShieldIdentifier = "PrivacyReportShieldButton"
-    /// The shield search: breadth-first from the window, ≤ this depth (window = 0) and ≤ this many nodes.
-    static let shieldScanDepth = 3
-    static let shieldScanNodes = 80
 
     /// The probe for one window. Only `true` or nil leaves it.
     static func isPrivate<T: AXNodeReading>(_ signal: PrivateWindowSignal, tree: T,
@@ -59,9 +50,8 @@ enum PrivateWindowProbes {
         case .chromiumTitle:
             return try titleEnds(with: chromiumTitleSuffixes, tree: tree, window: window) ? true : nil
         case .safari:
-            // QA P3-16: the title first (one AX call, and it can't match a normal window's toolbar), then the shield.
-            if try titleEnds(with: safariTitleSuffixes, tree: tree, window: window) { return true }
-            return try hasIdentifier(safariShieldIdentifier, tree: tree, window: window) ? true : nil
+            // P3-30: the title only (one AX call). The shield button also shows in a normal window's toolbar.
+            return try titleEnds(with: safariTitleSuffixes, tree: tree, window: window) ? true : nil
         case .arc, .gecko, .none:
             return nil   // no AX call: Arc → Apple Event only; Gecko → the pending Zen signal goes here
         }
@@ -93,22 +83,5 @@ enum PrivateWindowProbes {
         case 0x20, 0x09, 0xA0, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069: true
         default: false
         }
-    }
-
-    /// A bounded breadth-first look for an element with this AXIdentifier (≤ `shieldScanDepth`, ≤ `shieldScanNodes`).
-    /// Reads only identifiers and children; never descends below the depth limit, so it never walks into the page.
-    static func hasIdentifier<T: AXNodeReading>(_ identifier: String, tree: T,
-                                                window: T.Node) throws(AXReadError) -> Bool {
-        var queue: [(node: T.Node, depth: Int)] = [(window, 0)]
-        var head = 0
-        while head < queue.count, head < shieldScanNodes {
-            let (node, depth) = queue[head]
-            head += 1
-            if depth > 0, try tree.string(.identifier, of: node) == identifier { return true }
-            if depth < shieldScanDepth {
-                queue.append(contentsOf: try tree.children(of: node).map { ($0, depth + 1) })
-            }
-        }
-        return false
     }
 }

@@ -41,6 +41,14 @@ struct BrowsersSettingsView: View {
                     caption(BrowsersSettingsModel.automationExplanation)
                 }
                 VStack(alignment: .leading, spacing: 2) {
+                    // P3-29: the address bar uses the browser's language (on by default).
+                    Toggle(BrowsersSettingsModel.addressBarToggleTitle, isOn: Binding(
+                        get: { model.browserLanguageInAddressBar },
+                        set: { model.browserLanguageInAddressBar = $0 }))
+                        .disabled(!model.isEditable)
+                    caption(BrowsersSettingsModel.addressBarExplanation)
+                }
+                VStack(alignment: .leading, spacing: 2) {
                     Toggle(BrowsersSettingsModel.privateToggleTitle, isOn: Binding(
                         get: { model.ignorePrivateWindows },
                         set: { model.ignorePrivateWindows = $0 }))

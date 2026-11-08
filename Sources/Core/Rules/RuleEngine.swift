@@ -14,6 +14,11 @@
 //   The winner is deterministic: pinned beats learned, then the newer `updatedAt`, then the smaller id.
 // - Private windows still get site rules (001 §5 flow (d) step 5), unless `ignorePrivateWindowsCompletely`
 //   is on, which drops site and siteHost rules for contexts known to be private.
+// - P3-29 (plan.md decision 2026-11-08, owner): with `addressBarUsesBrowserLanguage` on, a browser whose focus is in a
+//   text field outside the page (`pageState == .editingAddress`: the address bar, after ⌘L or a click) resolves as
+//   the browser itself: chat (none in browsers) > app rule > `addressBarSource` (the pair's Latin member, level
+//   `.addressBar`) > default. Site and host rules apply only inside web pages. Off → the old order (the site's rule
+//   stays while the bar is focused). A private window gets the same.
 
 import Foundation
 
@@ -21,14 +26,22 @@ struct RuleEngine: Sendable {
     let defaultBehavior: DefaultBehavior
     /// Settings → Browsers & Sites → "Ignore private windows completely" (001 §8, P3).
     let ignorePrivateWindowsCompletely: Bool
+    /// P3-29: Settings → Browsers & Sites → "Use the browser's language in the address bar".
+    let addressBarUsesBrowserLanguage: Bool
+    /// P3-29: the address bar's language when the browser has no app rule (`AddressBarLanguage.latinSource`).
+    /// nil = the pair has no Latin member: the default behaviour decides.
+    let addressBarSource: InputSourceID?
 
     /// The winning rule per normalized scope.
     private let byScope: [RuleScope: Rule]
 
     init(rules: [Rule], defaultBehavior: DefaultBehavior = .keepCurrent,
-         ignorePrivateWindowsCompletely: Bool = false) {
+         ignorePrivateWindowsCompletely: Bool = false, addressBarUsesBrowserLanguage: Bool = false,
+         addressBarSource: InputSourceID? = nil) {
         self.defaultBehavior = defaultBehavior
         self.ignorePrivateWindowsCompletely = ignorePrivateWindowsCompletely
+        self.addressBarUsesBrowserLanguage = addressBarUsesBrowserLanguage
+        self.addressBarSource = addressBarSource
         var index: [RuleScope: Rule] = [:]
         for rule in rules {
             guard let key = Self.normalized(rule.scope) else { continue }
@@ -44,7 +57,8 @@ struct RuleEngine: Sendable {
         if let bundleID, let key = c.chatKey, let rule = byScope[.chat(bundleID: bundleID, key: key)] {
             return Resolution(target: rule.inputSource, matched: rule, level: .chat)
         }
-        let skipSites = ignorePrivateWindowsCompletely && c.isPrivateWindow == true
+        let inAddressBar = usesBrowserLanguage(c)   // P3-29
+        let skipSites = inAddressBar || (ignorePrivateWindowsCompletely && c.isPrivateWindow == true)
         if !skipSites {
             if let host = Self.normalizedHost(c.host), let rule = byScope[.siteHost(host: host)] {
                 return Resolution(target: rule.inputSource, matched: rule, level: .siteHost)
@@ -56,12 +70,20 @@ struct RuleEngine: Sendable {
         if let bundleID, let rule = byScope[.app(bundleID: bundleID)] {
             return Resolution(target: rule.inputSource, matched: rule, level: .app)
         }
+        if inAddressBar, let source = addressBarSource {
+            return Resolution(target: source, matched: nil, level: .addressBar)   // P3-29: "English"
+        }
         switch defaultBehavior {
         case .keepCurrent:
             return Resolution(target: nil, matched: nil, level: .none)
         case .switchTo(let id):
             return Resolution(target: id, matched: nil, level: .defaultRule)
         }
+    }
+
+    /// P3-29: `c` is a browser whose address bar (a text field outside the page) has focus, and the setting is on.
+    func usesBrowserLanguage(_ c: Context) -> Bool {
+        addressBarUsesBrowserLanguage && c.pageState == .editingAddress
     }
 
     /// The scope a manual switch in `c` should be learned under (used by RuleLearner, P2-10).
