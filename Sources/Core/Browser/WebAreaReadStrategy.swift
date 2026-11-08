@@ -14,7 +14,9 @@
 //      that exposes no web area.
 // `chrome:`, `about:`, `arc:`, `edge:` and every other non-web scheme come back from `SiteReader` as `.notWebPage`.
 // A focused text field outside the page (the omnibox, a find bar) makes the page state `.editingAddress`, but the web
-// area is still read: its site is the page's own, so it is kept (§14.3.3 Chromium step 5).
+// area is still read: its site is the page's own, so it is kept (§14.3.3 Chromium step 5). P3-31: the reader's
+// `AddressBarClassifier` may then say the field is the Find box (`.editingBrowserField`); for Chromium and Safari it is
+// gated off until the owner's focus probe, so these stay `.editingAddress` (P3-29).
 //
 // Never read: any text field. The Chromium omnibox (D16: dynamic id, localized description) and, by Coordinator
 // decision (plan.md, P3-6 QA), Safari's address field: Safari uses AXURL plus opt-in Automation only.

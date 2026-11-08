@@ -37,8 +37,8 @@ struct BrowserSupportTracker: Sendable, Equatable {
         case .unknown:
             // A detected private window that isn't read (D12) says nothing about support.
             if sawWindow && o.isPrivate != true { r.unknownStreak += 1 }
-        case .editingAddress:
-            break   // the user is typing in the bar: neither a success nor a failure
+        case .editingAddress, .editingBrowserField:
+            break   // the user is typing in the bar or the Find box (P3-31): neither a success nor a failure
         }
         records[bundleID] = r
     }

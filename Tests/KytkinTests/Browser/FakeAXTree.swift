@@ -16,6 +16,8 @@ final class FakeAXTree: AXNodeReading {
         var description: String?
         var title: String?
         var value: String?
+        /// P3-31: AXDOMClassList.
+        var domClassList: [String]?
         var url: String?
         var focused: Bool?
         var area: Double?
@@ -25,12 +27,14 @@ final class FakeAXTree: AXNodeReading {
 
     enum Call: Equatable {
         case focusedElement, mainWindow, focusedWindow
-        case parent(Int), children(Int), string(AXStringAttribute, Int), url(Int), isFocused(Int), area(Int)
+        case parent(Int), children(Int), string(AXStringAttribute, Int), strings(AXStringListAttribute, Int), url(Int)
+        case isFocused(Int), area(Int)
 
         var node: Int? {
             switch self {
             case .focusedElement, .mainWindow, .focusedWindow: nil
-            case .parent(let n), .children(let n), .string(_, let n), .url(let n), .isFocused(let n), .area(let n): n
+            case .parent(let n), .children(let n), .string(_, let n), .strings(_, let n), .url(let n), .isFocused(let n),
+                 .area(let n): n
             }
         }
     }
@@ -59,12 +63,12 @@ final class FakeAXTree: AXNodeReading {
     @discardableResult
     func add(_ role: String, subrole: String? = nil, under parent: Int? = nil, listed: Bool = true,
              domIdentifier: String? = nil, identifier: String? = nil, description: String? = nil,
-             title: String? = nil, value: String? = nil, url: String? = nil, focused: Bool? = nil,
-             area: Double? = nil) -> Int {
+             title: String? = nil, value: String? = nil, domClassList: [String]? = nil, url: String? = nil,
+             focused: Bool? = nil, area: Double? = nil) -> Int {
         let id = nodes.count + 1
         nodes[id] = FakeNode(role: role, subrole: subrole, domIdentifier: domIdentifier, identifier: identifier,
-                             description: description, title: title, value: value, url: url, focused: focused,
-                             area: area, parent: parent)
+                             description: description, title: title, value: value, domClassList: domClassList,
+                             url: url, focused: focused, area: area, parent: parent)
         if let parent, listed { nodes[parent]?.children.append(id) }
         return id
     }
@@ -112,6 +116,13 @@ final class FakeAXTree: AXNodeReading {
         case .description: return node.description
         case .title: return node.title
         case .value: return node.value
+        }
+    }
+
+    func strings(_ a: AXStringListAttribute, of n: Int) throws(AXReadError) -> [String]? {
+        try log(.strings(a, n))
+        switch a {
+        case .domClassList: return nodes[n]?.domClassList
         }
     }
 

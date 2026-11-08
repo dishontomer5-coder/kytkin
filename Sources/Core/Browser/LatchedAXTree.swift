@@ -91,6 +91,10 @@ struct LatchedAXTree<Base: AXNodeReading>: AXNodeReading {
         try latch.guarded { () throws(AXReadError) in try base.string(a, of: n) }
     }
 
+    func strings(_ a: AXStringListAttribute, of n: Node) throws(AXReadError) -> [String]? {
+        try latch.guarded { () throws(AXReadError) in try base.strings(a, of: n) }
+    }
+
     func url(of n: Node) throws(AXReadError) -> String? {
         try latch.guarded { () throws(AXReadError) in try base.url(of: n) }
     }

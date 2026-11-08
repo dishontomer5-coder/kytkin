@@ -31,15 +31,29 @@ struct KnownBrowser: Sendable, Equatable {
     /// P3-16: the private-window check. Default by engine: Chromium → the incognito title suffix, Gecko → the
     /// (still empty) Gecko seam, others → none. Arc and Safari set theirs.
     let privateSignal: PrivateWindowSignal
+    /// P3-31: how the real address bar is told apart from the Find box. Default by engine: Gecko → `urlbar-input`,
+    /// Chromium → the omnibox class (gated off until the probe), Safari sets its own, others → none. Arc → none.
+    let addressBarSignal: AddressBarSignal
 
     init(_ bundleID: String, _ engine: BrowserEngine, appleScript: AppleScriptDialect? = nil,
-         alwaysPrivate: Bool = false, verified: Bool = false, privateSignal: PrivateWindowSignal? = nil) {
+         alwaysPrivate: Bool = false, verified: Bool = false, privateSignal: PrivateWindowSignal? = nil,
+         addressBarSignal: AddressBarSignal? = nil) {
         self.bundleID = bundleID
         self.engine = engine
         self.appleScript = appleScript
         self.alwaysPrivate = alwaysPrivate
         self.verified = verified
         self.privateSignal = privateSignal ?? Self.defaultSignal(for: engine)
+        self.addressBarSignal = addressBarSignal ?? Self.defaultAddressBarSignal(for: engine)
+    }
+
+    /// P3-31: the address-bar check by engine.
+    static func defaultAddressBarSignal(for engine: BrowserEngine) -> AddressBarSignal {
+        switch engine {
+        case .gecko: .geckoURLBar
+        case .chromium: .chromiumOmniboxClass
+        case .webkit, .unknown: .none
+        }
     }
 
     static func defaultSignal(for engine: BrowserEngine) -> PrivateWindowSignal {
@@ -60,8 +74,9 @@ enum BrowserCatalog {
         KnownBrowser("com.google.Chrome.canary", .chromium, appleScript: .chromium),
         KnownBrowser("org.chromium.Chromium", .chromium, appleScript: .chromium),
         // P3-16: Arc's private window shows no title marker and almost no AX tree: the Apple Event flag only.
+        // P3-31: Arc's command bar may not be told apart from other fields (plan.md P3-31): none until the probe.
         KnownBrowser("company.thebrowser.Browser", .chromium, appleScript: .arc, verified: true,
-                     privateSignal: .arc), // Arc: Info.plist ✓, R3b [V]
+                     privateSignal: .arc, addressBarSignal: AddressBarSignal.none), // Arc: Info.plist ✓, R3b [V]
         KnownBrowser("com.microsoft.edgemac", .chromium, appleScript: .chromium),
         KnownBrowser("com.microsoft.edgemac.Beta", .chromium, appleScript: .chromium),
         KnownBrowser("com.microsoft.edgemac.Dev", .chromium, appleScript: .chromium),
@@ -81,8 +96,10 @@ enum BrowserCatalog {
         KnownBrowser("one.ablaze.floorp", .gecko),
         KnownBrowser("org.torproject.torbrowser", .gecko, alwaysPrivate: true),
         // WebKit. Safari stays unverified until P3-3 item 3 (it wasn't running in R3b).
-        KnownBrowser("com.apple.Safari", .webkit, appleScript: .safari, privateSignal: .safari), // Info.plist ✓
-        KnownBrowser("com.apple.SafariTechnologyPreview", .webkit, appleScript: .safari, privateSignal: .safari),
+        KnownBrowser("com.apple.Safari", .webkit, appleScript: .safari, privateSignal: .safari,
+                     addressBarSignal: .safariAddressField), // Info.plist ✓
+        KnownBrowser("com.apple.SafariTechnologyPreview", .webkit, appleScript: .safari, privateSignal: .safari,
+                     addressBarSignal: .safariAddressField),
         KnownBrowser("com.kagi.kagimacOS", .webkit), // Orion: no dialect
     ]
 

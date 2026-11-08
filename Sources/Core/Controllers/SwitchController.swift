@@ -10,7 +10,9 @@
 //     re-assert of the rule switch it follows. P3-29: with "Use the browser's language in the address bar" on, a move
 //     into or out of `.editingAddress` is a full change: the rule is applied (the browser's language in the bar, the
 //     site's again on the page). QA (P3-29): a `.unknown` read in the same window keeps whichever of the two applied
-//     (`inAddressBar`), so one AX timeout while typing in the bar doesn't flip the language and back. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
+//     (`inAddressBar`), so one AX timeout while typing in the bar doesn't flip the language and back. P3-31: the Find box
+//     (`.editingBrowserField`) isn't the bar: page ↔ Find box is page-state-only (D5), bar ↔ Find box is a full change,
+//     and a `.unknown` after the Find box keeps the site's language. Pin uses `RuleEngine.pinScope` (a private window pins the site too, owner Q1); Forget on a site acts
 //     only on a site or siteHost rule (D6).
 // (b) `.external` change → `conflicts.noteExternalSwitch()` and, unless Kytkin's own window is active, paused or
 //     the app disabled, learner `externalSwitch`; `.ours` → learner `ourSwitch`. Word boundaries and dwell ticks feed

@@ -13,6 +13,8 @@
 //   3. The value goes to `SiteReader` as `.geckoAddressBar`, the only source where scheme-less text counts.
 //      Search terms, empty text → `.unknown` with the kept site, never "no site" (D10). `about:` → `.notWebPage`.
 //   4. No web area and no bar (Zen compact mode hides the toolbar, focus in the sidebar) → `.unknown`, kept site.
+// P3-31: which "editing" it is (the urlbar or the Find box) is decided after this strategy by the reader's
+// `AddressBarClassifier` (`.geckoURLBar`): the bar cached here compared with the focused element (no AX call).
 // Never sets anything on the browser (no AXEnhancedUserInterface): `AXNodeReading` can't.
 
 enum GeckoReadLimits {
