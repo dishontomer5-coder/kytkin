@@ -14,8 +14,14 @@
 // Per browser (`PrivateWindowSignal`, set in `BrowserCatalog`):
 // - Chromium family: the window's AXTitle ends with Chromium's IDS_ACCESSIBLE_INCOGNITO_WINDOW_TITLE_FORMAT suffix.
 //   Owner probe: Chrome's private window title ends "(Incognito)"; normal windows don't.
-// - Safari: an element with AXIdentifier `PrivacyReportShieldButton` (only in the private window in the owner's probe;
-//   identifiers aren't localized), else the title ends "Private Browsing" (English only).
+// - Safari: the title ends "Private Browsing" (English only), else an element with AXIdentifier
+//   `PrivacyReportShieldButton` (only in the private window in the owner's probe; identifiers aren't localized).
+//   QA P3-16, known risk: Safari's View > Customize Toolbar offers a "Privacy Report" item. If a user adds it to the
+//   normal toolbar it most likely carries the same identifier, and then every Safari window reads as private: nothing
+//   is learned in Safari (and with "Don't use website rules in private windows" on, only Safari's app rule applies).
+//   The menu shows `, private` on normal windows, so it's visible; checklist §P3-14 step 6 asks the owner to try it.
+//   If it does match, the shield needs a second marker or goes (the English title then is the only signal).
+//   The title is checked first: one call, and an English private window then needs no toolbar scan.
 // - Arc: no AX signal. Its private window's AX tree is a window and one split group (no web area), so the site reads
 //   `.unknown` and nothing is learned; only the P3-7 `incognito` Apple Event flag can tell. The probe makes no AX call.
 // - Gecko (Zen, Firefox): no signal found yet at depth ≤ 3 (a deeper Zen probe is pending). This is the seam where
@@ -24,7 +30,7 @@
 /// Which private-window check a browser gets (P3-16). Catalog data, not a user setting.
 enum PrivateWindowSignal: Sendable, Equatable {
     case chromiumTitle   // the window title ends with Chromium's incognito suffix
-    case safari          // Safari's privacy shield button id, else the "Private Browsing" title suffix
+    case safari          // the "Private Browsing" title suffix, else Safari's privacy shield button id
     case arc             // nothing in AX: the P3-7 Apple Event flag only
     case gecko           // P3-16: no signal yet (Zen probe pending): returns nil
     case none            // unknown browsers, other WebKit browsers (Orion)
@@ -53,8 +59,9 @@ enum PrivateWindowProbes {
         case .chromiumTitle:
             return try titleEnds(with: chromiumTitleSuffixes, tree: tree, window: window) ? true : nil
         case .safari:
-            if try hasIdentifier(safariShieldIdentifier, tree: tree, window: window) { return true }
-            return try titleEnds(with: safariTitleSuffixes, tree: tree, window: window) ? true : nil
+            // QA P3-16: the title first (one AX call, and it can't match a normal window's toolbar), then the shield.
+            if try titleEnds(with: safariTitleSuffixes, tree: tree, window: window) { return true }
+            return try hasIdentifier(safariShieldIdentifier, tree: tree, window: window) ? true : nil
         case .arc, .gecko, .none:
             return nil   // no AX call: Arc → Apple Event only; Gecko → the pending Zen signal goes here
         }

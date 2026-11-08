@@ -12,7 +12,8 @@
 //      a find bar). Else other.
 //   3. The window's cache entry (≤ 8 windows, most recent first, matched with `isSame`).
 //   4. The private flag, probed once per window (re-checked after `noteTrigger` of a window change or attach; a title
-//      change re-checks only a window whose probe couldn't tell, since a window can't become private later). If it's
+//      change re-checks only a window whose probe couldn't tell, since a window can't become private later, and only
+//      while it has had fewer than `titleRecheckProbes` probes: QA P3-16). If it's
 //      true and the user ignores private windows → `(nil, .unknown, private)` without reading any address.
 //      Precedence (P3-16): the AX probe's answer wins when non-nil; else the P3-7 Apple Event flag.
 //   5. The strategy reads. A `.site`/`.notWebPage` updates the window's kept site; anything else reports the kept site.
@@ -35,6 +36,11 @@ enum BrowserReadLimits {
     static let scanNodes = 400
     /// At most one full scan per window per 2 s, unless the window changed (§14.3.3).
     static let fullScanIntervalNanos: UInt64 = 2_000_000_000
+    /// QA P3-16: a title change re-probes a window whose probe couldn't tell only while that window has had fewer
+    /// than this many probes. The late-title case is a new window (its first one or two probes); without the cap a
+    /// page that keeps changing its title (a ticker, an unread counter) re-ran the probe on every read, which in
+    /// Safari is a toolbar scan of up to 80 nodes.
+    static let titleRecheckProbes = 4
 }
 
 enum FocusClass: Sendable, Equatable {
@@ -73,6 +79,8 @@ struct BrowserWindowState<Node> {
     var lastSite: SiteAddress?
     /// nil = not probed yet; `.some(nil)` = probed, can't tell.
     var isPrivate: Bool??
+    /// QA P3-16: how many times the private-window probe ran for this window (gates the title-change re-check).
+    var privateProbes = 0
     var lastFullScanAt: UInt64?
     /// P3-7: the private flag an Apple Event gave for this window (nil = not asked yet; `.some(nil)` = asked, can't
     /// tell). A window's private mode can't change, so it is asked once per window and kept for the attach.
@@ -179,7 +187,12 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         case .focusedWindowChanged, .mainWindowChanged, .attached, .wake:
             for i in windows.indices { windows[i].isPrivate = nil }
         case .titleChanged:
-            for i in windows.indices where windows[i].isPrivate == .some(nil) { windows[i].isPrivate = nil }
+            // QA P3-16: only while the window is new (fewer than `titleRecheckProbes` probes), so a page whose title
+            // keeps changing can't re-run the probe on every read.
+            for i in windows.indices where windows[i].isPrivate == .some(nil)
+                && windows[i].privateProbes < BrowserReadLimits.titleRecheckProbes {
+                windows[i].isPrivate = nil
+            }
         case .focusedElementChanged, .loadComplete, .addressValueChanged:
             break
         }
@@ -232,6 +245,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             isPrivate = true   // Tor Browser: no probe needed
             windows[0].isPrivate = .some(isPrivate)
         } else {
+            windows[0].privateProbes += 1
             isPrivate = try privateProbe(tree, window)   // P3-16: true or nil; the title never leaves the probe
             windows[0].isPrivate = .some(isPrivate)
         }

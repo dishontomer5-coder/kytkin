@@ -87,7 +87,8 @@ func describe(_ state: BrowserPageState) -> String {
         }
         let known = BrowserCatalog.known[bundleID]
         let request = BrowserWatchRequest(engine: engine, alwaysPrivate: known?.alwaysPrivate ?? false,
-                                          ignorePrivateWindows: false, appleScript: nil)
+                                          ignorePrivateWindows: false, appleScript: nil,
+                                          privateSignal: known?.privateSignal ?? .none)   // QA P3-16: was always .none
         attachedName = "\(bundleID) [\(engine.rawValue)]"
         watcher.attach(pid: app.processIdentifier, bundleID: bundleID, request: request)
     }

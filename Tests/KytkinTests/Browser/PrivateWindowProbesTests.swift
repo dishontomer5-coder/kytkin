@@ -115,6 +115,14 @@ final class PrivateWindowProbesTests: XCTestCase {
         XCTAssertFalse(PrivateWindowProbes.endsWithAny("(Incognito) a", PrivateWindowProbes.chromiumTitleSuffixes))
         XCTAssertFalse(PrivateWindowProbes.endsWithAny("", PrivateWindowProbes.chromiumTitleSuffixes))
         XCTAssertFalse(PrivateWindowProbes.endsWithAny("\u{200F}", PrivateWindowProbes.chromiumTitleSuffixes))
+        // QA P3-16: bidi controls and no-break spaces after the marker are ignored; anything else isn't.
+        let s = PrivateWindowProbes.chromiumTitleSuffixes
+        XCTAssertTrue(PrivateWindowProbes.endsWithAny("\u{202B}דף (גלישה בסתר)\u{202C}", s))
+        XCTAssertTrue(PrivateWindowProbes.endsWithAny("\u{2067}דף (גלישה בסתר)\u{2069}\u{00A0}\t", s))
+        XCTAssertFalse(PrivateWindowProbes.endsWithAny("a (Incognito).", s))
+        XCTAssertFalse(PrivateWindowProbes.endsWithAny("a (Incognito)\n", s), "a newline isn't trimmed")
+        XCTAssertFalse(PrivateWindowProbes.endsWithAny("דף גלישה בסתר", s), "no parentheses: a page's own words")
+        XCTAssertFalse(PrivateWindowProbes.endsWithAny("a (incognito)", s), "case-sensitive, as Chromium writes it")
     }
 
     // MARK: Safari
@@ -122,13 +130,15 @@ final class PrivateWindowProbesTests: XCTestCase {
     func testSafariShieldIdentifierIsPrivateWithoutTheTitle() throws {
         let s = safari(title: "Example", shield: true)
         XCTAssertEqual(try probe(.safari, s.tree, s.window), true)
-        XCTAssertEqual(titleReads(s.tree), 0, "the language-independent id answers first")
+        XCTAssertEqual(titleReads(s.tree), 1, "QA P3-16: the title is tried first; the id answers when it can't")
         XCTAssertFalse(s.tree.calls.contains { if case .url = $0 { true } else { false } })
     }
 
-    func testSafariTitleSuffixIsTheSecondSignal() throws {
+    func testSafariTitleSuffixAnswersWithoutAToolbarScan() throws {
+        // QA P3-16: an English private window needs one title read, no shield scan.
         let s = safari(title: "Example — Private Browsing", shield: false)
         XCTAssertEqual(try probe(.safari, s.tree, s.window), true)
+        XCTAssertEqual(s.tree.calls, [.string(.title, s.window)])
     }
 
     func testSafariNormalWindowCantTell() throws {
@@ -247,6 +257,39 @@ final class PrivateWindowProbesTests: XCTestCase {
         c.tree.set(c.window) { $0.title = "New Tab (Incognito)" }
         _ = r.read(c.tree, now: t0 + sec)
         XCTAssertEqual(titleReads(c.tree), 1, "cached until a trigger")
+        r.noteTrigger(.titleChanged)
+        XCTAssertEqual(r.read(c.tree, now: t0 + 2 * sec).observation.isPrivate, true)
+    }
+
+    func testATitleChangeReprobesOnlyANewWindow() {
+        // QA P3-16: a page whose title keeps changing (a ticker, an unread counter) in a normal window must not
+        // re-run the probe on every read: title changes re-probe only while the window has had few probes.
+        let s = safari(title: "Example", shield: false)
+        var r = reader(request(.webkit, signal: .safari))
+        var now = t0
+        _ = r.read(s.tree, now: now)
+        for _ in 0..<20 {
+            r.noteTrigger(.titleChanged)
+            now += sec
+            _ = r.read(s.tree, now: now)
+        }
+        XCTAssertEqual(titleReads(s.tree), BrowserReadLimits.titleRecheckProbes)
+        XCTAssertEqual(r.windows.first?.privateProbes, BrowserReadLimits.titleRecheckProbes)
+
+        // A window change still re-probes (§14.4), whatever the count.
+        r.noteTrigger(.focusedWindowChanged)
+        _ = r.read(s.tree, now: now + sec)
+        XCTAssertEqual(titleReads(s.tree), BrowserReadLimits.titleRecheckProbes + 1)
+    }
+
+    func testANewChromeWindowWhoseTitleArrivesAfterAWindowChangeIsStillCaught() {
+        // QA P3-16: attach and a window change both probe before the title arrives; the title change still re-probes.
+        let c = chromium(title: "")
+        var r = reader(request(signal: .chromiumTitle))
+        XCTAssertNil(r.read(c.tree, now: t0).observation.isPrivate)
+        r.noteTrigger(.focusedWindowChanged)
+        XCTAssertNil(r.read(c.tree, now: t0 + sec).observation.isPrivate)
+        c.tree.set(c.window) { $0.title = "New Tab (Incognito)" }
         r.noteTrigger(.titleChanged)
         XCTAssertEqual(r.read(c.tree, now: t0 + 2 * sec).observation.isPrivate, true)
     }
