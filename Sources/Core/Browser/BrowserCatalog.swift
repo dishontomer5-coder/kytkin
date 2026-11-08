@@ -28,14 +28,26 @@ struct KnownBrowser: Sendable, Equatable {
     let alwaysPrivate: Bool
     /// The AX path was seen working on a real Mac (R3/R3b/P3-3); Settings shows "(not yet tested)" otherwise.
     let verified: Bool
+    /// P3-16: the private-window check. Default by engine: Chromium → the incognito title suffix, Gecko → the
+    /// (still empty) Gecko seam, others → none. Arc and Safari set theirs.
+    let privateSignal: PrivateWindowSignal
 
     init(_ bundleID: String, _ engine: BrowserEngine, appleScript: AppleScriptDialect? = nil,
-         alwaysPrivate: Bool = false, verified: Bool = false) {
+         alwaysPrivate: Bool = false, verified: Bool = false, privateSignal: PrivateWindowSignal? = nil) {
         self.bundleID = bundleID
         self.engine = engine
         self.appleScript = appleScript
         self.alwaysPrivate = alwaysPrivate
         self.verified = verified
+        self.privateSignal = privateSignal ?? Self.defaultSignal(for: engine)
+    }
+
+    static func defaultSignal(for engine: BrowserEngine) -> PrivateWindowSignal {
+        switch engine {
+        case .chromium: .chromiumTitle
+        case .gecko: .gecko
+        case .webkit, .unknown: .none
+        }
     }
 }
 
@@ -47,7 +59,9 @@ enum BrowserCatalog {
         KnownBrowser("com.google.Chrome.dev", .chromium, appleScript: .chromium),
         KnownBrowser("com.google.Chrome.canary", .chromium, appleScript: .chromium),
         KnownBrowser("org.chromium.Chromium", .chromium, appleScript: .chromium),
-        KnownBrowser("company.thebrowser.Browser", .chromium, appleScript: .arc, verified: true), // Arc: Info.plist ✓, R3b [V]
+        // P3-16: Arc's private window shows no title marker and almost no AX tree: the Apple Event flag only.
+        KnownBrowser("company.thebrowser.Browser", .chromium, appleScript: .arc, verified: true,
+                     privateSignal: .arc), // Arc: Info.plist ✓, R3b [V]
         KnownBrowser("com.microsoft.edgemac", .chromium, appleScript: .chromium),
         KnownBrowser("com.microsoft.edgemac.Beta", .chromium, appleScript: .chromium),
         KnownBrowser("com.microsoft.edgemac.Dev", .chromium, appleScript: .chromium),
@@ -67,8 +81,8 @@ enum BrowserCatalog {
         KnownBrowser("one.ablaze.floorp", .gecko),
         KnownBrowser("org.torproject.torbrowser", .gecko, alwaysPrivate: true),
         // WebKit. Safari stays unverified until P3-3 item 3 (it wasn't running in R3b).
-        KnownBrowser("com.apple.Safari", .webkit, appleScript: .safari), // Info.plist ✓
-        KnownBrowser("com.apple.SafariTechnologyPreview", .webkit, appleScript: .safari),
+        KnownBrowser("com.apple.Safari", .webkit, appleScript: .safari, privateSignal: .safari), // Info.plist ✓
+        KnownBrowser("com.apple.SafariTechnologyPreview", .webkit, appleScript: .safari, privateSignal: .safari),
         KnownBrowser("com.kagi.kagimacOS", .webkit), // Orion: no dialect
     ]
 

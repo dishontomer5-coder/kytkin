@@ -26,7 +26,7 @@ final class SitePolicyTests: XCTestCase {
         let p = policy()
         XCTAssertEqual(p.request(for: "app.zen-browser.zen"),
                        BrowserWatchRequest(engine: .gecko, alwaysPrivate: false, ignorePrivateWindows: false,
-                                           appleScript: nil))
+                                           appleScript: nil, privateSignal: .gecko))
         XCTAssertEqual(p.request(for: "com.google.Chrome")?.engine, .chromium)
         XCTAssertEqual(p.request(for: "com.apple.Safari")?.engine, .webkit)
     }
