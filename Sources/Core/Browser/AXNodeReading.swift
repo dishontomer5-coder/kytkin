@@ -24,6 +24,12 @@ enum AXStringAttribute: Sendable, Equatable {
     case role, subrole, domIdentifier, identifier, description, title, value
 }
 
+/// P3-31: list-valued attributes (an array of strings). Only `AXDOMClassList` (Chromium views' class names, e.g.
+/// `OmniboxViewViews`): ids, never user text. Read on the focused element only, at most once per focus change.
+enum AXStringListAttribute: Sendable, Equatable {
+    case domClassList
+}
+
 /// Role and id strings the browser reads compare against (R3, R3b).
 enum AXRoleName {
     static let webArea = "AXWebArea"
@@ -45,6 +51,9 @@ protocol AXNodeReading {
     func parent(of n: Node) throws(AXReadError) -> Node?
     func children(of n: Node) throws(AXReadError) -> [Node]
     func string(_ a: AXStringAttribute, of n: Node) throws(AXReadError) -> String?
+    /// P3-31: a list of strings (nil = no value, unsupported, or not a list of strings). Strings only: other items
+    /// are skipped.
+    func strings(_ a: AXStringListAttribute, of n: Node) throws(AXReadError) -> [String]?
     /// AXURL's absoluteString. The caller hands it to `SiteReader` in the same expression and keeps nothing.
     func url(of n: Node) throws(AXReadError) -> String?
     func isFocused(_ n: Node) throws(AXReadError) -> Bool?

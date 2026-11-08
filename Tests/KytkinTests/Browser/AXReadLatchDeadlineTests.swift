@@ -24,6 +24,9 @@ final class SlowAXTree: AXNodeReading {
     func parent(of n: Int) throws(AXReadError) -> Int? { tick(); return try base.parent(of: n) }
     func children(of n: Int) throws(AXReadError) -> [Int] { tick(); return try base.children(of: n) }
     func string(_ a: AXStringAttribute, of n: Int) throws(AXReadError) -> String? { tick(); return try base.string(a, of: n) }
+    func strings(_ a: AXStringListAttribute, of n: Int) throws(AXReadError) -> [String]? {
+        tick(); return try base.strings(a, of: n)
+    }
     func url(of n: Int) throws(AXReadError) -> String? { tick(); return try base.url(of: n) }
     func isFocused(_ n: Int) throws(AXReadError) -> Bool? { tick(); return try base.isFocused(n) }
     func area(of n: Int) throws(AXReadError) -> Double? { tick(); return try base.area(of: n) }

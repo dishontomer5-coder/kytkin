@@ -21,6 +21,8 @@ struct BrowserWatchRequest: Sendable, Equatable {
     let appleScript: AppleScriptDialect?
     /// P3-16: which AX private-window probe the reader runs (from the catalog; `.none` for unknown browsers).
     var privateSignal: PrivateWindowSignal = .none
+    /// P3-31: how the reader tells the real address bar from the Find box (from the catalog; `.none` = can't tell).
+    var addressBarSignal: AddressBarSignal = .none
 
     /// The window's private flag after the catalog's say: Tor Browser is always private.
     func privateFlag(probed: Bool?) -> Bool? {
@@ -75,6 +77,7 @@ struct SitePolicy: Sendable, Equatable {
         let dialect = appleEventsBrowsers.contains(bundleID) ? known?.appleScript : nil
         return BrowserWatchRequest(engine: engine, alwaysPrivate: known?.alwaysPrivate ?? false,
                                    ignorePrivateWindows: ignorePrivateWindows, appleScript: dialect,
-                                   privateSignal: known?.privateSignal ?? .none)
+                                   privateSignal: known?.privateSignal ?? .none,
+                                   addressBarSignal: known?.addressBarSignal ?? .none)
     }
 }

@@ -19,6 +19,9 @@
 //   the browser itself: chat (none in browsers) > app rule > `addressBarSource` (the pair's Latin member, level
 //   `.addressBar`) > default. Site and host rules apply only inside web pages. Off → the old order (the site's rule
 //   stays while the bar is focused). A private window gets the same.
+// - P3-31 (owner decision 2026-11-08): only the real address bar counts. The Find box and other toolbar fields
+//   (`.editingBrowserField`) resolve like the page: the site's rule. A field the reader can't tell apart from the bar
+//   is reported as `.editingAddress` and keeps the P3-29 behaviour.
 
 import Foundation
 
