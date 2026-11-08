@@ -103,13 +103,13 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     static let privateToggleTitle = "Don't use website rules in private windows"
     static let privateExplanation = "Kytkin never remembers websites from private windows. With this on, it also "
         + "doesn't read their address and uses only the browser's own language."
-    /// P3-16 replaces this line once the per-browser private-window checks exist (they are waiting for the P3-3 round).
-    static let privateDetectionText = "Kytkin can't yet tell which windows are private, except in Tor Browser, where "
-        + "every window counts as private. Detection for more browsers comes in a later update."
-    /// Owner answer 3 (plan.md §Phase 3): the Safari gap is accepted, with this note. P3-26: the website-rules switch
-    /// is global now, so the note no longer offers a Safari-only switch.
-    static let safariPrivateNote = "Safari doesn't let Kytkin tell when a window is private, so Kytkin treats "
-        + "Safari's private windows like normal ones."
+    /// P3-16: what the private-window checks can tell, per browser (001 §14.4; owner probe 2026-11-08).
+    static let privateDetectionText = "Kytkin recognizes private windows in Chrome when Chrome is in English or "
+        + "Hebrew (in any language with Automation), and in Arc only with Automation. Tor Browser's windows always "
+        + "count as private. Kytkin can't tell yet in Zen and other Firefox-based browsers."
+    /// Owner answer 3 accepted a Safari gap; P3-16 closed it: Safari's private window has a privacy button that
+    /// normal windows don't, and its id doesn't depend on the language.
+    static let safariPrivateNote = "In Safari, Kytkin recognizes private windows in any language."
     /// P3-4: how websites are grouped, and why gov.il is different.
     static let groupingText = "A website rule covers the whole site: ynet.co.il also covers www.ynet.co.il and "
         + "news.ynet.co.il. Some addresses are shared by many separate sites, such as gov.il or github.io. There each "
