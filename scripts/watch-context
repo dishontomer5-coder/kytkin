@@ -4,25 +4,20 @@
 # Listen-only: no window, no permission, never activates or messages another app.
 #   ./scripts/watch-context [--debounce-ms N]
 #   KYTKIN_BUILD_ONLY=1 ./scripts/watch-context   compile only (used by agents; nothing runs)
-# The tool is compiled from the app's own sources (System/Context adapters + Core Context/Model).
+# The tool is compiled from the app's own sources (System/Context + System/Browser adapters + all of Core).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 BIN="build/tools/watch-context"
 mkdir -p "$(dirname "$BIN")"
 
-SOURCES=(
-  Tools/watch-context/main.swift
-  Sources/System/Context/*.swift
-  Sources/Core/Context/*.swift
-  Sources/Core/Model/Context.swift
-  Sources/Core/Model/ChatKey.swift
-  Sources/Core/Model/Clock.swift
-  Sources/Core/Support/SystemClock.swift
-  Sources/Core/Platform/KnownSwitchers.swift
-  Sources/Core/Platform/KnownSwitcher.swift
-)
+# QA (P3-29): ContextMonitor now also drives the browser watcher (P3-5/P3-10), so like watch-site the tool compiles
+# all of Core (pure) + System/Context + System/Browser (+ the silent Automation check System/Browser calls). The tool
+# never attaches a browser watcher, so no AX read and no Apple Event is ever made.
+SOURCES=(Tools/watch-context/main.swift Sources/System/Context/*.swift Sources/System/Browser/*.swift
+         Sources/System/Permissions/SystemAutomationPermission.swift)
+while IFS= read -r -d '' f; do SOURCES+=("$f"); done < <(find Sources/Core -name '*.swift' -type f -print0)
 
-xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -o "$BIN" "${SOURCES[@]}"
+xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -module-name WatchContext -o "$BIN" "${SOURCES[@]}"
 [[ "${KYTKIN_BUILD_ONLY:-}" == 1 ]] && exit 0
 exec "$BIN" "$@"

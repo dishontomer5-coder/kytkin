@@ -111,6 +111,41 @@ final class BrowserReadSchedulerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reads, 1_000 / 50 - 1)
     }
 
+    func testAFocusStormOnASlowPageKeepsTheAXThreadAtMostHalfBusy() {
+        // QA (P3-29): every read takes 120 ms (a heavy page); focus notifications queue during each read and arrive
+        // right after it. Without the duty cap each one would start the next read at once (back to back).
+        s.attached(now: now)
+        _ = s.takeDue(now: now)
+        clock.advance(byMilliseconds: 120)
+        s.readFinished(page, sawWindow: true, now: now)
+        let start = now
+        var busy: UInt64 = 0
+        var steps = 0
+        while now < start + 2_000 * ms, steps < 1_000 {   // bounded
+            steps += 1
+            s.trigger(.focusedElementChanged, now: now)
+            if s.takeDue(now: now) {
+                clock.advance(byMilliseconds: 120)
+                busy += 120 * ms
+                s.readFinished(page, sawWindow: true, now: now)
+            } else {
+                clock.advance(byMilliseconds: 5)
+            }
+        }
+        // Focus reads alone: ≤ 50 %; the burst's 500 ms max-wait read comes on top (≤ 1 per 500 ms).
+        XCTAssertLessThanOrEqual(Double(busy) / Double(now - start), 0.65)
+        XCTAssertGreaterThan(busy, 0)
+    }
+
+    func testAFastReadStillAllowsTheNextFocusReadAfter50ms() {
+        s.attached(now: now)
+        _ = s.takeDue(now: now)
+        clock.advance(byMilliseconds: 5)
+        s.readFinished(page, sawWindow: true, now: now)
+        s.trigger(.focusedElementChanged, now: now)
+        XCTAssertEqual(s.nextDeadlineNanos, now + 50 * ms, "50 ms after the read ended")
+    }
+
     func testAFocusReadInsideABurstStillLetsTheBurstEnd() {
         s.attached(now: now)
         _ = runNext()

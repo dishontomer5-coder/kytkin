@@ -77,12 +77,67 @@ final class AddressBarSwitchTests: XCTestCase {
         XCTAssertEqual(switcher.current, IDs.hebrew)
     }
 
-    func testLeavingTheBarForAnUnknownReadStillUsesTheKeptSite() {
+    // QA (P3-29): `.unknown` in the same window (an AX timeout, or focus somewhere Kytkin can't place, like Zen's
+    // compact sidebar) keeps whichever language applied; the next real read decides.
+
+    func testAnUnknownReadWhileTypingInTheBarDoesNotFlipTheLanguage() {
         make([site("ynet.co.il", IDs.hebrew)])
         show()
         show(.editingAddress)
-        show(.unknown)   // e.g. focus to Zen's sidebar
+        XCTAssertEqual(show(.unknown), .pageStateOnly(from: .editingAddress, to: .unknown), "one AX timeout")
+        XCTAssertEqual(switcher.current, IDs.abc, "still the bar's language")
+        XCTAssertEqual(sut.currentRule?.resolution.level, .addressBar, "the menu still says address bar")
+        XCTAssertEqual(show(.editingAddress), .pageStateOnly(from: .unknown, to: .editingAddress))
+        XCTAssertEqual(switcher.selectedIDs, [IDs.abc], "no flip to Hebrew and back")
+    }
+
+    func testAfterAnUnknownReadInTheBarThePageGetsTheSitesLanguageAgain() {
+        make([site("ynet.co.il", IDs.hebrew)])
+        show()
+        show(.editingAddress)
+        show(.unknown)
+        XCTAssertEqual(show(.page), .full)
         XCTAssertEqual(switcher.current, IDs.hebrew)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.abc, IDs.hebrew])
+    }
+
+    func testAnUnknownReadOnThePageThenTheBar() {
+        make([site("ynet.co.il", IDs.hebrew)])
+        show()
+        XCTAssertEqual(show(.unknown), .pageStateOnly(from: .page, to: .unknown), "P3-19 unchanged")
+        XCTAssertEqual(switcher.current, IDs.hebrew)
+        XCTAssertEqual(show(.editingAddress), .full)
+        XCTAssertEqual(switcher.current, IDs.abc)
+        XCTAssertEqual(show(.unknown), .pageStateOnly(from: .editingAddress, to: .unknown))
+        XCTAssertEqual(show(.page), .full)
+        XCTAssertEqual(switcher.current, IDs.hebrew)
+    }
+
+    func testAnUnknownReadOnAnotherSiteIsNotKeptAsTheBar() {
+        make([site("ynet.co.il", IDs.hebrew), site("haaretz.co.il", IDs.russian)])
+        show()
+        show(.editingAddress)
+        XCTAssertEqual(show(.unknown, host: "www.haaretz.co.il", domain: "haaretz.co.il"), .full)
+        XCTAssertEqual(switcher.current, IDs.russian, "another site: its rule, not the bar's")
+    }
+
+    func testAnUnknownReadInTheBarWithTheSwitchOffIsTheOldBehaviour() {
+        make([site("ynet.co.il", IDs.hebrew)], on: false, current: IDs.abc)
+        show()
+        show(.editingAddress)
+        show(.unknown)
+        XCTAssertEqual(switcher.selectedIDs, [IDs.hebrew])
+    }
+
+    func testResumingDuringAnUnknownReadInTheBarKeepsTheBarsLanguage() {
+        make([site("ynet.co.il", IDs.hebrew)])
+        show()
+        show(.editingAddress)
+        show(.unknown)
+        sut.setPaused(true)
+        switcher.current = IDs.russian
+        sut.setPaused(false)
+        XCTAssertEqual(switcher.current, IDs.abc)
     }
 
     func testANewTabsOmniboxIsEnglish() {

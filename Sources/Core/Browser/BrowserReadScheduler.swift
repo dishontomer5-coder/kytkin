@@ -6,7 +6,8 @@
 //
 //   attached / wake       → read at once (no debounce), and restart the readiness retries.
 //   any other trigger     → read 150 ms after the last trigger of a burst, never later than 500 ms after its first.
-//   focus change          → P3-29: also read at once (leading edge), at most one such read per 50 ms; the burst's
+//   focus change          → P3-29: also read at once (leading edge), but no sooner than 50 ms, or the last read's
+//                           length if longer, after the last read ended (QA: ≤ 50 % AX duty on slow pages); the burst's
 //                           150 ms trailing read still follows. ⌘L or a click into the address bar must switch to
 //                           the browser's language before the first key, and a 150 ms debounce alone was too slow.
 //   readiness retries     → after the attach read, while reads see no window or give `.unknown`: re-read at
@@ -36,7 +37,8 @@ struct BrowserReadScheduler: Sendable {
     private var pollAt: UInt64?
     private var againAt: UInt64?          // P3-7: an Apple Event held back by the rate limit
     private var focusAt: UInt64?          // P3-29: the leading-edge read for a focus change
-    private var lastReadAt: UInt64?       // P3-29: for the focus read gap
+    private var lastReadAt: UInt64?       // P3-29: for the focus read gap (the last read's start)
+    private var lastReadEndAt: UInt64?    // QA (P3-29): the last read's end (`readFinished`)
 
     init() {}
 
@@ -71,7 +73,14 @@ struct BrowserReadScheduler: Sendable {
              .addressValueChanged:
             if t == .focusedElementChanged {
                 // P3-29: leading edge. The trailing burst read below still follows (a focus move can settle late).
-                let at = max(now, lastReadAt.map { $0 + Self.focusReadGapNanos } ?? now)
+                // QA (P3-29): the gap counts from the last read's end and is at least that read's length, so on a
+                // slow page (reads ≥ 50 ms) a focus storm keeps the AX thread at most half busy instead of reading
+                // back to back (each read can take up to the 0.5 s budget).
+                var at = now
+                if let start = lastReadAt {
+                    let end = max(lastReadEndAt ?? start, start)
+                    at = max(now, end + max(Self.focusReadGapNanos, end - start))
+                }
                 focusAt = min(focusAt ?? at, at)
             }
             let first = burstFirstAt ?? now
@@ -84,6 +93,7 @@ struct BrowserReadScheduler: Sendable {
     mutating func readFinished(_ o: BrowserObservation, sawWindow: Bool, now: UInt64) {
         guard isAttached else { return }
         pollAt = now + Self.pollNanos
+        lastReadEndAt = now
         guard let base = retryBase else { return }
         if sawWindow && o.pageState != .unknown {
             retryBase = nil
@@ -117,6 +127,7 @@ struct BrowserReadScheduler: Sendable {
         immediateAt = nil
         focusAt = nil
         lastReadAt = now
+        lastReadEndAt = nil
         if !focusOnly {
             // A read now covers every trigger so far, even a burst whose debounce hasn't run out.
             burstDeadline = nil
