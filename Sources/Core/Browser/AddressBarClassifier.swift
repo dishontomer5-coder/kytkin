@@ -15,8 +15,10 @@
 // - Gecko (Zen, Firefox): the window's cached `urlbar-input` (`BrowserWindowState.addressBar`) compared with the focused
 //   element (`isSame`, no AX call) → `.addressBar`. Otherwise one AXDOMIdentifier read on the focused element:
 //   `urlbar-input` → `.addressBar` (and the bar is cached for the window); another id → `.otherField`; no id →
-//   `.otherField` when the window's bar is known (it isn't this field), else `.unknown` (a Firefox fork whose bar has
-//   no id was found by description; it must keep P3-29).
+//   `.otherField` when the window's bar is known (it isn't this field) or the field isn't an AXComboBox (QA: the
+//   Gecko bar is a combo box, by id (R3b §1) and by the description fallback alike, so an id-less text field such as
+//   Firefox's find bar can't be it; the role comes from the focus walk, no extra AX call), else `.unknown` (an
+//   id-less combo box before the bar is known: a Firefox fork's bar found only by description keeps P3-29).
 // - Chromium (Chrome, Edge, Brave, …): the omnibox's AXDOMIdentifier is a dynamic `view_NNNN` (R3b D16), so the
 //   only candidate is AXDOMClassList containing `OmniboxViewViews` (Chromium's omnibox view class). Wired, but OFF
 //   (`chromiumOmniboxClassEnabled = false` → `.unknown`) until the owner's §P3-31 focus probe shows Chrome exposes it.
@@ -73,9 +75,10 @@ struct AddressBarClassifier: Sendable, Equatable {
         }
     }
 
-    /// `focused` is a text field outside the page. `window.addressBar` is the window's cached Gecko bar (nil if not
-    /// found yet); a Gecko `urlbar-input` found here is cached into it. At most one AX call.
-    func classify<T: AXNodeReading>(_ focused: T.Node, window: inout BrowserWindowState<T.Node>,
+    /// `focused` is a text field outside the page; `role` its AXRole as the focus walk read it (nil = not known).
+    /// `window.addressBar` is the window's cached Gecko bar (nil if not found yet); a Gecko `urlbar-input` found here
+    /// is cached into it. At most one AX call.
+    func classify<T: AXNodeReading>(_ focused: T.Node, role: String? = nil, window: inout BrowserWindowState<T.Node>,
                                     tree: T) throws(AXReadError) -> AddressBarVerdict {
         switch signal {
         case .geckoURLBar:
@@ -87,7 +90,8 @@ struct AddressBarClassifier: Sendable, Equatable {
             case .some:
                 return .otherField
             case nil:
-                return window.addressBar == nil ? .unknown : .otherField
+                if window.addressBar != nil { return .otherField }
+                return role == AXRoleName.comboBox || role == nil ? .unknown : .otherField
             }
         case .chromiumOmniboxClass:
             guard chromiumEnabled, let classes = try tree.strings(.domClassList, of: focused), !classes.isEmpty else {

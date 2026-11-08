@@ -38,9 +38,9 @@ final class FindBoxFocusTests: XCTestCase {
     }
 
     /// Zen's find bar: a text field in the content area, outside the web area (Firefox's `findbar`).
-    private func addFindBox(_ z: BrowserFixtures.Zen, id: String? = "find-field") -> Int {
+    private func addFindBox(_ z: BrowserFixtures.Zen, id: String? = "find-field", role: String = "AXTextField") -> Int {
         let findbar = z.tree.add("AXGroup", under: z.tabPanel)
-        return z.tree.add("AXTextField", under: findbar, domIdentifier: id, description: "Find in page",
+        return z.tree.add(role, under: findbar, domIdentifier: id, description: "Find in page",
                           value: "secret words")
     }
 
@@ -104,14 +104,55 @@ final class FindBoxFocusTests: XCTestCase {
         XCTAssertNil(r.windows.first?.addressBar)
     }
 
-    func testZenFieldWithoutAnIdBeforeTheBarIsCachedKeepsP329() {
-        // A Firefox fork whose bar has no id is found only by its description: a field without an id can't be told
-        // apart until the bar is known, so it stays the bar (P3-29).
+    func testZenComboBoxWithoutAnIdBeforeTheBarIsCachedKeepsP329() {
+        // A Firefox fork whose bar has no id is found only by its description (a combo box): an id-less combo box
+        // can't be told apart until the bar is known, so it stays the bar (P3-29).
         let z = BrowserFixtures.zen()
-        let find = addFindBox(z, id: nil)
+        let find = addFindBox(z, id: nil, role: "AXComboBox")
         z.tree.focused = find
         var r = reader(.gecko, bar: .geckoURLBar, signal: .gecko)
         XCTAssertEqual(r.read(z.tree, now: t0).observation.pageState, .editingAddress)
+    }
+
+    func testZenTextFieldWithoutAnIdBeforeTheBarIsCachedIsAnotherField() {
+        // QA (P3-31): Firefox's find bar input may have no DOM id. The Gecko bar is always a combo box (by id and by
+        // the description fallback), so an id-less text field is not the bar, even in a new window where the bar
+        // hasn't been seen yet (checklist §P3-29 step 11.5). The role comes from the focus walk: no extra AX call.
+        let z = BrowserFixtures.zen(pageURL: "https://www.ynet.co.il/")
+        let find = addFindBox(z, id: nil)
+        var r = reader(.gecko, bar: .geckoURLBar, signal: .gecko)
+        XCTAssertEqual(r.read(z.tree, now: t0).observation.pageState, .page)
+        XCTAssertNil(r.windows.first?.addressBar, "a page read by AXURL never looks for the bar")
+        z.tree.focused = find
+        z.tree.resetCalls()
+        let o = r.read(z.tree, now: t0 + sec).observation
+        XCTAssertEqual(o.pageState, .editingBrowserField)
+        XCTAssertEqual(o.site?.siteKey, "ynet.co.il")
+        XCTAssertEqual(idReads(z.tree, of: find), 1)
+        XCTAssertEqual(z.tree.calls.filter { $0 == .string(.role, find) }.count, 1, "the walk's role read only")
+        XCTAssertEqual(textReads(z.tree, of: find), 0)
+    }
+
+    func testZenCachedUnknownIsAskedAgainOnceTheBarIsKnown() {
+        // QA (P3-31): an id-less combo box cached as "can't tell" must not stay so after the window's bar is found.
+        let z = BrowserFixtures.zen()
+        let other = addFindBox(z, id: nil, role: "AXComboBox")
+        var r = reader(.gecko, bar: .geckoURLBar, signal: .gecko)
+        z.tree.focused = other
+        XCTAssertEqual(r.read(z.tree, now: t0).observation.pageState, .editingAddress)
+        XCTAssertEqual(r.windows.first?.fieldVerdict?.verdict, .unknown)
+        z.tree.resetCalls()
+        XCTAssertEqual(r.read(z.tree, now: t0 + sec).observation.pageState, .editingAddress)
+        XCTAssertEqual(idReads(z.tree, of: other), 0, "bar still unknown: the cached answer, no AX call")
+        z.tree.focused = z.sidebarTab                              // focus in the sidebar: the strategy scans for
+        _ = r.read(z.tree, now: t0 + 2 * sec)                      // the bar (no classification: not editing)
+        XCTAssertNotNil(r.windows.first?.addressBar)
+        XCTAssertEqual(r.windows.first?.fieldVerdict?.verdict, .unknown, "the stale answer is still there")
+        z.tree.focused = other                                     // back into the same field
+        XCTAssertEqual(r.read(z.tree, now: t0 + 3 * sec).observation.pageState, .editingBrowserField)
+        z.tree.resetCalls()
+        XCTAssertEqual(r.read(z.tree, now: t0 + 4 * sec).observation.pageState, .editingBrowserField)
+        XCTAssertEqual(idReads(z.tree, of: other), 0, "a definite answer stays cached")
     }
 
     func testZenFieldWithoutAnIdOnceTheBarIsCachedIsAnotherField() {

@@ -71,6 +71,8 @@ struct FocusWalk<Node> {
     let focusClass: FocusClass
     let webArea: Node?
     let webAreaInWindow: Bool
+    /// QA (P3-31): the focused element's role, from the walk's first step (no extra AX call); set for `.editing`.
+    var focusedRole: String? = nil
 }
 
 /// One window's cache entry. The strategies fill `webArea`, `addressBar` and `lastFullScanAt`.
@@ -269,14 +271,15 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             // ignored private window also gets the browser's language.
             // P3-31: and a Find box there keeps the site's (here: no site, the app's) language.
             let state: BrowserPageState = walk.focusClass == .editing
-                ? Self.editingState(fieldVerdict(focused, tree: tree)) : .unknown
+                ? Self.editingState(fieldVerdict(focused, role: walk.focusedRole, tree: tree)) : .unknown
             return BrowserObservation(site: nil, pageState: state, isPrivate: true, via: .kept)
         }
 
         let prelude = BrowserReadPrelude(focused: focused, window: window, focusClass: walk.focusClass,
                                          webAreaFromFocus: walk.webArea, webAreaInWindow: walk.webAreaInWindow)
         let outcome = try strategy.read(tree, prelude: prelude, window: &windows[0], siteReader: siteReader, now: now)
-        let verdict: AddressBarVerdict = outcome.editing ? fieldVerdict(focused, tree: tree) : .unknown
+        let verdict: AddressBarVerdict = outcome.editing
+            ? fieldVerdict(focused, role: walk.focusedRole, tree: tree) : .unknown
         let observation = Self.observation(from: outcome, window: &windows[0], isPrivate: isPrivate,
                                            editingState: Self.editingState(verdict))
         switch observation.pageState {
@@ -297,11 +300,16 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
 
     /// P3-31: the classifier's answer for `focused` in `windows[0]`, cached per focused element. A failed AX call
     /// (timeout, element gone) → `.unknown` for this read, not cached; the observation itself still stands.
-    private mutating func fieldVerdict(_ focused: Tree.Node?, tree: Latched) -> AddressBarVerdict {
+    /// QA (P3-31): a cached `.unknown` (a Gecko id-less combo box seen before the window's bar was known) is asked
+    /// again once the bar is known, so a bar found later (by a scan, or by focusing it) can't leave it stale.
+    private mutating func fieldVerdict(_ focused: Tree.Node?, role: String?, tree: Latched) -> AddressBarVerdict {
         guard let focused, addressBarClassifier.isActive else { return .unknown }
-        if let cached = windows[0].fieldVerdict, tree.isSame(cached.field, focused) { return cached.verdict }
+        if let cached = windows[0].fieldVerdict, tree.isSame(cached.field, focused),
+           !(cached.verdict == .unknown && windows[0].addressBar != nil) {
+            return cached.verdict
+        }
         do {
-            let verdict = try addressBarClassifier.classify(focused, window: &windows[0], tree: tree)
+            let verdict = try addressBarClassifier.classify(focused, role: role, window: &windows[0], tree: tree)
             windows[0].fieldVerdict = (focused, verdict)
             return verdict
         } catch {
@@ -408,7 +416,7 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
         if let outermost { return FocusWalk(focusClass: .inPage, webArea: outermost, webAreaInWindow: inWindow) }
         // F's role from the walk's first step (nil only if F is the window itself: not a field).
         if let focusedRole, AXRoleName.editing.contains(focusedRole) {
-            return FocusWalk(focusClass: .editing, webArea: nil, webAreaInWindow: false)
+            return FocusWalk(focusClass: .editing, webArea: nil, webAreaInWindow: false, focusedRole: focusedRole)
         }
         return FocusWalk(focusClass: .other, webArea: nil, webAreaInWindow: false)
     }
