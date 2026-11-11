@@ -410,7 +410,7 @@ final class SiteWiringTests: XCTestCase {
         show(page: .unknown)                   // one AX timeout
         show(page: .page)
         show(bar: true)                        // same site, another source
-        XCTAssertFalse(watcher.calls.contains(.perform(.reset(.contextChange))), "\(watcher.calls)")
+        XCTAssertTrue(watcher.contextResets.isEmpty, "\(watcher.calls)")   // P3-37
         XCTAssertTrue(watcher.calls.contains(.checkSecureInput))
     }
 
@@ -419,9 +419,9 @@ final class SiteWiringTests: XCTestCase {
         show()
         watcher.clear()
         show(page: .editingAddress)
-        XCTAssertEqual(watcher.calls.filter { $0 == .perform(.reset(.contextChange)) }.count, 1)
+        XCTAssertEqual(watcher.contextResets.count, 1)
         show(page: .page)
-        XCTAssertEqual(watcher.calls.filter { $0 == .perform(.reset(.contextChange)) }.count, 2)
+        XCTAssertEqual(watcher.contextResets.count, 2)
     }
 
     func testASiteChangeStillResetsTheWordBuffer() {
@@ -429,7 +429,7 @@ final class SiteWiringTests: XCTestCase {
         show()
         watcher.clear()
         show(domain: "haaretz.co.il")
-        XCTAssertEqual(watcher.calls.first, .perform(.reset(.contextChange)))
+        XCTAssertEqual(watcher.calls.first, .perform(.contextChanged(terminalPID: nil)))   // P3-37
     }
 
     func testKeepsWordBufferOnlyForQuietPageStateChanges() {

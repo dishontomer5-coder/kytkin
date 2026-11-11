@@ -67,10 +67,13 @@ struct AppMethodOption: Identifiable, Equatable, Sendable {
     static func explanation(of hint: MethodHint) -> String {
         switch hint {
         case .auto: "Auto: replaces text directly when the app allows it, otherwise types the new text."
-        case .keysOnly: "Keys only: always types the new text (for browsers, Electron apps and code editors)."
+        // P3-37: the built-in Keys only (Slack, Chrome…) may use the clipboard; a user's own Keys only never does.
+        case .keysOnly: "Keys only: types the new text (for browsers, Electron apps and code editors). "
+            + "If you choose it here, Kytkin never uses the clipboard in this app."
         case .noUnicode: "No Unicode: for remote desktops and virtual machines that ignore typed characters."
         case .preferPaste: "Prefer paste: coming in a later version. Works like Auto for now."
-        case .terminal: "Terminal: types the new text, and never converts a selection (it would type at the prompt)."
+        case .terminal: "Terminal: types the new text on the current line, never a selection, never the clipboard, "
+            + "and never presses Return."
         case .disabled: "Converting is off in this app."
         }
     }

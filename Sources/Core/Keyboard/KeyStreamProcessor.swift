@@ -26,6 +26,14 @@
 // active) is remembered. Until its stale `finishReplacement` arrives or another `postingHardCapNanos` passes, a
 // double-Shift or auto-fix trigger starts nothing (passes, no signal, no hold), so two workers never post at once.
 // `reset` doesn't clear it: the worker is still running.
+// P3-37 (b) (owner 2026-11-11): in a terminal (main says so with every context change, `contextChanged(terminalPID:)`)
+// the buffer survives a click (the caret may move; accepted risk, double-Shift again undoes) and an app switch away
+// and back to the same terminal process: it is parked on the way out and restored on the way back. Snapshots of such a
+// buffer say `crossedFocus`, and ConvertController uses it only if the focused element is still the one the buffer
+// started in (`.terminalBufferStarted(epoch)` lets it note that element). Return, keypad Enter, Shift+Return, Tab, ⌃C,
+// Secure Input, a tap re-enable, a mode change (Pause) or another terminal process still end it. Shift+Return ends the
+// line buffer on purpose: Kytkin never types a line break, so a convert never reaches back over one (only the last
+// line converts, 001 §12.3 X12).
 // P2-60: an aborted or force-flushed generation never leaves a kept buffer. Its finish is ignored (it only replays),
 // so nothing states the buffer after it; the abort forgets the buffer itself, and until the next replacement starts
 // an `isOurs` input-source change ("keep the buffer") is treated as a foreign one. Both orders of its finish and its
@@ -70,6 +78,21 @@ struct KeyStreamProcessor: Sendable {
     /// P3-35 QA (owner): a convert finished (aborted or not) and no user key, click or tap reset has come since, so
     /// the convert controller may still hold an undo record. The next such event sends `.undoTouched` and clears it.
     private(set) var undoMayBeHeld = false
+    /// P3-37 (b): the frontmost app is a terminal (this pid), as main last said (`contextChanged`).
+    private(set) var terminalPID: Int32?
+    /// P3-37 (b): the current buffer's number; grows when a terminal buffer starts after an empty one.
+    private(set) var bufferEpoch: UInt64 = 0
+    /// P3-37 (b): the current buffer was kept across a click or restored after an app switch.
+    private(set) var crossedFocus = false
+    /// P3-37 (b): a terminal's buffer, kept while another app is in front. At most one (the last terminal left).
+    private struct ParkedBuffer: Sendable {
+        let pid: Int32
+        let buffer: WordBuffer
+        let rendering: InputSourceID?
+        let epoch: UInt64
+    }
+    private var parked: ParkedBuffer?
+    var hasParkedBuffer: Bool { parked != nil }
 
     private var detector: DoubleShiftDetector
     private var queue: HoldBackQueue
@@ -149,6 +172,12 @@ struct KeyStreamProcessor: Sendable {
         case .pointerDown:
             lastConvertGen = nil // P2-59 (X6): the caret may have moved
             _ = detector.handle(.pointerDown)
+            // P3-37 (b): a terminal keeps its buffer across a click (owner: clicking may move the cursor, accepted;
+            // double-Shift again undoes). A click during a replacement still aborts it, which forgets the buffer.
+            if terminalPID != nil, case .idle = phase {
+                if !buffer.isEmpty { crossedFocus = true }
+                return (.pass, nil)
+            }
             // R5: a click during a replacement finishes it: flush, and the buffer is stale.
             let signal = invalidateBuffer()
             abortReplacement()
@@ -257,12 +286,39 @@ struct KeyStreamProcessor: Sendable {
     /// `deviceFlags`: the current modifier flags, if known, so a Shift still held across the reset is remembered
     /// (P2-11 QA) and can't be mistaken for the start of a new tap.
     mutating func reset(_ reason: ResetReason, deviceFlags: UInt64? = nil) {
+        // P3-37 (b): a parked terminal buffer survives an app switch and a foreign language change (a rule in the other
+        // app); Secure Input, a tap re-enable (keys may have been lost) and a mode change (Pause, restart) end it.
+        switch reason {
+        case .contextChange, .inputSourceChanged: break
+        case .secureInputOn, .tapReEnabled, .modeChange: parked = nil
+        }
         abortReplacement()
         _ = detector.handle(.reset)
         leftShiftHeld = false
         rightShiftHeld = false
         forgetBuffer()
         if let deviceFlags { reseedShifts(deviceFlags) }
+    }
+
+    /// P3-37 (b): another app (or window, or field) is in front; `terminalPID` is its pid when it is a terminal. Leaving a
+    /// terminal parks its buffer; coming back to the same terminal process restores it (marked `crossedFocus`); another
+    /// terminal process drops it. Otherwise exactly `reset(.contextChange)`.
+    mutating func contextChanged(terminalPID new: Int32?, deviceFlags: UInt64? = nil) {
+        if let current = terminalPID, !buffer.isEmpty, case .idle = phase {
+            parked = ParkedBuffer(pid: current, buffer: buffer, rendering: bufferRendering ?? inputSource,
+                                  epoch: bufferEpoch)
+        }
+        reset(.contextChange, deviceFlags: deviceFlags)
+        terminalPID = new
+        guard let new else { return }   // not a terminal: the parked buffer waits for its terminal
+        if let p = parked, p.pid == new {
+            buffer = p.buffer
+            // The text on screen is in the layout it was typed in; a letter typed now in another layout forgets it.
+            bufferRendering = p.rendering == inputSource ? nil : p.rendering
+            bufferEpoch = p.epoch
+            crossedFocus = true
+        }
+        parked = nil
     }
 
     /// `deviceFlags`: as for `reset`. P2-50: the adapter passes them when a new tap goes in, so a Shift held across
@@ -390,7 +446,13 @@ struct KeyStreamProcessor: Sendable {
             if rendering != inputSource { signal = invalidateBuffer() }
             bufferRendering = nil
         }
+        // P3-37 (b): a terminal buffer starts: main notes the focused element (once per buffer, not per key).
+        let starts = terminalPID != nil && buffer.isEmpty
         buffer.append(Stroke(keyCode: code, layer: e.layer))
+        if starts && !buffer.isEmpty {
+            bufferEpoch &+= 1
+            signal = .terminalBufferStarted(epoch: bufferEpoch)
+        }
         return (.pass, signal)
     }
 
@@ -452,11 +514,13 @@ struct KeyStreamProcessor: Sendable {
         buffer.invalidate()
         bufferRendering = nil
         lastConvertGen = nil
+        crossedFocus = false   // P3-37
     }
 
     /// P2-59 (X5/X6): the buffer as a worker sees it. Allocates: call it only on a trigger.
     private func currentSnapshot() -> WordSnapshot {
-        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, untouchedSinceConvert: lastConvertGen)
+        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, untouchedSinceConvert: lastConvertGen,
+                        epoch: bufferEpoch, crossedFocus: crossedFocus)
     }
 
     /// A Shift already down at reset joins the detector as held and spoiled, so it can't start a tap,

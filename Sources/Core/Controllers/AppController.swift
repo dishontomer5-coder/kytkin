@@ -185,7 +185,8 @@ import Observation
         // move to another text box: resetting the word buffer there could abort a convert mid-word. Into or out of
         // `.editingAddress` still resets (the address bar is another field).
         if !Self.keepsWordBuffer(change) {
-            keyWatcher.perform(.reset(.contextChange))
+            // P3-37 (b): a reset that parks a terminal's buffer on the way out and restores it on the way back.
+            keyWatcher.perform(.contextChanged(terminalPID: terminalPID(of: c)))
             convert.forgetUndo()              // P3-35 QA (owner): another app, window or field
         }
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
@@ -216,6 +217,13 @@ import Observation
               BrowserCatalog.engine(for: bundleID, opensWebLinks: webLinkHandlerIDs.contains(bundleID)) != nil
         else { return }
         lastFrontBrowserID = bundleID
+    }
+
+    /// P3-37 (b): the app's pid when Kytkin treats it as a terminal (the seeds and the user's Settings → Apps choice, as
+    /// ConvertController does), else nil.
+    private func terminalPID(of c: Context) -> Int32? {
+        let caps = ReplacementCapabilities(overrides: lastHints ?? PreferencesMapping.methodHintOverrides(store.prefs.apps))
+        return caps.method(for: c.bundleID) == .terminal ? c.pid : nil
     }
 
     /// P3-19: page-state-only changes between `.page` and `.unknown` (either way, or the same state with another
@@ -271,6 +279,9 @@ import Observation
             switching.wordBoundary()
         case .bufferInvalidated, .undoTouched:
             convert.forgetUndo()              // P3-35 QA (owner): a key or click after a convert drops its undo
+        case let .terminalBufferStarted(epoch):
+            convert.forgetUndo()              // a key, like any other
+            convert.anchorTerminalBuffer(epoch: epoch)   // P3-37 (b)
         case let .doubleShift(snapshot, gen):
             doubleShiftCount += 1
             route(snapshot: snapshot, gen: gen)
@@ -501,7 +512,12 @@ import Observation
         }
         convert.convert(ConvertRequest(snapshot: snapshot, gen: gen, bundleID: c.bundleID, mode: mode,
                                        pair: prefs.languagePair, currentSource: switcher.current,
-                                       switchAfterConvert: prefs.convert.switchLanguageAfterConvert))
+                                       switchAfterConvert: prefs.convert.switchLanguageAfterConvert,
+                                       // P3-37; QA: never on whole-document web apps (Google Docs / Sheets…)
+                                       useClipboard: prefs.convert.useClipboardInUnreadableApps
+                                           && !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
+                                                                                       host: c.host),
+                                       inAddressBar: c.pageState == .editingAddress))
     }
 
     /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.

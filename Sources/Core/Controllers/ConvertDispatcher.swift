@@ -28,11 +28,8 @@ import Foundation
     func convert(_ request: ConvertRequest) {
         let layouts = request.mode == .convert ? snapshot(for: request.pair) : nil
         let switchPair = maps.inputSources(for: request.pair)
-        let resolved = switchPair == request.pair ? request
-            : ConvertRequest(snapshot: request.snapshot, gen: request.gen, bundleID: request.bundleID,
-                             mode: request.mode, pair: switchPair, currentSource: request.currentSource,
-                             switchAfterConvert: request.switchAfterConvert)
-        if request.mode == .convert { undoMayBeHeld = true }   // P3-35 QA (owner)
+        let resolved = switchPair == request.pair ? request : request.with(pair: switchPair)
+        if request.mode == .convert { undoMayBeHeld = true }   // P3-35 QA (owner); P3-37: the clipboard undo too
         enqueue { controller in await controller.handle(resolved, layouts: layouts) }
     }
 
@@ -42,6 +39,11 @@ import Foundation
         guard undoMayBeHeld else { return }
         undoMayBeHeld = false
         enqueue { controller in controller.forgetUndoRecord() }
+    }
+
+    /// P3-37 (b): queued like any request, so the anchor is read on @TextActor, never on main.
+    func anchorTerminalBuffer(epoch: UInt64) {
+        enqueue { controller in controller.anchorTerminalBuffer(epoch: epoch) }
     }
 
     func methodHintsChanged(_ overrides: [String: MethodHint]) {

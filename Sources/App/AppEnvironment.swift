@@ -72,6 +72,12 @@ import AppKit
             makeReplacer: { TextReplacer() },
             switchLanguage: { target, keepsBuffer in
                 await MainActor.run { box.controller?.switchAfterConvert(to: target, keepsBuffer: keepsBuffer) ?? false }
+            },
+            // P3-37 (c): the clipboard convert's live seams, made on @TextActor on first use. ConvertController uses it
+            // only in unreadable non-terminal apps, with Settings → Convert's clipboard switch on.
+            makeClipboard: { [clock] in
+                ClipboardConvert(pasteboard: SystemPasteboard(), poster: CGEventKeyPoster(), clock: clock,
+                                 sleep: { nanos in try? await Task.sleep(nanoseconds: nanos) })
             })
         convert = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
 

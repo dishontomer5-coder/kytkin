@@ -111,6 +111,9 @@ targets:
       - path: Sources/System/Browser/BrowserWatchEngine.swift
       - path: Sources/System/Browser/BrowserWatcher.swift
       - path: Sources/System/Browser/RunLoopDeadlineTimer.swift
+      # P3-37: nothing from Sources/System/Text is listed, on purpose: SystemPasteboard (NSPasteboard.general),
+      # CGEventKeyPoster and the AX adapters touch the real clipboard, post real events or read real apps. The clipboard
+      # convert is tested through Core's ClipboardConvert with a fake pasteboard (Tests/KytkinTests/Text/ClipboardFakes).
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.KytkinTests
