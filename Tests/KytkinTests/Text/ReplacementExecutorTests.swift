@@ -333,6 +333,74 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertEqual(seen, BeforeCaretWindow(text: "akuo", location: 0, reachesFieldStart: true))
     }
 
+    /// P3-33: a run across line breaks is read and written back whole; the line breaks stay where they were.
+    @TextActor func testMultiLineRunIsReadAndWrittenThroughAX() async {
+        let x = makeExecutor(FakeTextField("שלום\nakuo\nvh nhv"))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars, locate: scan).verdict, .done)
+        XCTAssertEqual(x.wordBeforeCaret, "akuo\nvh nhv")
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo\nvh nhv", new: "שלום\nהי מיה"), .done)
+        XCTAssertEqual(field.text, "שלום\nשלום\nהי מיה")
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    /// P3-33: a run holding a tab (or any non-line-break control) is never handed on, even if a locator returned it.
+    @TextActor func testRunWithATabIsUnavailable() async {
+        let x = makeExecutor(FakeTextField("akuo\tvh"))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256) { _ in RunLocation(offset: 0, length: 7) }, .unavailable)
+        XCTAssertNil(x.wordBeforeCaret)
+    }
+
+    /// P3-33: a big window that comes back the wrong length is retried smaller, nearest the caret, so the AX path
+    /// still converts the tail it can read instead of giving up (and falling back to the buffer's few words).
+    @TextActor func testWrongLengthReadIsRetriedWithSmallerWindows() async {
+        let text = String(repeating: "akuo ", count: 400) + "vh"         // 2,002 units
+        let f = FakeTextField(text)
+        f.stringForRangeExactUpTo = 300
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        var seen: BeforeCaretWindow?
+        let out = x.readRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars) { w in seen = w; return nil }
+        XCTAssertEqual(out.verdict, .done)
+        XCTAssertEqual(field.stringRangesRead, [sel(0, 2002), sel(978, 1024), sel(1746, 256)])
+        XCTAssertEqual(seen?.location, 1746)
+        XCTAssertEqual(seen?.reachesFieldStart, false)
+    }
+
+    @TextActor func testEveryWindowWrongIsUnavailable() async {
+        let f = FakeTextField(String(repeating: "akuo ", count: 400) + "vh")
+        f.stringForRangeExactUpTo = 100
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars, locate: scan), .unavailable)
+        XCTAssertEqual(field.stringRangesRead.count, 3, "bounded: the window and two retries")
+    }
+
+    /// P3-33: WebKit's contenteditable turns a written no-break space into a plain space. That still verifies (a
+    /// strict compare marked AX broken for the whole session, so every later convert fell back to the buffer).
+    @TextActor func testReadBackAcceptsANoBreakSpaceThatLandsAsASpace() async {
+        let f = FakeTextField("שלום\u{00A0}akuo\u{00A0}vh")
+        f.writeBehavior = .noBreakSpacesBecomeSpaces
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan).verdict, .done)
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo\u{00A0}vh", new: "שלום\u{00A0}הי"), .done)
+        XCTAssertEqual(field.text, "שלום\u{00A0}שלום הי")
+    }
+
+    func testReadsBackAsAllowsOnlyWhitespaceSwaps() {
+        XCTAssertTrue(ReplacementExecutor.readsBackAs("a b", "a\u{00A0}b"))
+        XCTAssertTrue(ReplacementExecutor.readsBackAs("a\u{00A0}b", "a b"))
+        XCTAssertTrue(ReplacementExecutor.readsBackAs("a\rb", "a\nb"))
+        XCTAssertTrue(ReplacementExecutor.readsBackAs("a\u{2029}b", "a\nb"))
+        XCTAssertFalse(ReplacementExecutor.readsBackAs("a b", "a\nb"), "a space is not a line break")
+        XCTAssertFalse(ReplacementExecutor.readsBackAs("ab", "a b"))
+        XCTAssertFalse(ReplacementExecutor.readsBackAs("a\r\nb", "a\nb"), "different lengths")
+        XCTAssertFalse(ReplacementExecutor.readsBackAs("שלוס", "שלום"))
+        XCTAssertFalse(ReplacementExecutor.readsBackAs("e\u{0301}", "\u{00E9}"), "scalars, not canonical equivalence")
+    }
+
     @TextActor func testRunReadPendingRangeIsAbsolute() async {
         // The caret sits in the middle of the field; the run's range is absolute, not window-relative.
         let x = makeExecutor(FakeTextField("first line\nשלום akuo|tail", selection: sel(20, 0)))
@@ -346,14 +414,14 @@ final class ReplacementExecutorTests: XCTestCase {
     }
 
     @TextActor func testRunReadFindingNothingIsDoneWithoutARun() async {
-        let x = makeExecutor(FakeTextField("akuo\n"))
+        let x = makeExecutor(FakeTextField("akuo\t"))   // P3-33: a tab, since a line break no longer ends the run
         _ = x.focusInfo(timeout: 0.25)
         XCTAssertEqual(x.readRunBeforeCaret(maxChars: 256, locate: scan),
                        StepOutcome(verdict: .done, fieldUntouched: true))
         XCTAssertNil(x.wordBeforeCaret)
         // Nothing found, so the next AX write has no range and works on the (empty) selection: refused.
         XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo", new: "שלום"), .unavailable)
-        XCTAssertEqual(field.text, "akuo\n")
+        XCTAssertEqual(field.text, "akuo\t")
     }
 
     @TextActor func testRunReadNeedsACaretAfterTheFieldStart() async {

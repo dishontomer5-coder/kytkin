@@ -1,6 +1,8 @@
 // P2-59: RunBeforeCaret.scan (001 §12.3 X1, X2, X3, X8) over the real ABC / Apple Hebrew and ABC / Hebrew-PC
 // fixtures: direction from the strong grapheme nearest the caret, stops, mid-token cuts, the left trim with the
-// comma rule, the right end at the caret, the 256-unit cap at a word boundary, line breaks, and UTF-16 offsets.
+// comma rule, the right end at the caret, the window cap at a word boundary, line breaks, and UTF-16 offsets.
+// P3-33: the run crosses line breaks now (only tabs and other control characters are hard stops), and the window is
+// 4,096 units; the tests that asserted the old line-break stop and the 256 window assert the new behaviour.
 
 import XCTest
 
@@ -60,16 +62,36 @@ final class RunBeforeCaretTests: XCTestCase {
         }
     }
 
-    func testLineBreaksAndControlCharactersStopTheRun() {
-        XCTAssertEqual(run("line\nakuo vh"), "A:akuo vh")
-        XCTAssertEqual(run("akuo\n"), "nothing")
-        XCTAssertEqual(run("akuo\r\nvh"), "A:vh")
-        XCTAssertEqual(run("akuo\rvh"), "A:vh")
-        XCTAssertEqual(run("akuo\tvh"), "A:vh")
-        XCTAssertEqual(run("akuo\u{2028}vh"), "A:vh")
-        XCTAssertEqual(run("akuo\u{2029}vh"), "A:vh")
+    /// P3-33: was "line breaks stop the run"; now a line break separates tokens like a space and the run crosses it.
+    /// Tabs and other control characters still stop it.
+    func testLineBreaksAreCrossedAndControlCharactersStopTheRun() {
+        XCTAssertEqual(run("line\nakuo vh"), "A:line\nakuo vh")
+        XCTAssertEqual(run("akuo\n"), "A:akuo\n", "a trailing line break is part of the run, like a trailing space")
+        XCTAssertEqual(run("akuo\r\nvh"), "A:akuo\r\nvh")
+        XCTAssertEqual(run("akuo\rvh"), "A:akuo\rvh")
+        XCTAssertEqual(run("akuo\u{2028}vh"), "A:akuo\u{2028}vh")
+        XCTAssertEqual(run("akuo\u{2029}vh"), "A:akuo\u{2029}vh")
+        XCTAssertEqual(run("akuo\n\nvh"), "A:akuo\n\nvh", "a blank line too")
+        XCTAssertEqual(run("akuo\tvh"), "A:vh", "a tab is still a hard stop")
+        XCTAssertEqual(run("akuo\u{1B}vh"), "A:vh")
         // A hard stop makes the start known: a token right after it is never treated as cut.
+        XCTAssertEqual(run("xx\takuo", atStart: false), "A:akuo")
+        // A line break does not: the window's first token may still be cut, so it is dropped.
         XCTAssertEqual(run("xx\nakuo", atStart: false), "A:akuo")
+        XCTAssertEqual(run("\nxx akuo", atStart: false), "A:xx akuo", "a window starting at a line break keeps its token")
+    }
+
+    /// P3-33: a multi-line wrong run stops where text already in the other language starts, even lines above.
+    func testMultiLineRunStopsAtTheOtherLanguageAcrossLines() {
+        XCTAssertEqual(run("שלום עולם\nakuo vh\nnhv"), "A:akuo vh\nnhv", "the Hebrew line above is kept")
+        XCTAssertEqual(run("שלום\n\nakuo\nvh, nhv"), "A:akuo\nvh, nhv")
+        XCTAssertEqual(run("hello\nשלום\nעולם"), "B:שלום\nעולם")
+        XCTAssertEqual(run("akuo\nשלום,vh"), "A:vh", "a mid-token stop after the line break")
+        XCTAssertEqual(run("привет\nakuo\nvh"), "A:akuo\nvh", "another script on the line above stops it")
+        XCTAssertEqual(run("akuo\n123\nvh"), "A:akuo\n123\nvh", "digit lines inside the run are kept")
+        XCTAssertEqual(run("שלום\n123\nakuo"), "A:akuo", "and trimmed at its start")
+        // The P2-60 letters-only rule holds across lines: a one-sided `'` never starts or picks a run.
+        XCTAssertEqual(run("מס' 5\ntkhk"), "A:tkhk")
     }
 
     func testForeignScriptsAndEmoji() {
@@ -155,22 +177,32 @@ final class RunBeforeCaretTests: XCTestCase {
         XCTAssertEqual(run(" akuo vh", atStart: false), "A:akuo vh")
     }
 
+    /// P3-33: the window is 4,096 units now (was 256).
     func testASingleTokenLongerThanTheWindowIsTooLong() {
-        let token = String(repeating: "a", count: 300)
-        let window = String(token.suffix(ReplacementPlanner.maxRunReadChars))
+        let cap = ReplacementPlanner.maxRunReadChars
+        let token = String(repeating: "a", count: cap + 44)
+        let window = String(token.suffix(cap))
         XCTAssertEqual(run(window, atStart: false), "tooLong")
         XCTAssertEqual(run(window + " ", atStart: false), "tooLong")
-        XCTAssertEqual(run("שלום " + String(repeating: "a", count: 251)), "A:" + String(repeating: "a", count: 251),
+        XCTAssertEqual(run("שלום " + String(repeating: "a", count: cap - 5)), "A:" + String(repeating: "a", count: cap - 5),
                        "a long word that starts inside the window is fine")
     }
 
     func testLongRunIsCutAtAWordBoundary() {
-        // 60 × "akuo " + "vh" = 302 units; the window holds the last 256, starting inside a word ("kuo akuo …").
-        let line = String(repeating: "akuo ", count: 60) + "vh"
-        let window = String(decoding: Array(line.utf16).suffix(256), as: UTF16.self)
+        // 900 × "akuo " + "vh" = 4,502 units; the window holds the last 4,096, starting inside a word ("kuo akuo …").
+        let line = String(repeating: "akuo ", count: 900) + "vh"
+        let window = String(decoding: Array(line.utf16).suffix(ReplacementPlanner.maxRunReadChars), as: UTF16.self)
         XCTAssertTrue(window.hasPrefix("kuo "))
         let expected = String(window.dropFirst(4))
         XCTAssertEqual(run(window, atStart: false), "A:" + expected)
+    }
+
+    /// P3-33: a long multi-line run (≈ 3,000 units over 60 lines) converts whole when it reaches the field start.
+    func testLongMultiLineRunConvertsWhole() {
+        let text = String(repeating: String(repeating: "akuo ", count: 10) + "\n", count: 60) + "vh"
+        XCTAssertLessThan(text.utf16.count, ReplacementPlanner.maxRunReadChars)
+        XCTAssertEqual(run(text), "A:" + text)
+        XCTAssertEqual(run("שלום\n" + text), "A:" + text)
     }
 
     func testAMidTokenStopInTheFirstTokenIsNotACut() {
@@ -196,7 +228,7 @@ final class RunBeforeCaretTests: XCTestCase {
         XCTAssertEqual(run("שלום\u{200F} akuo"), "A:akuo", "an RLM after Hebrew stays with the Hebrew")
         XCTAssertEqual(run("שלום \u{200F}akuo"), "A:\u{200F}akuo", "a mark that starts the token goes with it")
         XCTAssertEqual(run("akuo\u{200E}"), "A:akuo\u{200E}", "a trailing LRM passes through")
-        XCTAssertEqual(run("שלום\u{2028}akuo"), "A:akuo", "U+2028 is a line break")
+        XCTAssertEqual(run("שלום\u{2028}akuo"), "A:akuo", "U+2028 is a line break; the Hebrew before it stops the run")
     }
 
     func testDigitsAndPunctuationBetweenLanguagesAreTrimmed() {
@@ -206,10 +238,11 @@ final class RunBeforeCaretTests: XCTestCase {
         XCTAssertEqual(run("(akuo)"), "A:(akuo)")
     }
 
-    /// The owner double-Shifts on text that is already right: the whole line's run converts, never past the line.
-    func testCorrectTextConvertsOnlyItsLine() {
+    /// The owner double-Shifts on text that is already right. P3-33: was "only its line"; now its whole run, across
+    /// lines, still never past text in the other language.
+    func testCorrectTextConvertsItsWholeRunAcrossLines() {
         XCTAssertEqual(run("hello\nשלום עולם"), "B:שלום עולם")
-        XCTAssertEqual(run("akuo\nhello world"), "A:hello world")
+        XCTAssertEqual(run("akuo\nhello world"), "A:akuo\nhello world")
     }
 
     /// The window can start inside a character the AX read cut: a lone low surrogate (U+FFFD once decoded) or a

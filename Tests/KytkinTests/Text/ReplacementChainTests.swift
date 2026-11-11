@@ -176,7 +176,7 @@ final class ReplacementChainTests: XCTestCase {
         let focus = x.focusInfo(timeout: 0.25)
         let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app),
                                            caps: ReplacementCapabilities(), focus: focus)
-        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)]))
+        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true)]))
         var caps = ReplacementCapabilities()
         let out = ReplacementChain.run(plan, on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
                                        capabilities: &caps)
@@ -195,7 +195,7 @@ final class ReplacementChainTests: XCTestCase {
         let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app, snapshot: buffer(3),
                                                               typedLength: 3), caps: ReplacementCapabilities(),
                                            focus: focus)
-        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                      .backspaceAndType(count: 3)]))
         var caps = ReplacementCapabilities()
         var asked = 0
@@ -218,7 +218,7 @@ final class ReplacementChainTests: XCTestCase {
         var caps = ReplacementCapabilities()
         var asked = 0
         var writesWhenAsked: [AXTextAttribute]?
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
                                        capabilities: &caps,
@@ -239,13 +239,13 @@ final class ReplacementChainTests: XCTestCase {
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 2)]),
                                        on: x, bundleID: app, old: "vh", convert: pairConvert, locateRun: locate,
                                        capabilities: &caps, mayWrite: { asked += 1; return true })
         XCTAssertEqual(out.result, .exhausted)
         XCTAssertEqual(out.attempts.map(\.step),
-                       [.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)])
+                       [.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true)])
         XCTAssertEqual(asked, 1)
         XCTAssertTrue(poster.events.isEmpty)
         XCTAssertEqual(f.text, "שלום akuo vh")
@@ -261,14 +261,14 @@ final class ReplacementChainTests: XCTestCase {
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: x, bundleID: app, old: "caf\u{e9}", convert: { _ in "xxxx" },
                                        locateRun: { w in RunLocation(offset: 0, length: w.text.utf16.count) },
                                        capabilities: &caps)
         XCTAssertEqual(out.result, .exhausted)
         XCTAssertEqual(out.attempts.map(\.step),
-                       [.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)])
+                       [.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true)])
         XCTAssertTrue(poster.events.isEmpty, "no Backspace on a merely canonically-equal run")
         XCTAssertEqual(f.text, "cafe\u{301}")
     }
@@ -282,12 +282,12 @@ final class ReplacementChainTests: XCTestCase {
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
                                        capabilities: &caps, mayWrite: { asked += 1; return true })
         XCTAssertEqual(out.result, .replaced(by: .backspaceAndType(count: 4)))
-        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: 256), verdict: .unavailable),
+        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), verdict: .unavailable),
                                       .init(step: .backspaceAndType(count: 4), verdict: .done)])
         XCTAssertEqual(asked, 1)
         XCTAssertTrue(f.writes.isEmpty, "the AX write never ran")
@@ -301,7 +301,7 @@ final class ReplacementChainTests: XCTestCase {
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)]),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true)]),
                                        on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
                                        capabilities: &caps, mayWrite: { asked += 1; return true })
         XCTAssertEqual(out.result, .exhausted)
@@ -315,10 +315,10 @@ final class ReplacementChainTests: XCTestCase {
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true)]),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true)]),
                                        on: x, bundleID: app, old: nil, convert: convert, capabilities: &caps)
         XCTAssertEqual(out.result, .exhausted)
-        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: 256), verdict: .unavailable)])
+        XCTAssertEqual(out.attempts, [.init(step: .axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), verdict: .unavailable)])
         XCTAssertTrue(f.writes.isEmpty)
     }
 
@@ -328,7 +328,7 @@ final class ReplacementChainTests: XCTestCase {
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
                                        capabilities: &caps)
@@ -345,7 +345,7 @@ final class ReplacementChainTests: XCTestCase {
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
                                        capabilities: &caps)
@@ -360,7 +360,7 @@ final class ReplacementChainTests: XCTestCase {
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: x, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
                                        capabilities: &caps, mayWrite: { asked += 1; return false })
@@ -378,7 +378,7 @@ final class ReplacementChainTests: XCTestCase {
         _ = slow.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
         var asked = 0
-        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: 256), .axWriteSelection(verify: true),
+        let out = ReplacementChain.run(.steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
                                                .backspaceAndType(count: 4)]),
                                        on: slow, bundleID: app, old: "akuo", convert: convert, locateRun: locate,
                                        capabilities: &caps, clock: clock, mayWrite: { asked += 1; return true })
@@ -391,7 +391,7 @@ final class ReplacementChainTests: XCTestCase {
     /// Every `.convertRun` plan shape the planner returns: the gate is asked once, before the first write, and
     /// never by the read.
     @TextActor func testWriteGateIsAskedOnceBeforeTheFirstWriteOnEveryRunPlanShape() async {
-        let read = ReplacementStep.axReadRunBeforeCaret(maxChars: 256)
+        let read = ReplacementStep.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars)
         let ax = ReplacementStep.axWriteSelection(verify: true)
         let keys = ReplacementStep.backspaceAndType(count: 4)
         for steps in [[read, ax, keys], [read, ax], [keys]] {
@@ -422,7 +422,7 @@ final class ReplacementChainTests: XCTestCase {
     }
 
     @TextActor func testStaleBufferWithNoWordStops() async {
-        let f = FakeTextField("akuo\n")
+        let f = FakeTextField("akuo\t")   // P3-33: a tab still ends the run (a line break no longer does)
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()
@@ -563,7 +563,7 @@ final class ReplacementChainTests: XCTestCase {
     }
 
     @TextActor func testWriteGateIsNotAskedForAReadThatFindsNothing() async {
-        let f = FakeTextField("akuo\n")
+        let f = FakeTextField("akuo\t")   // P3-33: a tab still ends the run (a line break no longer does)
         let x = executor(f)
         _ = x.focusInfo(timeout: 0.25)
         var caps = ReplacementCapabilities()

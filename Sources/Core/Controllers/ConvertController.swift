@@ -7,10 +7,11 @@
 //      No layout maps → the same silent switch when the buffer is empty (P2-54(a)), else a beep.
 //   2. `focusInfo` (AX, 0.25 s per call). A non-empty selection → convert the selection: guess its layout with
 //      the instance `guessSource` and retype it on the other one (AX write + read-back → type over).
-//   3. No selection → the run (P2-59, 001 §12.3): `.convertRun`. Readable field: one AX read of ≤ 256 UTF-16 units
-//      before the caret, `RunBeforeCaret.scan` finds the run (or the `LastRun` record names it, X6), AX write with
+//   3. No selection → the run (P2-59, 001 §12.3): `.convertRun`. Readable field: one AX read of ≤ 4,096 UTF-16 units
+//      before the caret (P3-33: was 256, and the run now crosses line breaks), `RunBeforeCaret.scan` finds the run (or the `LastRun` record names it, X6), AX write with
 //      read-back, and a key fallback only when the AX run is exactly the buffer's text. Unreadable / keysOnly /
-//      terminal apps: the whole word buffer by keys (backspace × its graphemes, type its re-rendering).
+//      terminal apps: the whole word buffer by keys (backspace × its graphemes, type its re-rendering); P3-33: that
+//      is everything typed since the last Return/Enter, Tab, ⌥Space, click or focus change, ≤ 512 keys.
 //      The scan finds nothing, or nothing would change = "nothing to convert": double-Shift just switches the
 //      language. A run longer than the window → `.runTooLong`, beep. AX can't read the field (focus unknown) and
 //      the buffer is empty → just switch (P2-54(a), owner 2026-11-07).
@@ -384,6 +385,7 @@ import Foundation
     /// X6: the recorded run, if the window still shows it: the caret exactly at its end, the window holds all of it
     /// (starting on a character boundary), and its text is still on the record's `from` side: at least one
     /// `strong(from)` grapheme, no `strong(to)` grapheme, no hard stop. nil = the record no longer matches.
+    /// P3-33: line breaks are not hard stops any more, so a multi-line run converts back the same way.
     static func recordedRun(_ rec: LastRun, in window: BeforeCaretWindow, layouts: LayoutSnapshot) -> RunLocation? {
         let units = window.text.utf16
         guard rec.length > 0, window.location + units.count == rec.location + rec.length,

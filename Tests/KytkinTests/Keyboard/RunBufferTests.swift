@@ -1,6 +1,7 @@
 // P2-59a (001 §12.3 X3/X5/X6, X8 "Processor / buffer"): Return, keypad Enter, Tab and Option-Space end the buffer;
 // snapshot `gaps` / `hasRun` / `untouchedSinceConvert`; the kept re-rendered buffer (`bufferRenderedIn`) for the
 // double-Shift undo. Pure value tests with a fake clock; nothing is installed or posted.
+// P3-33: no word limit; the buffer holds ≤ 512 keys since the last Return/Enter, Tab, ⌥Space, click or focus change.
 
 import XCTest
 
@@ -176,14 +177,15 @@ final class RunBufferTests: XCTestCase {
         XCTAssertEqual(snap.strokes, [st(a)])
     }
 
-    func testOldestWordAndItsGapDropAt64Strokes() {
+    /// P3-33: was "at 64 strokes"; the cap is 512 keys now, letters and spaces together.
+    func testOldestWordAndItsGapDropAtTheCap() {
         var b = WordBuffer()
-        for _ in 0..<30 { b.append(st(a)) }
+        for _ in 0..<250 { b.append(st(a)) }
         b.boundary(); b.boundary(); b.boundary()               // gap 3 after the first word
-        for _ in 0..<30 { b.append(st(s)) }
-        b.boundary(); b.boundary()                             // gap 2 after the second
+        for _ in 0..<250 { b.append(st(s)) }
+        b.boundary(); b.boundary()                             // gap 2 after the second: 505 keys
         XCTAssertEqual(b.snapshot(renderedIn: nil).gaps, [3, 2])
-        for _ in 0..<10 { b.append(st(d)) }                   // 70 > 64: the first word goes
+        for _ in 0..<10 { b.append(st(d)) }                   // 515 > 512: the first word and its gap go
         let snap = b.snapshot(renderedIn: nil)
         XCTAssertEqual(snap.previousWords.count, 1)
         XCTAssertEqual(snap.previousWords.first?.first, st(s))
@@ -191,15 +193,30 @@ final class RunBufferTests: XCTestCase {
         XCTAssertEqual(snap.strokes.count, 10)
     }
 
-    func testOldestWordAndItsGapDropAtFourWords() {
+    /// P3-33: was "the oldest word drops at four words"; every word is kept now, each with its gap.
+    func testEveryWordAndItsGapIsKept() {
         var b = WordBuffer()
         for (i, code) in [a, s, d, a].enumerated() {
             b.append(st(code))
             for _ in 0...i { b.boundary() }                    // gaps 1, 2, 3, 4
         }
         let snap = b.snapshot(renderedIn: nil)
-        XCTAssertEqual(snap.previousWords, [[st(d)], [st(a)]])
-        XCTAssertEqual(snap.gaps, [3, 4])
+        XCTAssertEqual(snap.previousWords, [[st(a)], [st(s)], [st(d)], [st(a)]])
+        XCTAssertEqual(snap.gaps, [1, 2, 3, 4])
+    }
+
+    /// P3-33: through the processor: everything typed since the last Return is in the snapshot, however many words,
+    /// back to the last Return (a terminal ran the command, a chat sent the message).
+    func testProcessorKeepsEverythingSinceTheLastReturn() {
+        var p = processor()
+        type(&p, [d, d, KeyCode.returnKey])
+        for _ in 0..<60 { type(&p, [a, s, KeyCode.space]) }   // 60 words, 180 keys
+        type(&p, [d])
+        guard let (snap, _) = doubleShift(&p, at: 1_000) else { return }
+        XCTAssertEqual(snap.previousWords.count, 60)
+        XCTAssertTrue(snap.previousWords.allSatisfy { $0 == [st(a), st(s)] }, "nothing from before the Return")
+        XCTAssertEqual(snap.gaps, Array(repeating: 1, count: 60))
+        XCTAssertEqual(snap.strokes, [st(d)])
     }
 
     func testEmptyBufferHasNoRun() {

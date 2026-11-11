@@ -223,8 +223,29 @@ import Foundation
             guard written.end <= units.count else { return false }
             textThere = String(decoding: units[written.location..<written.end], as: UTF16.self)
         }
-        guard textThere == new, case .success(let sel) = el.range(.selectedTextRange) else { return false }
+        guard let textThere, Self.readsBackAs(textThere, new),
+              case .success(let sel) = el.range(.selectedTextRange) else { return false }
         return sel == TextRange(location: written.end, length: 0) || sel == written
+    }
+
+    /// P3-33: the read-back shows `new`, allowing only what editors do to whitespace they own, unit for unit: a
+    /// no-break space read back as a space or the reverse (WebKit's contenteditable rebalances spaces on insert, so
+    /// Mail/Safari fields read back U+0020 for a written U+00A0), and one line-break unit for another (`\n` / `\r` /
+    /// U+2028 / U+2029). Same UTF-16 length, every other unit identical. A strict compare there failed the write's
+    /// verify, which marks AX broken for the app for the session (`ReplacementCapabilities.record`), and every later
+    /// double-Shift then fell back to the word buffer: a likely cause of "only ~3 words change" in Mail.
+    nonisolated static func readsBackAs(_ read: String, _ new: String) -> Bool {
+        if read.unicodeScalars.elementsEqual(new.unicodeScalars) { return true }
+        let r = Array(read.utf16), n = Array(new.utf16)
+        guard r.count == n.count else { return false }
+        func space(_ u: UInt16) -> Bool { u == 0x20 || u == 0xA0 }
+        func lineBreak(_ u: UInt16) -> Bool { u == 0x0A || u == 0x0D || u == 0x2028 || u == 0x2029 }
+        for (x, y) in zip(r, n) where x != y {
+            if space(x) && space(y) { continue }
+            if lineBreak(x) && lineBreak(y) { continue }
+            return false
+        }
+        return true
     }
 
     /// The original text is still selected at the same place: nothing was written.
@@ -290,30 +311,43 @@ import Foundation
         return post(deletes + typing)
     }
 
-    /// P2-59 (001 §12.3 X4): one `AXStringForRange` read of `[max(0, caret − maxChars), caret)`, then `locate`
+    /// P2-59 (001 §12.3 X4): one `AXStringForRange` read of `[max(0, caret − maxChars), caret)` (P3-33: smaller
+    /// retries if that read fails or has the wrong length), then `locate`
     /// finds the run in it; its range is remembered for the AX write that follows. Writes nothing.
     func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome {
         pendingRange = nil
         wordBeforeCaret = nil
         guard focusIsSafe, let el = element, maxChars > 0, let caret = try? currentSelectedRange(el),
               caret.isCaret, caret.location > 0 else { return .unavailable }
-        let start = max(0, caret.location - maxChars)
-        let window = TextRange(location: start, length: caret.location - start)
-        // The read must return exactly the window, or the offsets mean nothing.
-        guard case .success(let text) = el.string(in: window), text.utf16.count == window.length else {
-            return .unavailable
+        // The read must return exactly the window, or the offsets mean nothing. P3-33: a failed or wrong-length read
+        // of a big window is retried once per smaller one (nearest the caret), so far text an app counts differently
+        // costs only the far part of the run, not the whole AX path. A timeout ends it (P2-49 item 5).
+        var sizes = [maxChars]
+        for n in ReplacementPlanner.runReadRetryChars where n < maxChars && n < caret.location { sizes.append(n) }
+        var found: (text: String, start: Int)?
+        for size in sizes {
+            let start = max(0, caret.location - size)
+            let window = TextRange(location: start, length: caret.location - start)
+            if case .success(let text) = el.string(in: window), text.utf16.count == window.length {
+                found = (text, start)
+                break
+            }
+            if latch.tripped { return .unavailable }
         }
+        guard let found else { return .unavailable }
+        let text = found.text, start = found.start
         let read = StepOutcome(verdict: .done, fieldUntouched: true)
         guard let run = locate(BeforeCaretWindow(text: text, location: start, reachesFieldStart: start == 0)) else {
             return read   // read fine, nothing there
         }
         // Defence in depth: the run ends at the caret, lies inside the window, starts and ends on scalar boundaries
-        // (a split surrogate would decode to U+FFFD), and holds no control character (§12 T2, X3).
+        // (a split surrogate would decode to U+FFFD), and holds no control character other than a line break (§12 T2,
+        // X3; P3-33: the run crosses line breaks, which the AX write puts back unchanged; they are never typed).
         let units = Array(text.utf16)
         guard run.offset >= 0, run.length > 0, run.offset + run.length == units.count else { return .unavailable }
         let slice = units[run.offset...]
         let runText = String(decoding: slice, as: UTF16.self)
-        guard Array(runText.utf16) == Array(slice), !ReplacementPlanner.containsUnsafeCharacter(runText) else {
+        guard Array(runText.utf16) == Array(slice), !ReplacementPlanner.containsHardStop(runText) else {
             return .unavailable
         }
         pendingRange = TextRange(location: start + run.offset, length: run.length)

@@ -146,12 +146,14 @@ final class ConvertControllerRunTests: XCTestCase {
     }
 
     @TextActor func testARunLongerThanTheWindowBeepsAndWritesNothing() async {
-        let field = FakeTextField(String(repeating: "a", count: 300))
+        // P3-33: scaled to the 4,096-unit window (was 300 against 256).
+        let long = String(repeating: "a", count: ReplacementPlanner.maxRunReadChars + 44)
+        let field = FakeTextField(long)
         let (sut, _, poster) = real(field)
         let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .noop(.runTooLong))
         XCTAssertEqual(log.beeps, 1)
-        XCTAssertEqual(field.text, String(repeating: "a", count: 300))
+        XCTAssertTrue(field.text == long, "nothing written")
         XCTAssertTrue(poster.events.isEmpty)
         XCTAssertTrue(log.claims.isEmpty)
         XCTAssertTrue(log.switches.isEmpty)
@@ -193,11 +195,41 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertTrue(log.claims.isEmpty)
     }
 
-    @TextActor func testTheRunStopsAtALineBreak() async {
+    /// P3-33: was "the run stops at a line break"; now the whole wrong run converts, across lines, in one AX write.
+    @TextActor func testTheRunCrossesALineBreak() async {
         let field = FakeTextField("akuo\nvh")
+        let (sut, _, poster) = real(field)
+        let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axRun, switched: true))
+        XCTAssertEqual(field.text, "שלום\nהי")
+        XCTAssertTrue(poster.events.isEmpty, "never typed: the line break is put back by the AX write")
+    }
+
+    /// P3-33: a multi-line wrong run stops at the line above that is already in the other language.
+    @TextActor func testAMultiLineRunStopsAtTheOtherLanguageOnALineAbove() async {
+        let field = FakeTextField("hello world\nשלום\nakuo vh\nnhv")
         let (sut, _, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "akuo\nהי")
+        XCTAssertEqual(field.text, "hello world\nשלום\nשלום הי\nמיה")
+    }
+
+    /// P3-33: a long multi-line run (≈ 3,000 units over 50 lines) converts whole, and double-Shift again undoes it.
+    @TextActor func testALongMultiLineRunConvertsWholeAndUndoes() async {
+        let line = String(repeating: "akuo ", count: 12) + "\n"          // 61 units
+        let original = "שלום\n" + String(repeating: line, count: 50) + "vh"
+        let field = FakeTextField(original)
+        let (sut, _, poster) = real(field)
+        let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axRun, switched: true))
+        let converted = "שלום\n" + String(repeating: String(repeating: "שלום ", count: 12) + "\n", count: 50) + "הי"
+        XCTAssertTrue(field.text == converted, "the whole run, every line")
+        XCTAssertEqual(sut.lastRun?.length, original.utf16.count - 5)
+        // Undo: double-Shift again, nothing touched since.
+        let back = await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew),
+                                    layouts: layouts)
+        XCTAssertEqual(back, .converted(to: IDs.abc, by: axRun, switched: true))
+        XCTAssertTrue(field.text == original, "undone exactly")
+        XCTAssertTrue(poster.events.isEmpty)
     }
 
     // MARK: - Key path (unreadable apps)
@@ -213,6 +245,35 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true)])
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
         XCTAssertNil(sut.lastRun)
+    }
+
+    /// P3-33: a long buffer (100 words, 502 keys: what the owner types in Slack before Return) converts whole by keys,
+    /// in one Backspace count, and the kept buffer converts straight back (undo).
+    @TextActor func testKeysOnlyAppConvertsALongBufferWholeAndUndoes() async {
+        let (sut, r) = scripted(readable: true)
+        let words = Array(repeating: "akuo", count: 100)
+        let snap = buffer(words, current: "vh", in: IDs.abc)
+        let out = await sut.handle(request(snap, gen: 1, bundleID: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 502), switched: true))
+        XCTAssertTrue(r.writes.map(\.new) == [String(repeating: "שלום ", count: 100) + "הי"], "the whole buffer")
+        XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
+        let back = await sut.handle(request(buffer(words, current: "vh", in: IDs.hebrew, untouched: 1), gen: 2,
+                                            bundleID: slack, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(back, .converted(to: IDs.abc, by: .backspaceAndType(count: 502), switched: true))
+        XCTAssertTrue(r.writes.last?.new == String(repeating: "akuo ", count: 100) + "vh", "undone exactly")
+    }
+
+    /// P3-33: the real executor posts a full-size key run: ≤ 512 Backspaces, then the text in ≤ 16-unit chunks.
+    @TextActor func testAFullSizeKeyRunIsPostedByTheExecutor() async {
+        let field = FakeTextField("")
+        let (sut, _, poster) = real(field)
+        let words = Array(repeating: "akuo", count: 102)          // 102 × 5 = 510, + "vh" = 512 keys
+        let out = await sut.handle(request(buffer(words, current: "vh", in: IDs.abc), gen: 1, bundleID: slack),
+                                   layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 512), switched: true))
+        let backspaces = poster.events.filter { $0.unicode.isEmpty }.count
+        XCTAssertEqual(backspaces, 2 * 512)
+        XCTAssertEqual(poster.events.count - backspaces, 2 * 32, "512 units in 16-unit chunks, down + up")
     }
 
     @TextActor func testTerminalPingPongNeverReadsThroughAX() async {
@@ -397,12 +458,13 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(field.text, "שלום שלום הית מיס", "the normal scan converts only the new Latin letter")
     }
 
-    @TextActor func testUndoRefusedWhenTheTailHoldsALineBreak() async {
+    /// P3-33: was a line break; a line break no longer stops the run, so the hard stop here is a tab.
+    @TextActor func testUndoRefusedWhenTheTailHoldsAHardStop() async {
         let (sut, field, _) = await convertedOnce()
         let i = field.units.count - 4   // the space before "מיה"
-        field.units[i] = 10
+        field.units[i] = 9
         await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום שלום הית\nnhv", "the normal scan stops at the line break")
+        XCTAssertEqual(field.text, "שלום שלום הית\tnhv", "the normal scan stops at the tab")
     }
 
     @TextActor func testUndoRefusedWhenTheTailHasNoLetterOfItsSide() async {

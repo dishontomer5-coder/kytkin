@@ -19,6 +19,8 @@ final class FakeTextField: AXTextElement {
         case writesThenTimesOut
         /// P2-49: the app hangs: the call times out and nothing is written.
         case timesOut
+        /// P3-33: WebKit's contenteditable rebalances whitespace: every no-break space written lands as a plain space.
+        case noBreakSpacesBecomeSpaces
     }
 
     var role: String? = "AXTextArea"
@@ -46,6 +48,9 @@ final class FakeTextField: AXTextElement {
     var rejectsCaretRanges = false
     /// P2-59: `AXStringForRange` answers this instead of the real text (an app returning the wrong length).
     var stringForRangeOverride: String?
+    /// P3-33: reads longer than this come back one unit short (an app counting far text, e.g. an attachment or a
+    /// block break, differently from the range it was given).
+    var stringForRangeExactUpTo: Int?
     /// P2-59: every range `AXStringForRange` was asked for.
     private(set) var stringRangesRead: [TextRange] = []
 
@@ -127,6 +132,9 @@ final class FakeTextField: AXTextElement {
         stringRangesRead.append(r)
         if let stringForRangeOverride { return .success(stringForRangeOverride) }
         guard r.location >= 0, r.end <= units.count else { return .failure(.failed) }
+        if let limit = stringForRangeExactUpTo, r.length > limit {
+            return .success(String(decoding: units[(r.location + 1)..<r.end], as: UTF16.self))
+        }
         return .success(String(decoding: units[r.location..<r.end], as: UTF16.self))
     }
 
@@ -147,6 +155,8 @@ final class FakeTextField: AXTextElement {
         case .fails: return .failure(.failed)
         case .writesThenTimesOut: replaceSelection(with: value); return timedOut()
         case .timesOut: return timedOut()
+        case .noBreakSpacesBecomeSpaces:
+            replaceSelection(with: String(decoding: value.utf16.map { $0 == 0xA0 ? 0x20 : $0 }, as: UTF16.self))
         }
         return .success(())
     }
