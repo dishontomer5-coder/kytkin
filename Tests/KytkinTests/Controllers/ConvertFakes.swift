@@ -67,6 +67,11 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     /// P2-59c: the read hands this window to the caller's `locate` (as the executor does) and the run it names
     /// becomes `wordBeforeCaret`. Unset: `foundWord` alone, as a window at the field start.
     var window: BeforeCaretWindow?
+    /// P3-35: `readField` hands this window to the caller's `locate`. Unset: `foundWord` as the whole field, the caret
+    /// at its end.
+    var fieldWindow: FieldWindow?
+    /// P3-35: what `readRangeEndsAtCaret` reports after a read.
+    private(set) var readRangeEndsAtCaret = true
     /// P2-59c: the focused element's identity (the undo record's same-element check).
     var element: (any FocusedElementIdentity)?
     /// Runs inside every `perform` (e.g. to move a fake clock past the budget).
@@ -118,6 +123,26 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return outcome
     }
 
+    func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome {
+        let step = ReplacementStep.axReadField(maxChars: maxChars)
+        log.add(.perform(step))
+        onPerform?()
+        readRangeEndsAtCaret = true
+        let outcome = results[.read] ?? .done
+        guard outcome.verdict == .done else { return outcome }
+        let w = fieldWindow ?? foundWord.map {
+            FieldWindow(text: $0, location: 0, caret: $0.utf16.count, reachesFieldStart: true, reachesFieldEnd: true)
+        }
+        wordBeforeCaret = w.flatMap { w in
+            locate(w).map { edit in
+                let units = Array(w.text.utf16)
+                readRangeEndsAtCaret = w.location + edit.offset + edit.length == w.caret
+                return String(decoding: units[edit.offset..<(edit.offset + edit.length)], as: UTF16.self)
+            }
+        }
+        return outcome
+    }
+
     var focusedElement: (any FocusedElementIdentity)? { focus == nil ? nil : element }
 
     func endReplacement() {
@@ -136,7 +161,7 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         case .axWriteSelection: .axWrite
         case .typeOverSelection: .typeOver
         case .backspaceAndType: .backspace
-        case .axReadRunBeforeCaret: .read
+        case .axReadRunBeforeCaret, .axReadField: .read
         case .pasteboard: .paste
         case .keyCodesAfterSwitch: .keyCodes
         }

@@ -51,6 +51,8 @@ final class FakeTextField: AXTextElement {
     /// P3-33: reads longer than this come back one unit short (an app counting far text, e.g. an attachment or a
     /// block break, differently from the range it was given).
     var stringForRangeExactUpTo: Int?
+    /// P3-35: `AXNumberOfCharacters` answers this error instead (an app that won't say how long the field is).
+    var numberOfCharactersError: AXAccessError?
     /// P2-59: every range `AXStringForRange` was asked for.
     private(set) var stringRangesRead: [TextRange] = []
 
@@ -103,6 +105,7 @@ final class FakeTextField: AXTextElement {
 
     func integer(_ a: AXTextAttribute) -> Result<Int, AXAccessError> {
         if a != .numberOfCharacters { call(); return .failure(.unsupported) }
+        if let numberOfCharactersError { call(); reads.append(a); return .failure(numberOfCharactersError) }
         return read(a) { units.count }
     }
 

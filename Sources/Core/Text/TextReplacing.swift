@@ -24,8 +24,20 @@ import Foundation
     /// nothing there"). Any AX failure, or no caret → `.unavailable` (untouched). Writes nothing.
     func readRunBeforeCaret(maxChars: Int, locate: (BeforeCaretWindow) -> RunLocation?) -> StepOutcome
 
-    /// The run found by the last successful `axReadRunBeforeCaret` step, in memory for this replacement only.
+    /// P3-35 (001 §12.3 X11): the `axReadField` step. Reads the whole field (≤ `maxChars` UTF-16 units, else a window
+    /// around the caret; smaller windows if a read fails or has the wrong length) and asks `locate` what to replace.
+    /// An edit → `.done`, `wordBeforeCaret` = the text in its range, the next AX write targets that range and then
+    /// puts the caret at `caretAfter`. `locate` returns nil → `.done` with `wordBeforeCaret == nil`. Any AX failure,
+    /// or no caret → `.unavailable` (untouched). Writes nothing.
+    func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome
+
+    /// The run found by the last successful `axReadRunBeforeCaret` / `axReadField` step, in memory for this
+    /// replacement only.
     var wordBeforeCaret: String? { get }
+
+    /// P3-35: the range found by the last read step ends at the caret, so a key fallback (Backspace × N from the
+    /// caret) would delete exactly it. False for a whole-box range that reaches past the caret.
+    var readRangeEndsAtCaret: Bool { get }
 
     /// P2-59c (001 §12.3 X6): the element the last `focusInfo` read as safe (not secure, not composing), until
     /// `endReplacement`. Identity only, for the undo record's same-element check; nil = unknown.
@@ -38,6 +50,9 @@ import Foundation
 extension TextReplacing {
     /// P2-59c: a replacer that can't name its element never gets an undo record (the safe default).
     var focusedElement: (any FocusedElementIdentity)? { nil }
+
+    /// P3-35: a replacer that can't tell keeps the P2-59 rule (the run read always ended at the caret).
+    var readRangeEndsAtCaret: Bool { true }
 
     /// 001 §2.2's signature: just the verdict.
     func execute(_ step: ReplacementStep, old: String, new: String) -> StepVerdict {

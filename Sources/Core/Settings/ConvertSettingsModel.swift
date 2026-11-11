@@ -3,7 +3,8 @@
 // - Double-Shift on/off, which Shift keys, the window (a slider clamped to 200–500 ms, P2-31) and "Switch language
 //   after converting" (001 §11 Q1) read and write `prefs.convert`. AppController observes the store and sends the
 //   new tap config with `KeyWatcherOperation.updateConfig` (P2-50), so a change works at once, without a restart.
-// - The explanation says what double-Shift does since P2-59 (plan.md decisions P2-59, P2-54(a)).
+// - The explanation says what double-Shift does since P2-59 (plan.md decisions P2-59, P2-54(a)); P3-35: the whole
+//   text box, or the selection.
 // - Auto-fix is Phase 4: the tab shows only a "coming later" line, never a control.
 // - Read-only preferences (§12 S1): every setter does nothing and the notice says why.
 
@@ -19,9 +20,10 @@ import Observation
 
     static let explanation = [
         "Typed something in the wrong layout? Press Shift twice.",
-        "With nothing selected, Kytkin converts the text typed in the wrong layout just before the cursor, "
-            + "back to where the other language starts, even over several lines.",   // P3-33 QA: was "on the current line"
-        "With text selected, it converts only the selection.",
+        // P3-35 (owner 2026-11-11): the whole text box (was the wrong-layout text before the cursor, P3-33).
+        "With nothing selected, Kytkin converts the whole text box: every letter in the language next to the "
+            + "cursor changes to the other language, on every line. Text already in the other language stays.",
+        "With text selected, it converts only the selection, so select just the part you want to change.",
         "Press Shift twice again right away to undo.",
         "Where Kytkin can't read the text, it converts what it remembers you typing, "
             + "or only switches the language.",

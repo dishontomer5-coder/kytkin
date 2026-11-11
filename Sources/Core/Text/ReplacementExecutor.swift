@@ -32,7 +32,13 @@ import Foundation
     private var focusIsSafe = false
     /// The range `readRunBeforeCaret` found; the next AX write targets it.
     private var pendingRange: TextRange?
+    /// P3-35: where a successful write of `pendingRange` leaves the caret (nil = after the new text), and where a
+    /// write that changed nothing puts it back (the user's caret; nil = `pendingRange.end`, the P2-59 run).
+    private var pendingCaretAfter: Int?
+    private var pendingRestoreCaret: Int?
     private(set) var wordBeforeCaret: String?
+    /// P3-35: the last read's range ends at the caret (a key fallback could delete exactly it).
+    private(set) var readRangeEndsAtCaret = true
 
     /// P2-59c: the element `focusInfo` read as safe, for the undo record's same-element check (identity only).
     var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element?.inner : nil }
@@ -46,7 +52,10 @@ import Foundation
         element = nil
         focusIsSafe = false
         pendingRange = nil
+        pendingCaretAfter = nil
+        pendingRestoreCaret = nil
         wordBeforeCaret = nil
+        readRangeEndsAtCaret = true
         latch.reset()
     }
 
@@ -97,7 +106,8 @@ import Foundation
             let textSettable = try optional(el.isSettable(.selectedText)) ?? false
             let rangeSettable = (try optional(el.isSettable(.selectedTextRange)) ?? false) && range != nil
             var readsCaret = false
-            if let range, range.isCaret, range.location > 0 {
+            // P3-35: a caret at the field start counts too (the whole box converts, from the nearest letter after).
+            if let range, range.isCaret, range.location >= 0 {
                 readsCaret = try optional(el.supportsStringForRange()) ?? false
             }
             element = el
@@ -142,7 +152,7 @@ import Foundation
         case .typeOverSelection: return typeOverSelection(old: old, new: new)
         case .backspaceAndType(let count): return backspaceAndType(count: count, old: old, new: new)
         // P2-59: the run read needs a locator, so it only runs through `readRunBeforeCaret`.
-        case .axReadRunBeforeCaret: return .unavailable
+        case .axReadRunBeforeCaret, .axReadField: return .unavailable
         case .pasteboard, .keyCodesAfterSwitch: return .unavailable   // P3 / P4: not in the MVP
         }
     }
@@ -155,13 +165,24 @@ import Foundation
         // P2-18 QA: the stale path selected the word itself. Whatever happens, never leave a selection behind:
         // the user's next key would replace it (the word, or the converted word) and their text would be lost.
         pendingRange = nil
+        let caretAfter = pendingCaretAfter
+        let restore = pendingRestoreCaret ?? pending.end
+        pendingCaretAfter = nil
+        pendingRestoreCaret = nil
         let outcome = axWrite(el, old: old, new: new, verify: verify, select: pending)
         if outcome.verdict == .done {
-            collapseSelection(el, to: pending.location + new.utf16.count)
+            if let caretAfter {
+                // P3-35: the whole box was written; the caret goes back where the user had it (best effort: the
+                // text is verified, so a caret the app won't move doesn't fail the convert).
+                placeCaret(el, at: caretAfter)
+            } else {
+                collapseSelection(el, to: pending.location + new.utf16.count)
+            }
         } else if outcome.fieldUntouched {
             // P2-59 (001 §12.3 X4): untouched only with the caret verified back where the user left it. If the run
             // were still selected, a key fallback's Backspace would delete it all and then N − 1 more before it.
-            if !collapseSelection(el, to: pending.end) {
+            // P3-35: "where the user left it" is the caret the read saw, which a whole-box range may not end at.
+            if !collapseSelection(el, to: restore) {
                 return StepOutcome(verdict: outcome.verdict, fieldUntouched: false)
             }
         } else {
@@ -183,6 +204,16 @@ import Foundation
             return after.isCaret && (location == nil || after.location == location)
         }
         return location == nil || current.location == location
+    }
+
+    /// P3-35: put a caret at `location` whatever is selected now, then read it back. True when it is there.
+    @discardableResult
+    private func placeCaret(_ el: any AXTextElement, at location: Int) -> Bool {
+        let caret = TextRange(location: location, length: 0)
+        if case .success(caret) = el.range(.selectedTextRange) { return true }
+        guard case .success = el.setRange(caret, for: .selectedTextRange),
+              case .success(let after) = el.range(.selectedTextRange) else { return false }
+        return after == caret
     }
 
     private func axWrite(_ el: any AXTextElement, old: String, new: String, verify: Bool,
@@ -357,6 +388,81 @@ import Foundation
         pendingRange = TextRange(location: start + run.offset, length: run.length)
         wordBeforeCaret = runText
         return read
+    }
+
+    /// P3-35 (001 §12.3 X11): the whole-box read. The field's length (`AXNumberOfCharacters`) says what "whole" is;
+    /// a field of ≤ `maxChars` units is read in one `AXStringForRange`. A bigger one, or a read that fails or comes
+    /// back with the wrong length, is read as a window of that size around the caret (¾ before it, ¼ after), then of
+    /// each `ReplacementPlanner.fieldReadRetryChars` size, until one reads exactly. A length AX won't give: the window
+    /// ends at the caret (the P3-33 read). A timeout ends it (P2-49 item 5). `locate` names the range; it is
+    /// remembered for the AX write that follows, with the caret to restore. Writes nothing.
+    func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome {
+        pendingRange = nil
+        pendingCaretAfter = nil
+        pendingRestoreCaret = nil
+        wordBeforeCaret = nil
+        readRangeEndsAtCaret = true
+        guard focusIsSafe, let el = element, maxChars > 0, let caret = try? currentSelectedRange(el),
+              caret.isCaret else { return .unavailable }
+        var total: Int?
+        switch el.integer(.numberOfCharacters) {
+        case .success(let n) where n >= caret.location: total = n
+        case .failure(let e) where e.abortsFocusRead: return .unavailable
+        default: total = nil
+        }
+        if latch.tripped { return .unavailable }
+        let read = StepOutcome(verdict: .done, fieldUntouched: true)
+        if total == 0 { return read }   // an empty field: nothing there
+
+        var sizes = [maxChars]
+        for n in ReplacementPlanner.fieldReadRetryChars where n < maxChars && n < (total ?? caret.location) {
+            sizes.append(n)
+        }
+        var found: (text: String, range: TextRange)?
+        for size in sizes {
+            let range = Self.window(size: size, caret: caret.location, total: total)
+            guard range.length > 0 else { return read }
+            if case .success(let text) = el.string(in: range), text.utf16.count == range.length {
+                found = (text, range)
+                break
+            }
+            if latch.tripped { return .unavailable }
+        }
+        guard let found else { return .unavailable }
+        let window = FieldWindow(text: found.text, location: found.range.location, caret: caret.location,
+                                 reachesFieldStart: found.range.location == 0,
+                                 reachesFieldEnd: total.map { found.range.end == $0 } ?? false)
+        guard let edit = locate(window) else { return read }   // read fine, nothing there
+        // Defence in depth: the range lies inside the window, starts and ends on scalar boundaries (a split surrogate
+        // would decode to U+FFFD) and holds no control character other than a line break or a tab (both are written
+        // back unchanged by the AX write and never typed: a key fallback needs the range to be the word buffer).
+        let units = Array(found.text.utf16)
+        guard edit.offset >= 0, edit.length > 0, edit.offset + edit.length <= units.count else { return .unavailable }
+        let slice = units[edit.offset..<(edit.offset + edit.length)]
+        let text = String(decoding: slice, as: UTF16.self)
+        guard Array(text.utf16) == Array(slice), !ReplacementPlanner.containsFieldStop(text) else {
+            return .unavailable
+        }
+        if let after = edit.caretAfter, after < 0 { return .unavailable }
+        let range = TextRange(location: found.range.location + edit.offset, length: edit.length)
+        pendingRange = range
+        pendingCaretAfter = edit.caretAfter
+        pendingRestoreCaret = caret.location
+        readRangeEndsAtCaret = range.end == caret.location
+        wordBeforeCaret = text
+        return read
+    }
+
+    /// P3-35: the range to read: the whole field when it fits `size`, else `size` units around the caret, ¾ before it
+    /// (what was just typed is usually before the caret). An unknown length: `size` units ending at the caret.
+    nonisolated static func window(size: Int, caret: Int, total: Int?) -> TextRange {
+        guard let total else {
+            let start = max(0, caret - size)
+            return TextRange(location: start, length: caret - start)
+        }
+        if total <= size { return TextRange(location: 0, length: total) }
+        let start = min(max(0, caret - size * 3 / 4), total - size)
+        return TextRange(location: start, length: size)
     }
 
     /// Checks every event first, then posts in order. If the poster refuses the first event nothing went out;
