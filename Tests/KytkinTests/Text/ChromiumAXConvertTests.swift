@@ -95,8 +95,9 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(result, .converted(pieces: 2))
         XCTAssertEqual(f.text, "שלום שלום שלום")
         // Last piece first, then the first one, then the caret.
-        XCTAssertEqual(f.rangeWrites, [TextRange(location: 10, length: 4), TextRange(location: 0, length: 4),
-                                       TextRange(location: 4, length: 0)])
+        // P3-42 QA: "akuo" occurs twice: the last one's unique window ("ום akuo") is checked first.
+        XCTAssertEqual(f.rangeWrites, [TextRange(location: 8, length: 6), TextRange(location: 10, length: 4),
+                                       TextRange(location: 0, length: 4), TextRange(location: 4, length: 0)])
     }
 
     @TextActor func testNeverWritesSelectedTextOrValue() async {
@@ -247,13 +248,18 @@ final class ChromiumAXConvertTests: XCTestCase {
     // MARK: - Budget, focus, timing between pieces
 
     @TextActor func testBudgetRunsOutBetweenPiecesStopsWithTheWrittenPieceVerified() async {
-        let f = field("akuo akuo")
+        // P3-42 QA: the budget is gone while the first piece's selection is being checked: it is never typed.
+        let f = field("akuo vh")
         let clock = self.clock!
-        f.onSetRange = { r in if !r.isCaret { clock.advance(byMilliseconds: 450) } }
+        var sets = 0
+        f.onSetRange = { r in
+            if !r.isCaret { sets += 1 }
+            if sets == 2, !r.isCaret { clock.advance(byMilliseconds: 450) }
+        }
         let result = await run(f)
         XCTAssertEqual(result, .partial(written: 1, .timedOut))
-        XCTAssertEqual(f.text, "akuo שלום", "the last piece was written and verified, the first never started")
-        XCTAssertEqual(f.range(.selectedTextRange), .success(TextRange(location: 9, length: 0)))
+        XCTAssertEqual(f.text, "akuo הי", "the last piece was written and verified, the first never typed")
+        XCTAssertEqual(f.range(.selectedTextRange), .success(TextRange(location: 7, length: 0)))
     }
 
     @TextActor func testBudgetGoneBeforeTheFirstPieceTypesNothing() async {
@@ -311,7 +317,9 @@ final class ChromiumAXConvertTests: XCTestCase {
         f.keyLagNanos = nil
         let result = await run(f)
         XCTAssertEqual(result, .failed(written: 0, .notSettled))
-        XCTAssertEqual(f.rangeWrites, [TextRange(location: 5, length: 4)], "no caret set after the typed keys")
+        // P3-42 QA: the repeated word's unique window is selected and read back first.
+        XCTAssertEqual(f.rangeWrites, [TextRange(location: 3, length: 6), TextRange(location: 5, length: 4)],
+                       "no caret set after the typed keys")
     }
 
     @TextActor func testPostFailingAtTheFirstEventPutsTheCaretBack() async {
@@ -386,5 +394,61 @@ final class ChromiumAXConvertTests: XCTestCase {
         let p: [ChromiumAXConvert.Piece] = [.init(location: 0, original: "ab", replacement: "xyz"),
                                             .init(location: 5, original: "c", replacement: "")]
         XCTAssertEqual(ChromiumAXConvert.caret(after: p, anchor: 3), 4)
+    }
+
+    // MARK: - P3-42 QA: a drifted selection on another occurrence of the same text
+
+    @TextActor func testDriftOntoAnotherOccurrenceOfTheSameTextTypesNothing() async {
+        // P3-42 QA: Slack's emoji shifts every offset by two units, and the range reads back drifted the same way, so the
+        // range "agrees". "a a a" repeats with that period: the piece (the last "a") selects the middle "a", whose text
+        // agrees too. The unique window around it ("a a a", the whole box) reads back as "a a": nothing is typed.
+        let f = field("😀a a a")
+        f.hidden = 0..<2
+        f.setRangeDrifts = true
+        f.rangeReadEchoesWrite = true
+        let result = await sut(SwitchableFocusProvider(f)).run(.box, expected: f, plan: { _ in
+            .changes([TextChange(offset: 4, length: 1, text: "ש")])
+        }, mayWrite: { true })
+        XCTAssertEqual(result, .unavailable(.selectionMismatch))
+        XCTAssertTrue(poster.events.isEmpty, "no key typed over the wrong a")
+        XCTAssertEqual(f.text, "😀a a a")
+    }
+
+    @TextActor func testRepeatedWordWithoutDriftStillConvertsThroughItsWindow() async {
+        // P3-42 QA: the same word twice, no drift: the window around the second one is selected and read back first,
+        // then the piece itself.
+        let f = field("akuo akuo")
+        let result = await run(f)
+        XCTAssertEqual(result, .converted(pieces: 2))
+        XCTAssertEqual(f.text, "שלום שלום")
+        XCTAssertEqual(f.rangeWrites, [TextRange(location: 3, length: 6), TextRange(location: 5, length: 4),
+                                       TextRange(location: 0, length: 4), TextRange(location: 9, length: 0)])
+    }
+
+    @TextActor func testBudgetSpentWaitingForTheSelectionPostsNoKeys() async {
+        // P3-42 QA: the selection shows only after the budget is gone: no key is posted (it could race the hold-back
+        // flush), the caret goes back.
+        let f = field("akuo")
+        let clock = self.clock!
+        f.onSetRange = { r in if !r.isCaret { clock.advance(byMilliseconds: 450) } }
+        let result = await run(f)
+        XCTAssertEqual(result, .unavailable(.timedOut))
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(f.text, "akuo")
+        XCTAssertEqual(f.rangeWrites.last, TextRange(location: 4, length: 0))
+    }
+
+    func testAnchorWindow() {
+        func w(_ s: String, _ loc: Int, _ len: Int) -> TextRange? {
+            ChromiumAXConvert.anchorWindow(for: TextRange(location: loc, length: len), in: Array(s.utf16))
+        }
+        XCTAssertEqual(w("akuo vh", 0, 4), TextRange(location: 0, length: 4), "unique: the piece itself")
+        XCTAssertEqual(w("akuo akuo", 5, 4), TextRange(location: 3, length: 6))
+        XCTAssertEqual(w("a a a", 4, 1), TextRange(location: 0, length: 5), "the whole box, always unique")
+        XCTAssertEqual(w("x😀ab x😀ab", 10, 1), TextRange(location: 1, length: 10), "never splits a surrogate pair")
+        XCTAssertNil(w("", 0, 0))
+        XCTAssertNil(w("ab", 1, 5))
+        XCTAssertTrue(ChromiumAXConvert.occursOnce(Array("ab".utf16)[...], in: Array("xaby".utf16)))
+        XCTAssertFalse(ChromiumAXConvert.occursOnce(Array("ab".utf16)[...], in: Array("abab".utf16)))
     }
 }

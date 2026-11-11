@@ -22,7 +22,9 @@
 //      spaces are joined (still never across a line break or the caret); still too many → `.unavailable`.
 //   3. The B3 claim. Then for each piece, **last to first** (earlier offsets stay valid): check the budget (400 ms, B5;
 //      never stopped half way through a piece), check the focus (P2-49 item 3), set `AXSelectedTextRange` to the
-//      piece, wait (≤ 100 ms, polled) until the app reports that range selected (Chromium updates it asynchronously),
+//      piece (P3-42 QA: when the piece's text occurs more than once in the box, first a window around it whose text
+//      is unique, read back the same way: a drift onto another occurrence of the same text can't pass), wait (≤ 100
+//      ms, polled) until the app reports that range selected (Chromium updates it asynchronously),
 //      read `AXSelectedText` back and require exactly the original piece (this catches Slack's
 //      emoji offset shift and any drift), then post the replacement as Unicode key events (no control characters, no
 //      modifiers, never Return; `KeyStrokeComposer` chunks long text) and wait (≤ 150 ms, polled) until `AXValue`
@@ -202,9 +204,25 @@ import Foundation
         for piece in pieces.reversed() {   // bounded: ≤ maxPieces
             if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
             guard let now = focusedElement(), now.isSameElement(as: el) else { return stop(.focusChanged) }
+            // P3-42 QA: the read-back of the piece alone can't tell a drifted selection that lands on *another
+            // occurrence* of the same text (Slack's emoji shift over "a a a", or the same word twice at the drift's
+            // distance): the range reads back as set and the text agrees, so the wrong word would be typed over. So
+            // when the piece's text is not unique in the box, first select a window around it whose text *is* unique
+            // and require that read back: an agreeing unique text can only sit at its own place, so the offsets map
+            // exactly there. No unique window (the box repeats itself) → nothing more is typed.
+            guard let window = Self.anchorWindow(for: piece.range, in: current) else { return stop(.selectionMismatch) }
+            if window != piece.range {
+                let windowText = String(decoding: current[window.location..<window.end], as: UTF16.self)
+                guard case .success = track(el.setRange(window, for: .selectedTextRange)),
+                      await selects(el, window, windowText) else { return stop(.selectionMismatch) }
+                if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
+            }
             // Select the piece and check that the app selected exactly the expected text (offset drift, Slack emoji).
             guard case .success = track(el.setRange(piece.range, for: .selectedTextRange)),
-                  await selects(el, piece) else { return stop(.selectionMismatch) }
+                  await selects(el, piece.range, piece.original) else { return stop(.selectionMismatch) }
+            // P3-42 QA: the waits above can use up the budget; keys are posted only inside it, so they are in the event
+            // stream before the hold-back flush (deadline + hard cap) can replay the user's held keys onto a selection.
+            if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
             guard let events = KeyStrokeComposer.typing(piece.replacement), events.allSatisfy(\.isSafeToPost) else {
                 return stop(.inconsistent)   // can't happen: `isValid` checked it
             }
@@ -277,16 +295,18 @@ import Foundation
 
     // MARK: - Step 3 helpers
 
-    /// After the range write: polls (bounded) until the app reports the piece's range selected (Chromium applies a
-    /// selection in the renderer and updates the AX tree asynchronously, research §5 step 3), then requires
-    /// `AXSelectedText` to be exactly the piece's original text. The right range with other text = offset drift: false
-    /// at once. The first check is immediate.
-    private func selects(_ el: any AXTextElement, _ piece: Piece) async -> Bool {
+    /// After the range write: polls (bounded) until the app reports `range` selected (Chromium applies a selection in
+    /// the renderer and updates the AX tree asynchronously, research §5 step 3), then requires `AXSelectedText` to be
+    /// exactly `original` (P3-42 QA: or, for a window holding a line break, the same visible text: P3-40, Chromium can
+    /// drop line breaks from it). The right range with other text = offset drift: false at once. The first check is
+    /// immediate.
+    private func selects(_ el: any AXTextElement, _ range: TextRange, _ original: String) async -> Bool {
         let polls = max(1, Int(timing.selectSettleNanos / max(timing.pollNanos, 1)))
         for i in 0...polls {
-            if case .success(piece.range) = track(el.range(.selectedTextRange)) {
+            if case .success(range) = track(el.range(.selectedTextRange)) {
                 guard case .success(let selected) = track(el.string(.selectedText)) else { return false }
-                return selected.unicodeScalars.elementsEqual(piece.original.unicodeScalars)
+                if selected.unicodeScalars.elementsEqual(original.unicodeScalars) { return true }
+                return original.contains(where: \.isNewline) && ConvertController.sameVisibleText(selected, original)
             }
             if timedOut { return false }
             if i < polls { await sleep(timing.pollNanos) }
@@ -398,6 +418,47 @@ import Foundation
             previousEnd = p.end
         }
         return true
+    }
+
+    /// P3-42 QA: the smallest window (on grapheme boundaries) around `range` whose text occurs exactly once in `units`:
+    /// `range` itself when its text is already unique, growing on both sides (2, 4, … 256 units, then the whole box,
+    /// which is always unique). nil only for an empty box or a bad range. Searches are bounded: ≤ 9 windows, each
+    /// stopping at the second match.
+    nonisolated static func anchorWindow(for range: TextRange, in units: [UInt16]) -> TextRange? {
+        let n = units.count
+        guard range.location >= 0, range.length > 0, range.end <= n else { return nil }
+        if occursOnce(units[range.location..<range.end], in: units) { return range }
+        let ns = String(decoding: units, as: UTF16.self) as NSString
+        var grow = 2
+        while grow <= 256 {
+            var lo = max(0, range.location - grow), hi = min(n, range.end + grow)
+            if lo > 0 { lo = ns.rangeOfComposedCharacterSequence(at: lo).location }
+            if hi < n {
+                let r = ns.rangeOfComposedCharacterSequence(at: hi)
+                if r.location < hi { hi = r.location + r.length }
+            }
+            if lo == 0, hi == n { break }
+            if occursOnce(units[lo..<hi], in: units) { return TextRange(location: lo, length: hi - lo) }
+            grow *= 2
+        }
+        return TextRange(location: 0, length: n)
+    }
+
+    /// Whether `needle` occurs exactly once in `hay` (naive search, stops at the second match).
+    nonisolated static func occursOnce(_ needle: ArraySlice<UInt16>, in hay: [UInt16]) -> Bool {
+        let m = needle.count
+        guard m > 0, m <= hay.count else { return false }
+        let first = needle.first!
+        var found = 0
+        var i = 0
+        while i + m <= hay.count {
+            if hay[i] == first, hay[i..<(i + m)].elementsEqual(needle) {
+                found += 1
+                if found > 1 { return false }
+            }
+            i += 1
+        }
+        return found == 1
     }
 
     /// The caret after `written`: `anchor` moved by the length change of every written piece that ends at or before it.

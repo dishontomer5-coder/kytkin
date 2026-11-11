@@ -776,6 +776,12 @@ import Foundation
             if !r.snapshot.hasRun { return await toggle(r, because: .fieldUnreadable) }
             beep()
             return .noop(.replacement(.exhausted))
+        case .unavailable(.timedOut):
+            // P3-42 QA: the budget is spent and the B3 claim is taken: the hold-back flush (deadline + hard cap) is
+            // near, so a second path (⌘A / ⌘C / ⌘V or keys) could run while the user's held keys replay. Nothing was
+            // typed; beep instead.
+            beep()
+            return .noop(.replacement(.timedOut))
         case .unavailable:
             return await fallBackFromChromium(r, layouts: layouts, finish: &finish)
         case .partial, .failed:

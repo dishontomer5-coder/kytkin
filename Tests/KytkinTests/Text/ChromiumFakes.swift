@@ -19,6 +19,10 @@ final class FakeChromiumField: AXTextElement {
     var hidden: Range<Int>?
     /// Setting `AXSelectedTextRange` takes the AX offsets as DOM offsets (they drift after `hidden`).
     var setRangeDrifts = false
+    /// P3-42 QA: after a range write, `AXSelectedTextRange` reads back exactly the range written (until typing moves the
+    /// selection), however the page mapped it: a drifted write then "agrees", only the selected text can tell.
+    var rangeReadEchoesWrite = false
+    private var echoedRange: TextRange?
     /// Lists the DOM attributes (web content). False: a native field (the omnibox).
     var webContent = true
     var role = "AXTextArea"
@@ -121,6 +125,7 @@ final class FakeChromiumField: AXTextElement {
         doc.replaceSubrange(domSelection, with: units)
         bold.replaceSubrange(domSelection, with: Array(repeating: style, count: units.count))
         domSelection = (lo + units.count)..<(lo + units.count)
+        echoedRange = nil
         // The hidden emoji moves with a length change before it.
         if let h = hidden, lo < h.lowerBound { hidden = (h.lowerBound + delta)..<(h.upperBound + delta) }
     }
@@ -188,6 +193,7 @@ final class FakeChromiumField: AXTextElement {
                 staleLeft -= 1
                 sel = previousSelection
             }
+            if rangeReadEchoesWrite, let echoedRange { return .success(echoedRange) }
             let lo = toAX(sel.lowerBound), hi = toAX(sel.upperBound)
             return .success(TextRange(location: lo, length: hi - lo))
         case .markedTextRange: return .failure(.noValue)
@@ -227,6 +233,7 @@ final class FakeChromiumField: AXTextElement {
         previousSelection = domSelection
         staleLeft = staleRangeReadsAfterSet
         domSelection = lo..<hi
+        echoedRange = value
         onSetRange?(value)
         return .success(())
     }

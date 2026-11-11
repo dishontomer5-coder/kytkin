@@ -208,15 +208,34 @@ final class ConvertControllerChromiumTests: XCTestCase {
     // MARK: - Stops after typing
 
     @TextActor func testAPartialConvertBeepsAndForgetsTheBuffer() async {
-        let rig = rig("akuo akuo")
+        let rig = rig("akuo vh")
         let clock = self.clock!
-        rig.field.onSetRange = { r in if !r.isCaret { clock.advance(byMilliseconds: 450) } }
-        let out = await rig.sut.handle(request(buffer("akuo akuo"), gen: 1), layouts: layouts)
+        var sets = 0
+        rig.field.onSetRange = { r in
+            if !r.isCaret { sets += 1 }
+            if sets == 2, !r.isCaret { clock.advance(byMilliseconds: 450) }
+        }
+        let out = await rig.sut.handle(request(buffer("akuo vh"), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .noop(.replacement(.halted(after: .axSelectAndType))))
-        XCTAssertEqual(rig.field.text, "akuo שלום")
+        XCTAssertEqual(rig.field.text, "akuo הי")
         XCTAssertEqual(log.beeps, 1)
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: nil, bufferAfter: [])])
         XCTAssertEqual(clipboardKeys(rig.poster), 0, "never a second path after typing")
+    }
+
+    @TextActor func testBudgetGoneBeforeAnyKeyNeverStartsASecondPath() async {
+        // P3-42 QA: nothing typed, but the budget is spent under the B3 claim: no clipboard / keys path (the hold-back
+        // flush is near), a beep, the clipboard untouched.
+        let rig = rig("akuo")
+        let clock = self.clock!
+        rig.field.onSetRange = { r in if !r.isCaret { clock.advance(byMilliseconds: 450) } }
+        let out = await rig.sut.handle(request(buffer("akuo"), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .noop(.replacement(.timedOut)))
+        XCTAssertEqual(rig.field.text, "akuo")
+        XCTAssertEqual(rig.pasteboard.box, "akuo")
+        XCTAssertEqual(log.beeps, 1)
+        XCTAssertEqual(clipboardKeys(rig.poster), 0)
+        XCTAssertTrue(rig.poster.events.isEmpty)
     }
 
     @TextActor func testNothingToConvertJustSwitches() async {
