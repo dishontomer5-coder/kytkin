@@ -3,6 +3,9 @@
 // `.runTooLong`, the P2-54(a) silent switch, the X6 `LastRun` undo record (forward, back, forward) and every reason it
 // is refused (focus change, caret move, age, content change, other app/process, keys since), the finish-exactly-once
 // invariant across the new paths, and that the record holds no text.
+// P3-35: a readable field now converts the whole text box (`axReadField`, `BoxConversion`); the tests below that
+// asserted the P2-59/P3-33 run-before-caret behaviour are changed to the whole-box behaviour (marked P3-35), and the
+// undo record now restores the replaced text exactly (it holds that text for the undo window only).
 
 import XCTest
 
@@ -146,8 +149,9 @@ final class ConvertControllerRunTests: XCTestCase {
     }
 
     @TextActor func testARunLongerThanTheWindowBeepsAndWritesNothing() async {
-        // P3-33: scaled to the 4,096-unit window (was 300 against 256).
-        let long = String(repeating: "a", count: ReplacementPlanner.maxRunReadChars + 44)
+        // P3-33: scaled to the 4,096-unit window (was 300 against 256). P3-35: a box of one word bigger than the
+        // 16,384-unit field cap (a 4,140-unit word now fits the box and converts).
+        let long = String(repeating: "a", count: ReplacementPlanner.maxFieldReadChars + 44)
         let field = FakeTextField(long)
         let (sut, _, poster) = real(field)
         let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
@@ -205,12 +209,13 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty, "never typed: the line break is put back by the AX write")
     }
 
-    /// P3-33: a multi-line wrong run stops at the line above that is already in the other language.
-    @TextActor func testAMultiLineRunStopsAtTheOtherLanguageOnALineAbove() async {
+    /// P3-33: a multi-line wrong run stopped at the line above that is already in the other language.
+    /// P3-35 (owner): the whole box converts: the English line above becomes Hebrew too; the Hebrew line stays.
+    @TextActor func testAMultiLineBoxConvertsEveryLineOfTheCaretSideLanguage() async {
         let field = FakeTextField("hello world\nשלום\nakuo vh\nnhv")
         let (sut, _, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "hello world\nשלום\nשלום הי\nמיה")
+        XCTAssertEqual(field.text, "יקךךם ׳םרךג\nשלום\nשלום הי\nמיה")
     }
 
     /// P3-33: a long multi-line run (≈ 3,000 units over 50 lines) converts whole, and double-Shift again undoes it.
@@ -374,13 +379,15 @@ final class ConvertControllerRunTests: XCTestCase {
                                     layouts: layouts)
         XCTAssertEqual(back, .converted(to: IDs.abc, by: axRun, switched: true))
         XCTAssertEqual(field.text, "שלום akuo vh, nhv")
-        XCTAssertEqual(sut.lastRun?.gen, 2)
-        XCTAssertEqual(sut.lastRun?.from, .a)
+        // P3-35: an undo keeps no record (it held the replaced text); the third double-Shift is a plain convert of
+        // the restored box, the same as the first.
+        XCTAssertNil(sut.lastRun)
         XCTAssertEqual(log.switches.last, .switchTo(IDs.abc, keepsBuffer: true))
 
         let again = await sut.handle(request(empty(untouched: 2), gen: 3), layouts: layouts)
         XCTAssertEqual(again, .converted(to: IDs.hebrew, by: axRun, switched: true))
         XCTAssertEqual(field.text, "שלום שלום הית מיה")
+        XCTAssertEqual(sut.lastRun?.gen, 3)
     }
 
     /// Converts the owner's example once (gen 1), so a record exists; returns the field.
@@ -429,11 +436,15 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(field.text, wholeLineBack)
     }
 
-    @TextActor func testUndoRefusedAfterACaretMove() async {
+    /// P3-35: was "undo refused after a caret move". The undo now checks the text it wrote (fingerprint), not the
+    /// caret, so a caret move the tap didn't see (an arrow key or a click resets `untouchedSinceConvert` anyway)
+    /// still undoes exactly and puts the caret back where it was before the convert.
+    @TextActor func testUndoAfterACaretMoveTheTapMissedStillRestoresExactly() async {
         let (sut, field, _) = await convertedOnce()
         field.selection = TextRange(location: 4, length: 0)   // after the first word
         await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "akuo שלום הית מיה", "the normal scan, from the new caret")
+        XCTAssertEqual(field.text, "שלום akuo vh, nhv")
+        XCTAssertEqual(field.selection, TextRange(location: 17, length: 0), "the caret from before the convert")
     }
 
     @TextActor func testUndoRefusedWhenTheRecordIsStale() async {
@@ -459,12 +470,14 @@ final class ConvertControllerRunTests: XCTestCase {
     }
 
     /// P3-33: was a line break; a line break no longer stops the run, so the hard stop here is a tab.
-    @TextActor func testUndoRefusedWhenTheTailHoldsAHardStop() async {
+    /// P3-35: the written text changed (a tab instead of a space), so the record is refused; the normal convert then
+    /// takes the whole box (a tab is crossed now), from the Hebrew letter before the caret.
+    @TextActor func testUndoRefusedWhenTheWrittenTextChanged() async {
         let (sut, field, _) = await convertedOnce()
         let i = field.units.count - 4   // the space before "מיה"
         field.units[i] = 9
         await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום שלום הית\tnhv", "the normal scan stops at the tab")
+        XCTAssertEqual(field.text, "akuo akuo vh,\tnhv")
     }
 
     @TextActor func testUndoRefusedWhenTheTailHasNoLetterOfItsSide() async {
@@ -514,22 +527,34 @@ final class ConvertControllerRunTests: XCTestCase {
 
     // MARK: - Privacy
 
-    @TextActor func testTheRecordHoldsNoText() async {
+    /// P3-35: was "the record holds no text". An exact undo needs the replaced text (a per-character convert doesn't
+    /// round-trip), so `original` is the one text field; the written text is only a SHA-256 fingerprint. The text
+    /// lives for the undo window only: the next request takes it out, and the expiry drops it after the age limit.
+    @TextActor func testTheRecordHoldsOnlyTheReplacedTextAndOnlyForTheUndoWindow() async {
         let (sut, _, _) = await convertedOnce()
         let rec = try! XCTUnwrap(sut.lastRun)
         var labels: [String] = []
         for child in Mirror(reflecting: rec).children {
             let label = child.label ?? "?"
             labels.append(label)
-            if label == "bundleID" { continue }   // an id, persisted elsewhere anyway (design.md)
+            if label == "bundleID" || label == "original" { continue }   // an id; the one text field, below
             XCTAssertFalse(child.value is String || child.value is Substring || child.value is Character
                            || child.value is [Character] || child.value is [UInt16], "\(label) holds text")
         }
-        XCTAssertEqual(labels, ["gen", "bundleID", "processID", "element", "location", "length", "from", "to",
-                                "madeAtNanos"], "a new field must be checked here before it is added")
-        let described = String(describing: rec)
-        for text in ["שלום", "akuo", "הית", "מיה", "nhv"] { XCTAssertFalse(described.contains(text)) }
+        XCTAssertEqual(labels, ["gen", "bundleID", "processID", "element", "location", "length", "fingerprint",
+                                "original", "originalCaret", "from", "to", "madeAtNanos"],
+                       "a new field must be checked here before it is added")
+        XCTAssertTrue(rec.original == "akuo vh, nhv", "only the replaced range, not the whole box")
+        XCTAssertEqual(rec.fingerprint.count, 32)
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("שלום"))
+        XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("akuo"))
+
+        // Inside the window the expiry keeps it; past the age limit it drops it (and its text).
+        sut.dropExpiredRecord()
+        XCTAssertNotNil(sut.lastRun)
+        clock.advance(byNanos: ConvertController.lastRunMaxAgeNanos + 1)
+        sut.dropExpiredRecord()
+        XCTAssertNil(sut.lastRun)
     }
 
     // MARK: - Every new path finishes exactly once, last
@@ -560,8 +585,9 @@ final class ConvertControllerRunTests: XCTestCase {
                 await sut.handle(t.request(t.buffer(["akuo"], current: "vh", in: IDs.abc), gen: g,
                                            bundleID: t.terminal), layouts: t.layouts)
             },
-            Case(name: "runTooLong") { t, g in
-                let (sut, _, _) = t.real(FakeTextField(String(repeating: "a", count: 300)))
+            Case(name: "runTooLong") { t, g in   // P3-35: one word bigger than the field cap
+                let (sut, _, _) = t.real(FakeTextField(String(repeating: "a",
+                                                              count: ReplacementPlanner.maxFieldReadChars + 1)))
                 await sut.handle(t.request(t.empty(), gen: g), layouts: t.layouts)
             },
             Case(name: "fieldUnreadable") { t, g in

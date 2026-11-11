@@ -213,7 +213,8 @@ final class ReplacementPlannerTests: XCTestCase {
 
     // MARK: - Run (P2-59, 001 §12.3 X4)
 
-    private let read = ReplacementStep.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars)
+    /// P3-35: the run read is the whole-box read now (was `axReadRunBeforeCaret(maxRunReadChars)`).
+    private let read = ReplacementStep.axReadField(maxChars: ReplacementPlanner.maxFieldReadChars)
     private let ax = ReplacementStep.axWriteSelection(verify: true)
 
     /// A buffer of `words` words of 2 strokes, `gap` spaces between them, and `trailing` spaces after the last
@@ -229,6 +230,20 @@ final class ReplacementPlannerTests: XCTestCase {
     func testMaxRunReadIs4096Units() {
         XCTAssertEqual(ReplacementPlanner.maxRunReadChars, 4096)
         XCTAssertEqual(ReplacementPlanner.runReadRetryChars, [1024, 256])
+    }
+
+    /// P3-35: the whole box is read in one go up to 16,384 units, with smaller retries around the caret.
+    func testMaxFieldReadIs16384Units() {
+        XCTAssertEqual(ReplacementPlanner.maxFieldReadChars, 16_384)
+        XCTAssertEqual(ReplacementPlanner.fieldReadRetryChars, [4096, 1024, 256])
+    }
+
+    /// P3-35: a whole-box write may cross line breaks and tabs; any other control character bounds it.
+    func testFieldStopsAreControlsOtherThanLineBreaksAndTabs() {
+        XCTAssertFalse(ReplacementPlanner.containsFieldStop("akuo\nvh\r\nx\u{2028}y\u{2029}z\u{85}\tw"))
+        XCTAssertTrue(ReplacementPlanner.containsFieldStop("a\u{1B}"))
+        XCTAssertTrue(ReplacementPlanner.containsFieldStop("a\u{0}b"))
+        XCTAssertTrue(ReplacementPlanner.containsUnsafeCharacter("akuo\tvh"), "a tab is still never typed")
     }
 
     /// P3-33: line breaks are crossed by the AX run, but every other control character is still a hard stop.

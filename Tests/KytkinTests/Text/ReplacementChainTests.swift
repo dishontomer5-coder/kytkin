@@ -22,6 +22,16 @@ final class ReplacementChainTests: XCTestCase {
         return nil
     }
 
+    /// P3-35: the whole-box convert over the same fixtures, as ConvertController locates what to write.
+    private let locateBox: (FieldWindow) -> FieldEdit? = { w in
+        let layouts = ConvertFixtures.layouts
+        let result = BoxConversion.plan(w, classify: layouts.runClass) { side, g in
+            layouts.converter(from: layouts.source(of: side))?.convert(g).text ?? g
+        }
+        if case .convert(let plan) = result { return plan.edit }
+        return nil
+    }
+
     @TextActor private func executor(_ f: FakeTextField) -> ReplacementExecutor {
         ReplacementExecutor(focusProvider: FakeFocusProvider(f), poster: poster)
     }
@@ -176,9 +186,11 @@ final class ReplacementChainTests: XCTestCase {
         let focus = x.focusInfo(timeout: 0.25)
         let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app),
                                            caps: ReplacementCapabilities(), focus: focus)
-        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true)]))
+        // P3-35: the planner reads the whole box now (was the run before the caret); same result here.
+        XCTAssertEqual(plan, .steps([.axReadField(maxChars: ReplacementPlanner.maxFieldReadChars),
+                                     .axWriteSelection(verify: true)]))
         var caps = ReplacementCapabilities()
-        let out = ReplacementChain.run(plan, on: x, bundleID: app, old: nil, convert: convert, locateRun: locate,
+        let out = ReplacementChain.run(plan, on: x, bundleID: app, old: nil, convert: convert, locateField: locateBox,
                                        capabilities: &caps)
         XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
         XCTAssertEqual(f.text, "שלום תודה")
@@ -195,12 +207,14 @@ final class ReplacementChainTests: XCTestCase {
         let plan = ReplacementPlanner.plan(ReplacementRequest(kind: .convertRun, bundleID: app, snapshot: buffer(3),
                                                               typedLength: 3), caps: ReplacementCapabilities(),
                                            focus: focus)
-        XCTAssertEqual(plan, .steps([.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars), .axWriteSelection(verify: true),
-                                     .backspaceAndType(count: 3)]))
+        // P3-35: the whole-box read (was the run before the caret).
+        XCTAssertEqual(plan, .steps([.axReadField(maxChars: ReplacementPlanner.maxFieldReadChars),
+                                     .axWriteSelection(verify: true), .backspaceAndType(count: 3)]))
         var caps = ReplacementCapabilities()
         var asked = 0
         let out = ReplacementChain.run(plan, on: x, bundleID: app, old: "nhv", convert: pairConvert,
-                                       locateRun: locate, capabilities: &caps, mayWrite: { asked += 1; return true })
+                                       locateField: locateBox, capabilities: &caps,
+                                       mayWrite: { asked += 1; return true })
         XCTAssertEqual(out.result, .replaced(by: .axWriteSelection(verify: true)))
         XCTAssertEqual(f.text, "שלום שלום הית מיה")
         XCTAssertEqual(f.selection, sel(17, 0))
@@ -898,7 +912,12 @@ final class ReplacementChainTests: XCTestCase {
         clock.advance(byNanos: stepNanos)
         return inner.readRunBeforeCaret(maxChars: maxChars, locate: locate)
     }
+    func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome {
+        clock.advance(byNanos: stepNanos)
+        return inner.readField(maxChars: maxChars, locate: locate)
+    }
     var wordBeforeCaret: String? { inner.wordBeforeCaret }
+    var readRangeEndsAtCaret: Bool { inner.readRangeEndsAtCaret }
     func endReplacement() { inner.endReplacement() }
 }
 
@@ -918,6 +937,11 @@ final class ReplacementChainTests: XCTestCase {
         performed.append(.axReadRunBeforeCaret(maxChars: maxChars))
         return inner.readRunBeforeCaret(maxChars: maxChars, locate: locate)
     }
+    func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome {
+        performed.append(.axReadField(maxChars: maxChars))
+        return inner.readField(maxChars: maxChars, locate: locate)
+    }
     var wordBeforeCaret: String? { inner.wordBeforeCaret }
+    var readRangeEndsAtCaret: Bool { inner.readRangeEndsAtCaret }
     func endReplacement() { inner.endReplacement() }
 }

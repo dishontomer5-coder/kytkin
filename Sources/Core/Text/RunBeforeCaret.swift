@@ -1,3 +1,5 @@
+// P3-35: no longer planned for a double-Shift (readable fields convert the whole text box, `BoxConversion`, 001 §12.3
+// X11); kept with its tests for now.
 // P2-59: Finds the run typed in the wrong layout before the caret (001 §12.3 X1, X2, X3). Pure; replaces the
 // P2-18 `WordBeforeCaret` (whitespace-only scan). The window is the ≤ 4,096 UTF-16 units read through AX (P3-33;
 // was 256); the run stops where text in the other language starts, at a foreign letter, at a hard stop (a tab or

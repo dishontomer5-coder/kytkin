@@ -7,9 +7,12 @@
 //     `readRunBeforeCaret` and the caller's `locateRun`). Found a run → it is the text to replace. Read fine but
 //     nothing there → `.exhausted`, nothing written. Unavailable → the AX steps after it are skipped (not run, not
 //     recorded) and the key step, if any, runs on the caller's `old`.
+//   - P3-35: `axReadField` works the same way through `readField` and the caller's `locateField` (the whole text
+//     box; the AX write replaces the range it names and puts the caret back).
 //   - P2-59 key-step rule: `backspaceAndType` runs only if `old != nil` and `current` has exactly `old`'s scalars:
 //     after a run read it deletes exactly what AX and the buffer agree is before the caret. Otherwise it is skipped
-//     as untouched.
+//     as untouched. P3-35: and only if the read's range ends at the caret (a whole-box range may reach past it,
+//     where Backspace can't go).
 //   - Before the first step that writes to the field, `mayWrite` is asked once (ConvertController takes the
 //     hold-back commit there, 001 §7 B3). false = abandon silently, nothing written.
 //     P2-51 (001 §12.2 W8): "writes" covers AX writes as well as key posts. The AX step's own writes include the
@@ -37,6 +40,7 @@ enum ReplacementChain {
     ///   - convert: maps the text on screen to its replacement. nil = can't convert (stop, nothing written).
     ///   - locateRun: P2-59: finds the run in the window an `axReadRunBeforeCaret` step read (the caller's scan,
     ///     which needs the layouts). nil = the read step can't run (unavailable).
+    ///   - locateField: P3-35: the same for an `axReadField` step (the caller's `BoxConversion`).
     @TextActor
     static func run(_ plan: ReplacementPlan,
                     on replacer: some TextReplacing,
@@ -44,6 +48,7 @@ enum ReplacementChain {
                     old: String?,
                     convert: (String) -> String?,
                     locateRun: ((BeforeCaretWindow) -> RunLocation?)? = nil,
+                    locateField: ((FieldWindow) -> FieldEdit?)? = nil,
                     capabilities: inout ReplacementCapabilities,
                     clock: any Clock = SystemClock(),
                     budgetNanos: UInt64 = defaultBudgetNanos,
@@ -61,6 +66,8 @@ enum ReplacementChain {
         var writeClaimed = false
         /// P2-59: the run read was unavailable, so the AX steps that depend on it don't run.
         var skipAXSteps = false
+        /// P3-35: a read step found a range (the key-step rule then also needs it to end at the caret).
+        var readDone = false
 
         for step in steps {
             let isKeyStep = if case .backspaceAndType = step { true } else { false }
@@ -69,6 +76,7 @@ enum ReplacementChain {
             // not with `==` (canonical equivalence): an AX run in another normalization (`e` + U+0301 for `é`) is
             // the same grapheme count but some apps delete it a scalar at a time, so Backspace × N would be wrong.
             if isKeyStep, !Self.sameScalars(current, old) { continue }
+            if isKeyStep, readDone, !replacer.readRangeEndsAtCaret { continue }   // P3-35
             if clock.nowNanos &- start > budgetNanos {
                 return ReplacementOutcome(result: .timedOut, attempts: attempts)
             }
@@ -92,6 +100,8 @@ enum ReplacementChain {
             let outcome: StepOutcome
             if case .axReadRunBeforeCaret(let maxChars) = step, let locateRun {
                 outcome = replacer.readRunBeforeCaret(maxChars: maxChars, locate: locateRun)
+            } else if case .axReadField(let maxChars) = step, let locateField {
+                outcome = replacer.readField(maxChars: maxChars, locate: locateField)
             } else {
                 outcome = replacer.perform(step, old: oldText, new: newText)
             }
@@ -106,6 +116,7 @@ enum ReplacementChain {
                 }
                 current = run
                 replacement = nil
+                readDone = true
                 continue
             }
             if !outcome.fieldUntouched { return ReplacementOutcome(result: .halted(after: step), attempts: attempts) }
@@ -127,7 +138,9 @@ enum ReplacementChain {
     /// The only step that writes nothing (not even a selection range). P2-51: every other step, including any
     /// added later, counts as a write and takes the claim first.
     private static func isRead(_ step: ReplacementStep) -> Bool {
-        if case .axReadRunBeforeCaret = step { return true }
-        return false
+        switch step {
+        case .axReadRunBeforeCaret, .axReadField: return true
+        default: return false
+        }
     }
 }
