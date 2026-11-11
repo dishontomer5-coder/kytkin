@@ -139,7 +139,7 @@ final class ConvertControllerTests: XCTestCase {
         await sut.handle(request(word(keys, in: IDs.hebrew), gen: 1, current: IDs.hebrew),
                          layouts: ConvertFixtures.layouts)
         XCTAssertFalse(log.performs.contains { if case .backspaceAndType = $0 { true } else { false } })
-        XCTAssertEqual(log.performs.first, .axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars))
+        XCTAssertEqual(log.performs.first, .axReadField(maxChars: ReplacementPlanner.maxFieldReadChars))   // P3-35
         assertOneFinish(1, rendering: nil, after: log.claims.isEmpty ? nil : [])
     }
 
@@ -159,7 +159,7 @@ final class ConvertControllerTests: XCTestCase {
         let sut = make(f)
         let dead = [Stroke(keyCode: 14, layer: .option)] + akuo   // ⌥E on ABC is a dead key
         let out = await sut.handle(request(word(dead, in: IDs.abc), gen: 1), layouts: ConvertFixtures.layouts)
-        XCTAssertEqual(log.performs, [.axReadRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars),
+        XCTAssertEqual(log.performs, [.axReadField(maxChars: ReplacementPlanner.maxFieldReadChars),   // P3-35
                                       .axWriteSelection(verify: true)])
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axWriteSelection(verify: true), switched: true))
         // An AX-found run doesn't make the strokes describe the screen: the finish forgets the buffer (`[]`). P2-59c:

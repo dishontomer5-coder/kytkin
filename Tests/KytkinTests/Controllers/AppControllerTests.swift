@@ -62,6 +62,30 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(monitor.overrideHostsCalls.last, [])
     }
 
+    // MARK: - P3-35 QA (owner): the undo record is dropped on a touch, not after a timer
+
+    func testATouchFocusChangePauseOrSecureInputDropsTheUndoRecord() {
+        make(withConvert: true)
+        let c = try! XCTUnwrap(convert)
+        let base = c.forgetUndoCount
+        sut.keySignal(.undoTouched)
+        XCTAssertEqual(c.forgetUndoCount, base + 1, "the first key or click after a convert")
+        sut.keySignal(.bufferInvalidated)
+        XCTAssertEqual(c.forgetUndoCount, base + 2, "a click / navigation key that also cleared the buffer")
+        sut.keySignal(.wordBoundary)
+        XCTAssertEqual(c.forgetUndoCount, base + 3, "a Space that ended a word")
+        sut.contextDidChange(Context(bundleID: "com.apple.TextEdit", pid: 11, generation: 7))
+        XCTAssertEqual(c.forgetUndoCount, base + 4, "another app")
+        sut.setPaused(true)
+        XCTAssertEqual(c.forgetUndoCount, base + 5, "Pause")
+        sut.setPaused(false)
+        XCTAssertEqual(c.forgetUndoCount, base + 5, "Resume drops nothing more")
+        var status = KeyWatcherStatus()
+        status.secureInputOn = true
+        sut.keyWatcherStatusDidChange(status)
+        XCTAssertEqual(c.forgetUndoCount, base + 6, "Secure Input")
+    }
+
     // MARK: - Start / stop
 
     func testStartStartsEverythingAndTheTapOnce() {

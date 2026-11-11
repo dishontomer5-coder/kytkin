@@ -7,9 +7,12 @@
 //      No layout maps → the same silent switch when the buffer is empty (P2-54(a)), else a beep.
 //   2. `focusInfo` (AX, 0.25 s per call). A non-empty selection → convert the selection: guess its layout with
 //      the instance `guessSource` and retype it on the other one (AX write + read-back → type over).
-//   3. No selection → the run (P2-59, 001 §12.3): `.convertRun`. Readable field: one AX read of ≤ 4,096 UTF-16 units
-//      before the caret (P3-33: was 256, and the run now crosses line breaks), `RunBeforeCaret.scan` finds the run (or the `LastRun` record names it, X6), AX write with
-//      read-back, and a key fallback only when the AX run is exactly the buffer's text. Unreadable / keysOnly /
+//   3. No selection → `.convertRun`. P3-35 (owner 2026-11-11, 001 §12.3 X11): in a readable field, the whole text box:
+//      one AX read of the field (≤ 16,384 UTF-16 units, else a window around the caret), `BoxConversion.plan` turns
+//      every letter of the caret-side language anywhere in it into the other language (or the `LastRun` record
+//      restores the previous convert, X6/X11), one AX write of the range from the first to the last changed
+//      character with read-back, the caret put back where it was, and a key fallback only when that range ends at
+//      the caret and is exactly the buffer's text. (P2-59/P3-33: was the run before the caret.) Unreadable / keysOnly /
 //      terminal apps: the whole word buffer by keys (backspace × its graphemes, type its re-rendering); P3-33: that
 //      is everything typed since the last Return/Enter, Tab, ⌥Space, click or focus change, ≤ 512 keys.
 //      The scan finds nothing, or nothing would change = "nothing to convert": double-Shift just switches the
@@ -31,21 +34,27 @@
 //       switched     → `newRendering: target, bufferAfter: nil` (keep every word, now in `target`), keepsBuffer
 //       not switched → `bufferRenderedIn: target, bufferAfter: nil` (switch off, or the switch failed)
 //     so a second double-Shift converts the same strokes straight back.
-//   - an AX run that differs from the buffer, a selection, or a halted chain → `bufferAfter: []` (forget it all).
+//   - an AX write that differs from the buffer (the whole box, an undo), a selection, or a halted chain →
+//     `bufferAfter: []` (forget it all).
 //   - nothing written → `nil, nil`.
 //   Never a non-empty `bufferAfter` with `bufferRenderedIn` (asserted here and in the processor).
 //
-// Undo (X6): after an AX run convert the controller keeps one `LastRun` record (ids and ranges, never text). The
-// next double-Shift uses it only while the snapshot says nothing touched the field since that convert
-// (`untouchedSinceConvert == record.gen`) AND it re-verifies: same bundle ID, pid and focused element (`CFEqual`),
-// record younger than `lastRunMaxAgeNanos`, caret collapsed exactly at `location + length`, the window holds at least
-// `length` units, and that tail has no `strong(to)` grapheme, at least one `strong(from)` grapheme and no hard stop.
-// Otherwise the record is dropped and the normal scan runs. Every request takes the record out first, so a record
-// serves at most the very next double-Shift.
+// Undo (X6, P3-35 X11): after an AX convert the controller keeps one `LastRun` record: ids, the written range, a
+// SHA-256 fingerprint of the written text, and the text it replaced. A per-character convert doesn't round-trip
+// exactly (`Akuo` → `שלום` → `akuo`; correct Hebrew next to the converted letters would flip too), so an exact undo
+// needs the original. The next double-Shift uses it only while the snapshot says nothing touched the field since
+// that convert (`untouchedSinceConvert == record.gen`) AND it re-verifies: same bundle ID, pid and focused element
+// (`CFEqual`), and the field still holds exactly what was written at the recorded range (fingerprint). It then
+// writes the original back and puts the caret where it was before the convert. Otherwise the record is dropped and
+// the normal convert runs. Every request takes the record out first, so a record serves at most the very next
+// double-Shift. P3-35 QA (owner): no age limit; `forgetUndoRecord` drops it (and its text) on the first key or click
+// after the convert, a focus/app change, Pause or Secure Input.
 //
-// Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns); the outcome
-// and the `LastRun` record hold steps, ids and ranges only. Nothing here logs.
+// Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns). P3-35: the
+// `LastRun` record holds the replaced text in memory, for the undo only (until the next key, click or focus change,
+// then dropped; never stored or logged); the outcome holds steps only. Nothing here logs.
 
+import CryptoKit
 import Foundation
 
 @TextActor final class ConvertController {
@@ -54,14 +63,15 @@ import Foundation
     /// Returns true when `target` is (now) selected.
     typealias SwitchLanguage = @Sendable (_ target: InputSourceID, _ keepsBuffer: Bool) async -> Bool
 
-    /// P2-59c (X6): the undo record's maximum age. Undo is "double-Shift again right away": the user sees the result
-    /// and presses again within a second or two. Changes the tap can't see (dictation, an app's own autocorrect, a
-    /// sync from elsewhere) can still land in the field without a key or a click, so the window in which such a
-    /// change could be mistaken for our text is kept short; 5 s is generous for a deliberate undo. Past it, the
-    /// normal scan runs, which is always safe (it just converts the run it finds).
-    static let lastRunMaxAgeNanos: UInt64 = 5_000_000_000
+    // P3-35 QA (owner, 2026-11-11): no age limit on the undo record any more (was 5 s, `lastRunMaxAgeNanos`). Owner:
+    // "5 seconds is limiting. number one priority is functionality and user experience." It stays usable until the
+    // user types a key or clicks (`untouchedSinceConvert`), focus, the field or the app changes, Kytkin pauses or
+    // Secure Input starts (`forgetUndoRecord`, from AppController), or the field no longer holds exactly what was
+    // written (fingerprint). The 5 s guarded against changes the tap can't see (dictation, autocorrect, a sync) being
+    // taken for our text; since P3-35 the fingerprint already refuses any such change inside the written range.
 
-    /// P2-59c (X6): the last AX run convert, as ids and ranges only (never text; checked by a Mirror test).
+    /// P2-59c (X6): the last AX convert. P3-35 (X11): ids, ranges, a fingerprint, and the replaced text (`original`,
+    /// the only text field; checked by a Mirror test), held for the undo window only.
     struct LastRun {
         /// The convert's generation; usable only while the snapshot's `untouchedSinceConvert` equals it.
         let gen: UInt64
@@ -69,14 +79,19 @@ import Foundation
         let processID: Int32
         /// The focused element written to (identity only, compared with `CFEqual`).
         let element: any FocusedElementIdentity
-        /// Absolute UTF-16 offset and length of the text written (the run as it is now).
+        /// Absolute UTF-16 offset and length of the text written (the range as it is now).
         let location: Int
         let length: Int
+        /// P3-35: SHA-256 of the written text (`fingerprint(of:)`), to recognise it in the field without keeping it.
+        let fingerprint: [UInt8]
+        /// P3-35: the text the convert replaced, written back by an undo. In memory only, until the next key,
+        /// click or focus change (P3-35 QA, owner); never stored or logged.
+        let original: String
+        /// P3-35: the caret before the convert (absolute UTF-16), where an undo puts it back.
+        let originalCaret: Int
         /// The side the written text is on now (the convert's target), and the side it came from.
         let from: PairSide
         let to: PairSide
-        /// `clock.nowNanos` when written.
-        let madeAtNanos: UInt64
     }
 
     private let keyWatcher: any KeyWatching
@@ -231,7 +246,7 @@ import Foundation
                                              selectionLength: selection.count)
             var target: InputSourceID?
             let outcome = runChain(request, focus: focus, old: selection, gen: r.gen, replacer: replacer,
-                                   locateRun: nil) { text in
+                                   locateField: nil) { text in
                 guard let c = layouts.convertGuessing(text) else { return nil }
                 target = c.target
                 return c.text
@@ -270,59 +285,79 @@ import Foundation
                                          typedLength: old?.count)
 
         // X6: the record is a candidate only while nothing touched the field since that convert, in the same app,
-        // process and element, and while it is fresh. The window checks follow in `locate`.
-        let now = clock.nowNanos
+        // process and element, and while it is fresh. The text check follows in `locate`.
         let usable = record.flatMap { rec -> LastRun? in
+            // P3-35 QA (owner): no age check any more (see `LastRun`).
             guard snap.untouchedSinceConvert == rec.gen, rec.bundleID == r.bundleID,
-                  now >= rec.madeAtNanos, now - rec.madeAtNanos <= Self.lastRunMaxAgeNanos,
                   let element, element.processID == rec.processID, element.isSameElement(as: rec.element)
             else { return nil }
             return rec
         }
 
         // Captured from the chain's callbacks; local to this call (the text never leaves it).
-        var scan: RunBeforeCaret.Scan?
-        var located: (location: Int, side: PairSide)?
+        var box: BoxConversion.Result?
+        var plan: BoxConversion.Plan?
+        var undo: LastRun?
+        var located: (location: Int, caret: Int)?
+        /// P3-35: the buffer's strokes may stand for the range only when it ends at the caret (keys: no read at all).
+        var bufferMayApply = true
         var target: InputSourceID?
         var fromBuffer = false
-        var writtenUnits = 0
+        var replaced: String?
+        var written: String?
 
-        let locate: (BeforeCaretWindow) -> RunLocation? = { window in
-            if let rec = usable, let run = Self.recordedRun(rec, in: window, layouts: layouts) {
-                located = (window.location + run.offset, rec.from)
-                return run
+        // P3-35 (X11): the whole text box, or the record's range (undo).
+        let locate: (FieldWindow) -> FieldEdit? = { window in
+            if let rec = usable, let edit = Self.recordedUndo(rec, in: window) {
+                undo = rec
+                bufferMayApply = window.location + edit.offset + edit.length == window.caret
+                located = (window.location + edit.offset, window.caret)
+                return edit
             }
-            // No record, or it no longer matches the field: drop it and scan normally.
-            let s = RunBeforeCaret.scan(window, classify: layouts.runClass)
-            scan = s
-            guard case let .run(run, side) = s else { return nil }
-            located = (window.location + run.offset, side)
-            return run
+            // No record, or it no longer matches the field: drop it and convert normally.
+            let result = BoxConversion.plan(window, classify: layouts.runClass) { side, grapheme in
+                layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
+            }
+            box = result
+            guard case .convert(let p) = result else { return nil }
+            plan = p
+            located = (window.location + p.edit.offset, window.caret)
+            bufferMayApply = window.location + p.edit.offset + p.edit.length == window.caret
+            return p.edit
         }
         let convert: (String) -> String? = { text in
+            if let rec = undo {
+                guard rec.original != text else { return nil }
+                // A kept, re-rendered buffer (switch off, X5) whose strokes give back exactly the original: the undo
+                // keeps the buffer too, so the ping-pong goes on by strokes.
+                fromBuffer = bufferMayApply && old.map { text.unicodeScalars.elementsEqual($0.unicodeScalars) } == true
+                    && rendered.map { $0.text.unicodeScalars.elementsEqual(rec.original.unicodeScalars) } == true
+                target = layouts.source(of: rec.to)
+                replaced = text
+                written = rec.original
+                return rec.original
+            }
             // P2-60: scalar equality, not String's canonical equivalence: a precomposed vs decomposed run must not
             // count as "exactly the buffer" (the key path backspaces by the buffer's own count).
-            if let old, let rendered, text.unicodeScalars.elementsEqual(old.unicodeScalars) {
-                // The buffer's text (keys, or an AX run that is exactly the buffer): convert by its strokes.
+            if bufferMayApply, let old, let rendered, text.unicodeScalars.elementsEqual(old.unicodeScalars) {
+                // The buffer's text (keys, or an AX range that is exactly the buffer): convert by its strokes.
                 guard rendered.text != old else { return nil }
                 fromBuffer = true
                 target = rendered.target
-                writtenUnits = rendered.text.utf16.count
+                replaced = text
+                written = rendered.text
                 return rendered.text
             }
-            // An AX run: convert from its side (the scan's S, or the record's `from`).
-            guard let side = located?.side, let c = layouts.converter(from: layouts.source(of: side)) else {
-                return nil
-            }
-            let out = c.convert(text).text
-            guard !out.isEmpty, out != text else { return nil }
+            // The whole box: the plan's text for the range it named.
+            guard let p = plan else { return nil }
             fromBuffer = false
-            target = layouts.source(of: side.other)
-            writtenUnits = out.utf16.count
-            return out
+            target = layouts.source(of: p.side.other)
+            replaced = text
+            written = p.text
+            return p.text
         }
 
-        let outcome = runChain(request, focus: focus, old: old, gen: r.gen, replacer: replacer, locateRun: locate,
+        let outcome = runChain(request, focus: focus, old: old, gen: r.gen, replacer: replacer, locateField: locate,
                                convert: convert)
         switch outcome.result {
         case .replaced(let step):
@@ -330,11 +365,14 @@ import Foundation
                 return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: true)
             }
             var newRecord: LastRun?
-            if case .axWriteSelection = step, let located, let element, let pid = element.processID,
-               writtenUnits > 0 {
+            // P3-35: an undo keeps no record: a third double-Shift converts the restored box again, which is the
+            // same convert as the first one (same caret, same letters).
+            if case .axWriteSelection = step, undo == nil, let located, let element, let pid = element.processID,
+               let written, !written.isEmpty, let replaced {
                 newRecord = LastRun(gen: r.gen, bundleID: r.bundleID, processID: pid, element: element,
-                                    location: located.location, length: writtenUnits, from: toSide,
-                                    to: toSide.other, madeAtNanos: now)
+                                    location: located.location, length: written.utf16.count,
+                                    fingerprint: Self.fingerprint(of: written), original: replaced,
+                                    originalCaret: located.caret, from: toSide, to: toSide.other)
             }
             return .replaced(target: target, step: step, keptBuffer: fromBuffer, isRun: true, record: newRecord)
         case .notConvertible, .refused(.bufferStale):
@@ -342,8 +380,8 @@ import Foundation
         case .refused(.focusUnknown) where !snap.hasRun:
             return .fieldUnreadable   // P2-54(a)
         case .exhausted where outcome.attempts.allSatisfy({ Self.isRead($0.step) }):
-            // The read found no run (or couldn't run and there was no key step).
-            if scan == .tooLong { return .failed(.runTooLong, beeps: true, textMayHaveChanged: false) }
+            // The read found nothing to convert (or couldn't run and there was no key step).
+            if box == .tooLong { return .failed(.runTooLong, beeps: true, textMayHaveChanged: false) }
             // QA (P2-59c): the read itself failed while the buffer holds words Kytkin couldn't count or type (a dead
             // key, `noUnicode`): "couldn't convert", a beep, as on the key path. Only "read fine, nothing there", or
             // a failed read with nothing remembered (P2-54(a)), just switches.
@@ -357,13 +395,13 @@ import Foundation
     }
 
     private func runChain(_ request: ReplacementRequest, focus: FocusInfo?, old: String?, gen: UInt64,
-                          replacer: any TextReplacing, locateRun: ((BeforeCaretWindow) -> RunLocation?)?,
+                          replacer: any TextReplacing, locateField: ((FieldWindow) -> FieldEdit?)?,
                           convert: (String) -> String?) -> ReplacementOutcome {
         let plan = ReplacementPlanner.plan(request, caps: capabilities, focus: focus)
         var caps = capabilities
         let keyWatcher = self.keyWatcher
         let outcome = ReplacementChain.run(
-            plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateRun: locateRun,
+            plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateField: locateField,
             capabilities: &caps, clock: clock,
             mayWrite: { keyWatcher.claimPosting(gen: gen) })   // B3 (§12 W8): before the first write
         capabilities = caps
@@ -382,31 +420,47 @@ import Foundation
         return made
     }
 
-    /// X6: the recorded run, if the window still shows it: the caret exactly at its end, the window holds all of it
-    /// (starting on a character boundary), and its text is still on the record's `from` side: at least one
-    /// `strong(from)` grapheme, no `strong(to)` grapheme, no hard stop. nil = the record no longer matches.
-    /// P3-33: line breaks are not hard stops any more, so a multi-line run converts back the same way.
-    static func recordedRun(_ rec: LastRun, in window: BeforeCaretWindow, layouts: LayoutSnapshot) -> RunLocation? {
-        let units = window.text.utf16
-        guard rec.length > 0, window.location + units.count == rec.location + rec.length,
-              units.count >= rec.length else { return nil }
-        let offset = units.count - rec.length
-        let start = units.index(units.startIndex, offsetBy: offset)
-        guard start.samePosition(in: window.text) != nil else { return nil }   // not mid-character
-        var hasFrom = false
-        for ch in window.text[start...] {
-            switch layouts.runClass(of: ch) {
-            case .hardStop: return nil
-            case .strong(let side) where side == rec.to: return nil
-            case .strong: hasFrom = true
-            default: break
+    /// P3-35 (X6, X11): the record's range, if the window still holds exactly what was written there (fingerprint),
+    /// starting and ending on character boundaries. The undo writes `original` back and restores the caret. nil = the
+    /// record no longer matches (the normal convert runs).
+    static func recordedUndo(_ rec: LastRun, in window: FieldWindow) -> FieldEdit? {
+        let units = Array(window.text.utf16)
+        let offset = rec.location - window.location
+        guard rec.length > 0, offset >= 0, offset + rec.length <= units.count else { return nil }
+        let slice = units[offset..<(offset + rec.length)]
+        let text = String(decoding: slice, as: UTF16.self)
+        guard Array(text.utf16) == Array(slice), fingerprint(of: text) == rec.fingerprint else { return nil }
+        return FieldEdit(offset: offset, length: rec.length, caretAfter: rec.originalCaret)
+    }
+
+    /// P3-35: SHA-256 of `text` as the field may read it back (canonical composition, a no-break space as a space,
+    /// every line-break unit as LF: what `ReplacementExecutor.readsBackAs` accepts), so the undo recognises our own
+    /// write without keeping a copy of it.
+    nonisolated static func fingerprint(of text: String) -> [UInt8] {
+        var bytes: [UInt8] = []
+        for u in text.precomposedStringWithCanonicalMapping.utf16 {
+            let v: UInt16 = switch u {
+            case 0xA0: 0x20
+            case 0x0D, 0x2028, 0x2029: 0x0A
+            default: u
             }
+            bytes.append(UInt8(v & 0xFF))
+            bytes.append(UInt8(v >> 8))
         }
-        return hasFrom ? RunLocation(offset: offset, length: rec.length) : nil
+        return Array(SHA256.hash(data: bytes))
+    }
+
+    /// P3-35 QA (owner): drops the undo record and the replaced text it holds. AppController calls it (through
+    /// `ConvertDispatcher.forgetUndo`, after any convert still queued) on the first key or click after a convert, a
+    /// focus, window or app change, Pause and Secure Input. Replaces the P3-35 5 s expiry task.
+    func forgetUndoRecord() {
+        lastRun = nil
     }
 
     private static func isRead(_ step: ReplacementStep) -> Bool {
-        if case .axReadRunBeforeCaret = step { return true }
-        return false
+        switch step {
+        case .axReadRunBeforeCaret, .axReadField: return true
+        default: return false
+        }
     }
 }

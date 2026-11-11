@@ -186,6 +186,7 @@ import Observation
         // `.editingAddress` still resets (the address bar is another field).
         if !Self.keepsWordBuffer(change) {
             keyWatcher.perform(.reset(.contextChange))
+            convert.forgetUndo()              // P3-35 QA (owner): another app, window or field
         }
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
         retryTapAfterLaunchTimeout()          // P2-52 item 2: at most once per run
@@ -257,6 +258,7 @@ import Observation
 
     func keyWatcherStatusDidChange(_ status: KeyWatcherStatus) {
         keyWatcherStatus = status
+        if status.secureInputOn { convert.forgetUndo() }   // P3-35 QA (owner)
         policy.statusReported(mode: status.health.mode)
         recompute(grantsChanged: false)
     }
@@ -264,10 +266,11 @@ import Observation
     func keySignal(_ signal: KeySignal) {
         switch signal {
         case .wordBoundary:
+            convert.forgetUndo()              // P3-35 QA (owner): a key after a convert (cheap unless one ran)
             healStaleOwnWindow()              // P2-55 QA
             switching.wordBoundary()
-        case .bufferInvalidated:
-            break
+        case .bufferInvalidated, .undoTouched:
+            convert.forgetUndo()              // P3-35 QA (owner): a key or click after a convert drops its undo
         case let .doubleShift(snapshot, gen):
             doubleShiftCount += 1
             route(snapshot: snapshot, gen: gen)
@@ -300,6 +303,7 @@ import Observation
         cancelLooks()
         switching.kytkinDidBecomeActive(isFrontmost: true)
         keyWatcher.perform(.reset(.contextChange))
+        convert.forgetUndo()                  // P3-35 QA (owner)
         afterEvent()
     }
 
@@ -313,6 +317,7 @@ import Observation
             return
         }
         keyWatcher.perform(.reset(.contextChange))
+        convert.forgetUndo()                  // P3-35 QA (owner)
         keyWatcher.checkSecureInputNow()      // P2-45: like any other app change
         if known == nil {
             resignLookPending = true
@@ -436,6 +441,7 @@ import Observation
         // browser's dropped site never reaches an unpaused SwitchController.
         if isStarted, !on, switching.paused { updateSitePolicy(availabilityFor(paused: false)) }
         switching.setPaused(on)
+        if on { convert.forgetUndo() }        // P3-35 QA (owner)
         recompute(grantsChanged: false)   // Pause turns the tap off; resume turns it back on
         onDisplayChange?()
     }

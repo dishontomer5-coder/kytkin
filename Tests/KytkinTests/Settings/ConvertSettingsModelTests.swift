@@ -81,13 +81,14 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertEqual(ConvertSettingsModel.windowStepMs, 10)
     }
 
-    func testExplanationDescribesTheRunConvertSelectionAndUndo() {
+    func testExplanationDescribesTheWholeBoxConvertSelectionAndUndo() {
         let text = ConvertSettingsModel.explanation.joined(separator: " ")
-        XCTAssertTrue(text.contains("before the cursor"))
-        XCTAssertTrue(text.contains("other language starts"))
-        // P3-33 QA: the run crosses line breaks now; the old "on the current line" would tell the user the opposite.
+        // P3-35: the whole text box (was "before the cursor … where the other language starts", P3-33).
+        XCTAssertTrue(text.contains("whole text box"))
+        XCTAssertTrue(text.contains("every line"))
+        XCTAssertTrue(text.contains("already in the other language stays"))
+        XCTAssertFalse(text.contains("before the cursor"))
         XCTAssertFalse(text.contains("current line"))
-        XCTAssertTrue(text.contains("several lines"))
         XCTAssertTrue(text.contains("converts only the selection"))
         XCTAssertTrue(text.contains("again"))
         XCTAssertTrue(text.contains("undo"))

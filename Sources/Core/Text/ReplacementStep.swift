@@ -14,6 +14,11 @@ enum ReplacementStep: Sendable, Equatable {
     /// (`RunBeforeCaret`). Read-only: it selects nothing; the next AX step writes over the range it found. Runs
     /// through `TextReplacing.readRunBeforeCaret` (its locator needs the layouts); `perform` answers `.unavailable`.
     case axReadRunBeforeCaret(maxChars: Int)
+    /// P3-35 (001 §12.3 X11): read the whole text box through AX (≤ `maxChars` UTF-16 units; a bigger box → a window
+    /// around the caret) and find what converts in it (`BoxConversion`). Read-only, like `axReadRunBeforeCaret`; runs
+    /// through `TextReplacing.readField`, and the next AX write replaces the range it found. Since P3-35 the planner
+    /// plans this one, not `axReadRunBeforeCaret`, for a double-Shift with nothing selected.
+    case axReadField(maxChars: Int)
     /// P3: opt-in pasteboard step (snapshot → ⌘V → restore). Never planned for keys-only apps (terminals).
     case pasteboard
     /// P4: post key codes after switching the input source, for apps that ignore Unicode key events.

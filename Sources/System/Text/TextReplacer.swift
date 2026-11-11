@@ -22,7 +22,13 @@ import Foundation
         executor.readRunBeforeCaret(maxChars: maxChars, locate: locate)
     }
 
+    func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome {
+        executor.readField(maxChars: maxChars, locate: locate)
+    }
+
     var wordBeforeCaret: String? { executor.wordBeforeCaret }
+
+    var readRangeEndsAtCaret: Bool { executor.readRangeEndsAtCaret }
 
     var focusedElement: (any FocusedElementIdentity)? { executor.focusedElement }
 

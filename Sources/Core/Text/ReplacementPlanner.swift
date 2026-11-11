@@ -3,7 +3,8 @@
 //   selection            → AX write + read-back → type over the selection → (P3, opt-in) pasteboard
 //                          (P2-36: refused in terminals; a selection with Cc/Zl/Zp is never typed over or pasted)
 //   run (P2-59, nothing selected)
-//     readable field     → AX read of the run before the caret → AX write + read-back → backspace × N + type
+//     readable field     → AX read of the whole text box (P3-35; was the run before the caret) → AX write +
+//                          read-back → backspace × N + type
 //                          (the key step only when there is a buffer run; the chain runs it only if the AX write
 //                          left the field untouched and the AX run is exactly the buffer's text, 001 §12.3 X4)
 //     unreadable/keysOnly/terminal → backspace × N + type over the whole buffer → refuse (beep)
@@ -25,6 +26,16 @@ enum ReplacementPlanner {
     /// text, e.g. attachments or block breaks, differently), the read is retried once per smaller window, nearest
     /// the caret first, so a convert still turns the tail that can be read instead of falling back to the buffer.
     static let runReadRetryChars = [1024, 256]
+    /// P3-35 (owner 2026-11-11, 001 §12.3 X11): double-Shift with nothing selected converts the whole text box, read in
+    /// one AX call when it is ≤ this many UTF-16 units (about 2,500 words, several pages of an email). Why 16,384: one
+    /// `AXStringForRange` of 32 KB, a linear scan of ≤ 16 k graphemes (a few ms), one AX write of at most the same and
+    /// its read-back stay well inside the 400 ms convert budget (B5) in a healthy Cocoa/WebKit field, and each AX call
+    /// is still bounded by the 0.25 s messaging timeout; much larger values make the read and the write the slow part
+    /// in WebKit and risk the budget. A bigger box: a window of this size around the caret, cut at word boundaries
+    /// (`BoxConversion` step 2).
+    static let maxFieldReadChars = 16_384
+    /// P3-35: if the box read fails or comes back the wrong length, retry with these windows around the caret.
+    static let fieldReadRetryChars = [4096, 1024, 256]
 
     /// - Parameters:
     ///   - focus: nil when AX couldn't read the focused element (no permission, timeout).
@@ -67,8 +78,9 @@ enum ReplacementPlanner {
             // P2-59 (001 §12.3 X4): AX first in readable fields, even with a valid buffer: only AX sees further back
             // than the buffer, and its write is verified. keysOnly and terminal apps never read through AX.
             let keys = canType ? bufferedRunLength(r) : nil   // nil: no buffer run, dead key or combining mark (X5)
+            // P3-35: the read is the whole text box (`axReadField`), no longer the run before the caret.
             if axWrite && f.canReadBeforeCaret {
-                var s: [ReplacementStep] = [.axReadRunBeforeCaret(maxChars: maxRunReadChars),
+                var s: [ReplacementStep] = [.axReadField(maxChars: maxFieldReadChars),
                                             .axWriteSelection(verify: true)]
                 if let n = keys { s.append(.backspaceAndType(count: n)) }
                 return .steps(s)
@@ -113,6 +125,12 @@ enum ReplacementPlanner {
         text.unicodeScalars.contains {
             !isLineBreak($0) && containsUnsafeCharacter(String($0))
         }
+    }
+
+    /// P3-35: true if the text holds a control character other than a line break or a tab. A whole-box write may
+    /// cross line breaks and tabs (it puts them back unchanged); other controls (ESC, NUL…) bound what converts.
+    static func containsFieldStop(_ text: String) -> Bool {
+        text.unicodeScalars.contains { $0 != "\t" && !isLineBreak($0) && containsUnsafeCharacter(String($0)) }
     }
 
     /// P2-59 (X5): the backspace count for the whole buffer run (words and the spaces between them), else nil.
