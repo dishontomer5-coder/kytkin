@@ -163,7 +163,7 @@ final class ConvertControllerTests: XCTestCase {
                                       .axWriteSelection(verify: true)])
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axWriteSelection(verify: true), switched: true))
         // An AX-found run doesn't make the strokes describe the screen: the finish forgets the buffer (`[]`). P2-59c:
-        // the switch still keeps the processor from resetting, so `untouchedSinceConvert` survives for the X6 undo.
+        // the switch still keeps the processor from resetting (the finish states the buffer itself).
         XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true)])
         assertOneFinish(1, rendering: nil, after: [])
     }

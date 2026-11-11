@@ -17,8 +17,6 @@ import Foundation
     private var cached: (pair: LanguagePair, a: LayoutMap, b: LayoutMap, snapshot: LayoutSnapshot)?
     /// The last hop queued, so the next one runs after it (and tests can await it).
     private(set) var lastTask: Task<Void, Never>?
-    /// P3-35 QA (owner): a convert was queued since the last `forgetUndo`, so the controller may hold an undo record.
-    private(set) var undoMayBeHeld = false
 
     init(controller: ConvertController, maps: any LayoutMapProviding) {
         self.controller = controller
@@ -29,16 +27,7 @@ import Foundation
         let layouts = request.mode == .convert ? snapshot(for: request.pair) : nil
         let switchPair = maps.inputSources(for: request.pair)
         let resolved = switchPair == request.pair ? request : request.with(pair: switchPair)
-        if request.mode == .convert { undoMayBeHeld = true }   // P3-35 QA (owner); P3-37: the clipboard undo too
         enqueue { controller in await controller.handle(resolved, layouts: layouts) }
-    }
-
-    /// P3-35 QA (owner): hops after any convert still queued, so a record that convert makes is dropped too. Only when
-    /// a convert ran since the last drop (word boundaries call this on every Space; most find nothing to drop).
-    func forgetUndo() {
-        guard undoMayBeHeld else { return }
-        undoMayBeHeld = false
-        enqueue { controller in controller.forgetUndoRecord() }
     }
 
     /// P3-37 (b): queued like any request, so the anchor is read on @TextActor, never on main.

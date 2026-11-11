@@ -16,11 +16,14 @@
 //      and concealed, post ⌘V (it replaces the ⌘A selection; the caret ends after it, at the end of the box).
 //   6. After the caller's finish (held keys replayed): wait until the app read the pasted text (≥ 100 ms, ≤ 500 ms), then
 //      put the user's clipboard back, only if nobody wrote to it since (`changeCount` still ours).
-// A known selection (AX read it, but it holds a line break so it can't be typed over) skips 2–3: its converted text
-// is pasted over it.
+// P3-40 (owner 2026-11-11): a selection AX reported in an app whose box AX can't read (Slack, Chrome…) is copied with
+// ⌘C alone (no ⌘A: the selection is already there), because Chromium's `AXSelectedText` can drop the line breaks between
+// paragraphs: typing over it, or pasting the AX text, joined the lines. The caller checks the copy against the AX text
+// (`Conversion.mismatch`), converts it and the paste replaces the selection. Nothing copied → `.boxEmpty` (the selection
+// is untouched, nothing was posted but ⌘C).
 //
-// Privacy: the snapshot, the copied box and the converted text live only in this flow (the caller keeps the replaced
-// text for the undo until the next key, click or focus change). Nothing here is logged or stored (B12).
+// Privacy: the snapshot, the copied box and the converted text live only in this flow; P3-40: nothing is kept after
+// it (no undo copy any more). Nothing here is logged or stored (B12).
 
 import Foundation
 
@@ -50,8 +53,8 @@ import Foundation
     enum Source: Sendable, Equatable {
         /// ⌘A, ⌘C: the whole text box.
         case box
-        /// AX read the selection (it holds a line break, so it can't be typed over): paste over it.
-        case selection(String)
+        /// P3-40: ⌘C (no ⌘A) copies the selection that is already there; its converted text is pasted over it.
+        case copiedSelection
     }
 
     enum Conversion: Sendable, Equatable {
@@ -60,18 +63,23 @@ import Foundation
         case tooLong
         /// P3-37 QA: the text may not be pasted here (a line break in an app that might be a terminal). Beeps.
         case unsafe
+        /// P3-40: the copied selection is not the selection AX reported (⌘C copied something else). Beeps.
+        case mismatch
     }
 
     enum Result: Sendable, Equatable {
-        /// ⌘V was posted. `original` = the text it replaced (for the undo), `written` = what was pasted.
-        case pasted(original: String, written: String)
+        /// ⌘V was posted. P3-40: no text comes back (the undo that kept the replaced text is gone; undo is ⌘Z).
+        case pasted
         /// The box was copied but nothing in it converts (the clipboard is put back, the selection dropped).
         case nothingToConvert
         /// The box is longer than the convert cap (beeps).
         case tooLong
         /// P3-37 QA: the caller refused to paste this text (`Conversion.unsafe`); the clipboard put back (beeps).
         case unsafeText
+        /// P3-40: the copy is not the selection AX reported (`Conversion.mismatch`); the clipboard put back (beeps).
+        case selectionMismatch
         /// ⌘C changed nothing, or copied nothing: an empty box, or an app that can't copy. The caller falls back.
+        /// P3-40: for `.copiedSelection` the selection is still there (no ⌘A, no Right arrow was posted).
         case boxEmpty
         /// Nothing was posted or written (no snapshot, the first event refused). The caller falls back.
         case unavailable
@@ -121,47 +129,42 @@ import Foundation
         let before = pasteboard.changeCount
         guard mayWrite() else { return (.abandoned, nil) }
 
-        let text: String
-        let selectedAll: Bool
-        switch source {
-        case .selection(let s):
-            text = s
-            selectedAll = false
-        case .box:
-            guard focusIsSame() else { return (.focusChanged, nil) }
-            switch post([.shortcut(.selectAll, keyDown: true), .shortcut(.selectAll, keyDown: false),
-                         .shortcut(.copy, keyDown: true), .shortcut(.copy, keyDown: false)]) {
-            case .none: return (.unavailable, nil)
-            case .some(false):
-                collapse()
-                return (.failed, PendingRestore(snapshot: snapshot, kind: .lateCopy(baseline: before)))
-            case .some(true): break
-            }
-            // Step 3: bounded wait for the copy (≤ copyWait / poll iterations).
-            var polls = 0
-            let maxPolls = max(1, Int(timing.copyWaitNanos / max(timing.pollNanos, 1)))
-            while pasteboard.changeCount == before, polls < maxPolls {
-                await sleep(timing.pollNanos)
-                polls += 1
-            }
-            guard pasteboard.changeCount != before else {
-                collapse()
-                return (.boxEmpty, PendingRestore(snapshot: snapshot, kind: .lateCopy(baseline: before)))
-            }
-            let copied = pasteboard.string() ?? ""
-            guard !copied.isEmpty else {
-                pasteboard.restore(snapshot)
-                collapse()
-                return (.boxEmpty, nil)
-            }
-            text = copied
-            selectedAll = true
+        // P3-40: `.copiedSelection` has its selection already, so only ⌘C (⌘A would select the whole box). The P3-37
+        // paste of AX's selected text without a copy is gone (AX's text is what lost the line breaks).
+        let all = source == .box
+        guard focusIsSame() else { return (.focusChanged, nil) }
+        let selectAll: [SyntheticKeyEvent] = all
+            ? [.shortcut(.selectAll, keyDown: true), .shortcut(.selectAll, keyDown: false)] : []
+        switch post(selectAll + [.shortcut(.copy, keyDown: true), .shortcut(.copy, keyDown: false)]) {
+        case .none: return (.unavailable, nil)
+        case .some(false):
+            if all { collapse() }
+            return (.failed, PendingRestore(snapshot: snapshot, kind: .lateCopy(baseline: before)))
+        case .some(true): break
+        }
+        // Step 3: bounded wait for the copy (≤ copyWait / poll iterations).
+        var polls = 0
+        let maxPolls = max(1, Int(timing.copyWaitNanos / max(timing.pollNanos, 1)))
+        while pasteboard.changeCount == before, polls < maxPolls {
+            await sleep(timing.pollNanos)
+            polls += 1
+        }
+        guard pasteboard.changeCount != before else {
+            if all { collapse() }
+            return (.boxEmpty, PendingRestore(snapshot: snapshot, kind: .lateCopy(baseline: before)))
+        }
+        let text = pasteboard.string() ?? ""
+        guard !text.isEmpty else {
+            pasteboard.restore(snapshot)
+            if all { collapse() }
+            return (.boxEmpty, nil)
         }
 
-        /// Stops after the copy: the user's clipboard goes back now (only the app's own copy was there since).
+        /// Stops after the copy: the user's clipboard goes back now (only the app's own copy was there since); a ⌘A
+        /// selection is dropped.
         func stop(_ result: Result, collapsing: Bool = true) -> (Result, PendingRestore?) {
-            if selectedAll { pasteboard.restore(snapshot) }
-            if collapsing && selectedAll { collapse() }
+            pasteboard.restore(snapshot)
+            if collapsing && all { collapse() }
             return (result, nil)
         }
 
@@ -170,6 +173,7 @@ import Foundation
         case .nothing: return stop(.nothingToConvert)
         case .tooLong: return stop(.tooLong)
         case .unsafe: return stop(.unsafeText)
+        case .mismatch: return stop(.selectionMismatch)
         case .replace(let s): new = s
         }
         guard !new.isEmpty, !new.unicodeScalars.elementsEqual(text.unicodeScalars) else {
@@ -180,18 +184,18 @@ import Foundation
         guard focusIsSame() else { return stop(.focusChanged, collapsing: false) }
         guard pasteboard.writeTransient(new) else {
             pasteboard.restore(snapshot)
-            if selectedAll { collapse() }
+            if all { collapse() }
             return (.failed, nil)
         }
         let ours = pasteboard.changeCount
         let reads = pasteboard.transientReads
         switch post([.shortcut(.paste, keyDown: true), .shortcut(.paste, keyDown: false)]) {
         case .some(true):
-            return (.pasted(original: text, written: new),
+            return (.pasted,
                     PendingRestore(snapshot: snapshot, kind: .afterPaste(ours: ours, readsBefore: reads)))
         case .none, .some(false):
             pasteboard.restore(snapshot)
-            if selectedAll { collapse() }
+            if all { collapse() }
             return (.failed, nil)
         }
     }

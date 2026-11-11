@@ -1,11 +1,10 @@
 // P2-59c: ConvertController's run flow (001 §12.3 X4–X7, X8 "Controller"), with fakes only: the AX run through the
 // real executor on a FakeTextField, the key path on a scripted replacer, the X5 buffer-after table, the switch target,
-// `.runTooLong`, the P2-54(a) silent switch, the X6 `LastRun` undo record (forward, back, forward) and every reason it
-// is refused (focus change, caret move, age, content change, other app/process, keys since), the finish-exactly-once
-// invariant across the new paths, and that the record holds no text.
+// `.runTooLong`, the P2-54(a) silent switch, and the finish-exactly-once invariant across the new paths.
 // P3-35: a readable field now converts the whole text box (`axReadField`, `BoxConversion`); the tests below that
-// asserted the P2-59/P3-33 run-before-caret behaviour are changed to the whole-box behaviour (marked P3-35), and the
-// undo record now restores the replaced text exactly (it holds that text for the undo window only).
+// asserted the P2-59/P3-33 run-before-caret behaviour are changed to the whole-box behaviour (marked P3-35).
+// P3-40 (owner 2026-11-11): no undo. The X6 `LastRun` tests (forward/back/forward, every refusal, the record's fields)
+// are replaced by "a second double-Shift converts the whole box again to the other language" and "no text is kept".
 
 import XCTest
 
@@ -51,16 +50,15 @@ final class ConvertControllerRunTests: XCTestCase {
     }
 
     /// The buffer: earlier words (ABC keys), the spaces after each, and the current word.
-    private func buffer(_ words: [String], gaps: [Int]? = nil, current: String, in source: InputSourceID?,
-                        untouched: UInt64? = nil) -> WordSnapshot {
+    private func buffer(_ words: [String], gaps: [Int]? = nil, current: String, in source: InputSourceID?)
+        -> WordSnapshot {
         let strokes = ConvertFixtures.strokes(current)
         return WordSnapshot(strokes: strokes, previousWords: words.map(ConvertFixtures.strokes), renderedIn: source,
-                            isValid: !strokes.isEmpty, gaps: gaps, untouchedSinceConvert: untouched)
+                            isValid: !strokes.isEmpty, gaps: gaps)
     }
 
-    private func empty(untouched: UInt64? = nil, in source: InputSourceID = IDs.abc) -> WordSnapshot {
-        WordSnapshot(strokes: [], previousWords: [], renderedIn: source, isValid: false,
-                     untouchedSinceConvert: untouched)
+    private func empty(in source: InputSourceID = IDs.abc) -> WordSnapshot {
+        WordSnapshot(strokes: [], previousWords: [], renderedIn: source, isValid: false)
     }
 
     private func request(_ snapshot: WordSnapshot, gen: UInt64, bundleID: String? = nil,
@@ -81,18 +79,9 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axRun, switched: true))
         XCTAssertEqual(field.text, "שלום שלום הית מיה")
         XCTAssertTrue(poster.events.isEmpty)
-        // X5: the AX run ≠ the buffer → forget it; the switch still keeps the processor from resetting (X6 undo).
+        // X5: the AX run ≠ the buffer → forget it; the finish states that, so the switch doesn't reset the processor.
         XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true)])
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: nil, bufferAfter: [])])
-        // X6: a range-only record of what was written.
-        let rec = sut.lastRun
-        XCTAssertEqual(rec?.gen, 1)
-        XCTAssertEqual(rec?.location, 5)
-        XCTAssertEqual(rec?.length, "שלום הית מיה".utf16.count)
-        XCTAssertEqual(rec?.from, .b)
-        XCTAssertEqual(rec?.to, .a)
-        XCTAssertEqual(rec?.bundleID, app)
-        XCTAssertEqual(rec?.processID, 4242)
     }
 
     @TextActor func testAnAXRunEqualToTheBufferKeepsTheWholeBufferReRendered() async {
@@ -103,10 +92,10 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(field.text, "שלום שלום הי")
         XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true)])
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
-        XCTAssertNotNil(sut.lastRun)
     }
 
-    @TextActor func testAnAXRunEqualToTheBufferWithSwitchOffUsesBufferRenderedInAndConvertsBack() async {
+    /// P3-40: the second double-Shift converts the whole box to the other language (it was the undo, `שלום akuo vh`).
+    @TextActor func testAnAXRunEqualToTheBufferWithSwitchOffUsesBufferRenderedInThenConvertsTheBoxAgain() async {
         let field = FakeTextField("שלום akuo vh")
         let (sut, _, _) = real(field)
         await sut.handle(request(buffer(["akuo"], current: "vh", in: IDs.abc), gen: 1, switchAfter: false),
@@ -117,11 +106,12 @@ final class ConvertControllerRunTests: XCTestCase {
 
         // The processor now snapshots the kept buffer in Hebrew while the source stays ABC.
         log.clear()
-        let back = await sut.handle(request(buffer(["akuo"], current: "vh", in: IDs.hebrew, untouched: 1), gen: 2,
+        let back = await sut.handle(request(buffer(["akuo"], current: "vh", in: IDs.hebrew), gen: 2,
                                             switchAfter: false), layouts: layouts)
         XCTAssertEqual(back, .converted(to: IDs.abc, by: axRun, switched: false))
-        XCTAssertEqual(field.text, "שלום akuo vh")
-        XCTAssertEqual(log.finishes, [.finish(gen: 2, newRendering: nil, bufferAfter: nil, renderedIn: IDs.abc)])
+        XCTAssertEqual(field.text, "akuo akuo vh", "the whole box, now all Hebrew, in English")
+        XCTAssertEqual(log.finishes, [.finish(gen: 2, newRendering: nil, bufferAfter: [])],
+                       "the box range ≠ the kept buffer: forgotten")
     }
 
     /// X4: the AX write changed nothing (and the caret is back) and the AX run is exactly the buffer → the keys.
@@ -135,7 +125,6 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(poster.typed, "שלום הי")
         XCTAssertEqual(log.claims, [1], "one claim, before the AX write, none again for the keys")
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
-        XCTAssertNil(sut.lastRun, "a key convert keeps its buffer instead of a record")
     }
 
     @TextActor func testTheSwitchTargetsTheRunsSideNotTheOtherThanTheCurrentSource() async {
@@ -218,8 +207,9 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(field.text, "יקךךם ׳םרךג\nשלום\nשלום הי\nמיה")
     }
 
-    /// P3-33: a long multi-line run (≈ 3,000 units over 50 lines) converts whole, and double-Shift again undoes it.
-    @TextActor func testALongMultiLineRunConvertsWholeAndUndoes() async {
+    /// P3-33: a long multi-line run (≈ 3,000 units over 50 lines) converts whole. P3-40: double-Shift again converts
+    /// the whole box (every line, the Hebrew first line too) to English; it no longer restores the original.
+    @TextActor func testALongMultiLineRunConvertsWholeAndAgainToTheOtherLanguage() async {
         let line = String(repeating: "akuo ", count: 12) + "\n"          // 61 units
         let original = "שלום\n" + String(repeating: line, count: 50) + "vh"
         let field = FakeTextField(original)
@@ -228,12 +218,10 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axRun, switched: true))
         let converted = "שלום\n" + String(repeating: String(repeating: "שלום ", count: 12) + "\n", count: 50) + "הי"
         XCTAssertTrue(field.text == converted, "the whole run, every line")
-        XCTAssertEqual(sut.lastRun?.length, original.utf16.count - 5)
-        // Undo: double-Shift again, nothing touched since.
-        let back = await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew),
+        let back = await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew),
                                     layouts: layouts)
         XCTAssertEqual(back, .converted(to: IDs.abc, by: axRun, switched: true))
-        XCTAssertTrue(field.text == original, "undone exactly")
+        XCTAssertTrue(field.text == "akuo\n" + String(repeating: line, count: 50) + "vh", "all English now")
         XCTAssertTrue(poster.events.isEmpty)
     }
 
@@ -249,12 +237,12 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(r.writes.map(\.new), ["שלום הי מיה"])
         XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true)])
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
-        XCTAssertNil(sut.lastRun)
     }
 
     /// P3-33: a long buffer (100 words, 502 keys: what the owner types in Slack before Return) converts whole by keys,
-    /// in one Backspace count, and the kept buffer converts straight back (undo).
-    @TextActor func testKeysOnlyAppConvertsALongBufferWholeAndUndoes() async {
+    /// in one Backspace count. P3-40: the kept buffer (all Hebrew now) converts to English on the next double-Shift,
+    /// which is what a fresh convert of that text gives (the strokes keep capitals exact too).
+    @TextActor func testKeysOnlyAppConvertsALongBufferWholeAndAgainToTheOtherLanguage() async {
         let (sut, r) = scripted(readable: true)
         let words = Array(repeating: "akuo", count: 100)
         let snap = buffer(words, current: "vh", in: IDs.abc)
@@ -262,10 +250,10 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 502), switched: true))
         XCTAssertTrue(r.writes.map(\.new) == [String(repeating: "שלום ", count: 100) + "הי"], "the whole buffer")
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
-        let back = await sut.handle(request(buffer(words, current: "vh", in: IDs.hebrew, untouched: 1), gen: 2,
+        let back = await sut.handle(request(buffer(words, current: "vh", in: IDs.hebrew), gen: 2,
                                             bundleID: slack, current: IDs.hebrew), layouts: layouts)
         XCTAssertEqual(back, .converted(to: IDs.abc, by: .backspaceAndType(count: 502), switched: true))
-        XCTAssertTrue(r.writes.last?.new == String(repeating: "akuo ", count: 100) + "vh", "undone exactly")
+        XCTAssertTrue(r.writes.last?.new == String(repeating: "akuo ", count: 100) + "vh", "all English again")
     }
 
     /// P3-33: the real executor posts a full-size key run: ≤ 512 Backspaces, then the text in ≤ 16-unit chunks.
@@ -286,7 +274,7 @@ final class ConvertControllerRunTests: XCTestCase {
         await sut.handle(request(buffer(["akuo"], current: "vh", in: IDs.abc), gen: 1, bundleID: terminal),
                          layouts: layouts)
         // The kept buffer, now in Hebrew (newRendering), converts straight back.
-        let back = await sut.handle(request(buffer(["akuo"], current: "vh", in: IDs.hebrew, untouched: 1), gen: 2,
+        let back = await sut.handle(request(buffer(["akuo"], current: "vh", in: IDs.hebrew), gen: 2,
                                             bundleID: terminal, current: IDs.hebrew), layouts: layouts)
         XCTAssertEqual(back, .converted(to: IDs.abc, by: .backspaceAndType(count: 7), switched: true))
         XCTAssertEqual(r.writes.map(\.new), ["שלום הי", "akuo vh"])
@@ -300,7 +288,7 @@ final class ConvertControllerRunTests: XCTestCase {
                                  switchAfter: false), layouts: layouts)
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: nil, bufferAfter: nil, renderedIn: IDs.hebrew)])
         // The snapshot now says Hebrew (bufferRendering) while the source is still ABC: the target is ABC.
-        let back = await sut.handle(request(buffer([], current: "akuo", in: IDs.hebrew, untouched: 1), gen: 2,
+        let back = await sut.handle(request(buffer([], current: "akuo", in: IDs.hebrew), gen: 2,
                                             bundleID: terminal, switchAfter: false), layouts: layouts)
         XCTAssertEqual(back, .converted(to: IDs.abc, by: .backspaceAndType(count: 4), switched: false))
         XCTAssertEqual(r.writes.map(\.new), ["שלום", "akuo"])
@@ -380,197 +368,65 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(log.beeps, 1)
     }
 
-    // MARK: - X6 undo record
+    // MARK: - P3-40: no undo (replaces the X6 `LastRun` record tests)
 
-    @TextActor func testUndoByTheRecordForwardBackForward() async {
+    /// Was "undo by the record, forward, back, forward". The owner's example: the second double-Shift converts the
+    /// whole (now all-Hebrew) box to English, the third to Hebrew again.
+    @TextActor func testForwardAgainAndAgainConvertsTheWholeBoxEachTime() async {
         let field = FakeTextField("שלום akuo vh, nhv")
         let (sut, _, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(field.text, "שלום שלום הית מיה")
 
-        // Without the record the scan would take the whole (now all-Hebrew) line.
-        let back = await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew),
-                                    layouts: layouts)
-        XCTAssertEqual(back, .converted(to: IDs.abc, by: axRun, switched: true))
-        XCTAssertEqual(field.text, "שלום akuo vh, nhv")
-        // P3-35: an undo keeps no record (it held the replaced text); the third double-Shift is a plain convert of
-        // the restored box, the same as the first.
-        XCTAssertNil(sut.lastRun)
+        let second = await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(second, .converted(to: IDs.abc, by: axRun, switched: true))
+        XCTAssertEqual(field.text, "akuo akuo vh, nhv", "not the original: the whole box in the other language")
         XCTAssertEqual(log.switches.last, .switchTo(IDs.abc, keepsBuffer: true))
 
-        let again = await sut.handle(request(empty(untouched: 2), gen: 3), layouts: layouts)
-        XCTAssertEqual(again, .converted(to: IDs.hebrew, by: axRun, switched: true))
+        let third = await sut.handle(request(empty(), gen: 3), layouts: layouts)
+        XCTAssertEqual(third, .converted(to: IDs.hebrew, by: axRun, switched: true))
         XCTAssertEqual(field.text, "שלום שלום הית מיה")
-        XCTAssertEqual(sut.lastRun?.gen, 3)
     }
 
-    /// Converts the owner's example once (gen 1), so a record exists; returns the field.
-    @TextActor private func convertedOnce() async -> (ConvertController, FakeTextField, FakeFocusProvider) {
+    /// The same result whatever happened in between (a caret move, another element, an hour): a fresh convert.
+    @TextActor func testTheSecondConvertDoesNotDependOnWhatHappenedSince() async {
         let field = FakeTextField("שלום akuo vh, nhv")
-        let (sut, provider, _) = real(field)
+        let (sut, _, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום שלום הית מיה")
-        XCTAssertNotNil(sut.lastRun)
-        return (sut, field, provider)
-    }
-
-    /// The normal scan's answer on the converted line: the whole line, not the recorded range.
-    private let wholeLineBack = "akuo akuo vh, nhv"
-
-    @TextActor func testUndoRefusedWhenNothingSaysTheFieldIsUntouched() async {
-        let (sut, field, _) = await convertedOnce()
-        await sut.handle(request(empty(untouched: nil), gen: 2), layouts: layouts)   // a key or click since
-        XCTAssertEqual(field.text, wholeLineBack)
-    }
-
-    @TextActor func testUndoRefusedForAnOlderGeneration() async {
-        let (sut, field, _) = await convertedOnce()
-        await sut.handle(request(empty(untouched: 0), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, wholeLineBack)
-    }
-
-    @TextActor func testUndoRefusedAfterAFocusChange() async {
-        let (sut, field, provider) = await convertedOnce()
-        let other = FakeTextField(field.text)   // another element with the same text
-        provider.result = .success(other)
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(other.text, wholeLineBack)
-    }
-
-    @TextActor func testUndoRefusedInAnotherProcess() async {
-        let (sut, field, _) = await convertedOnce()
-        field.processID = 9999   // relaunched app
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, wholeLineBack)
-    }
-
-    @TextActor func testUndoRefusedInAnotherApp() async {
-        let (sut, field, _) = await convertedOnce()
-        await sut.handle(request(empty(untouched: 1), gen: 2, bundleID: "com.apple.Notes"), layouts: layouts)
-        XCTAssertEqual(field.text, wholeLineBack)
-    }
-
-    /// P3-35: was "undo refused after a caret move". The undo now checks the text it wrote (fingerprint), not the
-    /// caret, so a caret move the tap didn't see (an arrow key or a click resets `untouchedSinceConvert` anyway)
-    /// still undoes exactly and puts the caret back where it was before the convert.
-    @TextActor func testUndoAfterACaretMoveTheTapMissedStillRestoresExactly() async {
-        let (sut, field, _) = await convertedOnce()
         field.selection = TextRange(location: 4, length: 0)   // after the first word
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום akuo vh, nhv")
-        XCTAssertEqual(field.selection, TextRange(location: 17, length: 0), "the caret from before the convert")
-    }
-
-    /// P3-35 QA (owner): no age limit any more (was 5 s): an hour later, untouched, the undo still restores exactly.
-    @TextActor func testUndoHasNoAgeLimit() async {
-        let (sut, field, _) = await convertedOnce()
         clock.advance(byNanos: 3_600_000_000_000)
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום akuo vh, nhv")
+        await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(field.text, "akuo akuo vh, nhv")
+        XCTAssertEqual(field.selection, TextRange(location: 4, length: 0), "the caret stays where the user put it")
     }
 
-    /// P3-35 QA (owner): `forgetUndoRecord` (a key, click, focus change, Pause, Secure Input) drops the record and
-    /// its text; the next double-Shift is a normal convert even if the snapshot still says untouched.
-    @TextActor func testForgetUndoRecordDropsTheRecordAndTheUndo() async {
-        let (sut, field, _) = await convertedOnce()
-        XCTAssertNotNil(sut.lastRun)
-        sut.forgetUndoRecord()
-        XCTAssertNil(sut.lastRun)
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, wholeLineBack)
-    }
-
-    @TextActor func testUndoRefusedWhenTheTailNowHoldsTheOtherSide() async {
-        // Dictation (no key event) replaced the last letter with a Latin one; same length, caret at the end.
-        let (sut, field, _) = await convertedOnce()
-        field.units[field.units.count - 1] = UInt16(UnicodeScalar("x").value)
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום שלום הית מיס", "the normal scan converts only the new Latin letter")
-    }
-
-    /// P3-33: was a line break; a line break no longer stops the run, so the hard stop here is a tab.
-    /// P3-35: the written text changed (a tab instead of a space), so the record is refused; the normal convert then
-    /// takes the whole box (a tab is crossed now), from the Hebrew letter before the caret.
-    @TextActor func testUndoRefusedWhenTheWrittenTextChanged() async {
-        let (sut, field, _) = await convertedOnce()
-        let i = field.units.count - 4   // the space before "מיה"
-        field.units[i] = 9
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "akuo akuo vh,\tnhv")
-    }
-
-    @TextActor func testUndoRefusedWhenTheTailHasNoLetterOfItsSide() async {
-        let (sut, field, _) = await convertedOnce()
-        let n = sut.lastRun!.length
-        let start = field.units.count - n
-        for i in start..<field.units.count { field.units[i] = UInt16(UnicodeScalar("1").value) }
-        let out = await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        // The scan crosses the digits to the Hebrew word before them and converts that run instead.
-        XCTAssertEqual(out, .converted(to: IDs.abc, by: axRun, switched: true))
-        XCTAssertEqual(field.text, "akuo " + String(repeating: "1", count: n))
-    }
-
-    @TextActor func testUndoRefusedWhenTheFieldGrewBeforeTheRun() async {
-        // An Edit-menu paste (a click, but say it were missed) inserted text before the run: the caret moved.
-        let (sut, field, _) = await convertedOnce()
-        field.units.insert(contentsOf: Array("zz ".utf16), at: 0)
-        field.selection = TextRange(location: field.units.count, length: 0)
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, "zz akuo akuo vh, nhv")
-    }
-
-    @TextActor func testAnyOtherRequestDropsTheRecord() async {
-        let (sut, _, _) = await convertedOnce()
-        await sut.handle(ConvertRequest(snapshot: empty(untouched: 1), gen: 2, bundleID: app, mode: .toggleOnly,
-                                        pair: ConvertFixtures.pair, currentSource: IDs.hebrew), layouts: layouts)
-        XCTAssertNil(sut.lastRun)
-    }
-
-    @TextActor func testASelectionConvertKeepsNoRecord() async {
+    @TextActor func testASelectionConvertSwitchesWithoutKeepingTheBuffer() async {
         let field = FakeTextField("hello akuo world", selection: TextRange(location: 6, length: 4))
         let (sut, _, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(field.text, "hello שלום world")
-        XCTAssertNil(sut.lastRun)
         XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: false)])
-    }
-
-    @TextActor func testAnElementWithNoProcessIDGetsNoRecord() async {
-        let field = FakeTextField("akuo")
-        field.processID = nil
-        let (sut, _, _) = real(field)
-        await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום")
-        XCTAssertNil(sut.lastRun)
     }
 
     // MARK: - Privacy
 
-    /// P3-35: was "the record holds no text". An exact undo needs the replaced text (a per-character convert doesn't
-    /// round-trip), so `original` is the one text field; the written text is only a SHA-256 fingerprint. The text
-    /// lives for the undo window only: the next request takes it out, and the expiry drops it after the age limit.
-    @TextActor func testTheRecordHoldsOnlyTheReplacedTextAndOnlyForTheUndoWindow() async {
-        let (sut, _, _) = await convertedOnce()
-        let rec = try! XCTUnwrap(sut.lastRun)
+    /// P3-40: was "the record holds only the replaced text, for the undo window". No undo, so the controller keeps no
+    /// text between requests: none of its stored properties is text, and the outcome holds steps only.
+    @TextActor func testTheControllerKeepsNoTextAfterAConvert() async {
+        let field = FakeTextField("שלום akuo vh, nhv")
+        let (sut, _, _) = real(field)
+        await sut.handle(request(empty(), gen: 1), layouts: layouts)
         var labels: [String] = []
-        for child in Mirror(reflecting: rec).children {
+        for child in Mirror(reflecting: sut).children {
             let label = child.label ?? "?"
             labels.append(label)
-            if label == "bundleID" || label == "original" { continue }   // an id; the one text field, below
-            XCTAssertFalse(child.value is String || child.value is Substring || child.value is Character
-                           || child.value is [Character] || child.value is [UInt16], "\(label) holds text")
+            XCTAssertFalse(child.value is String || child.value is Substring || child.value is [Character]
+                           || child.value is [UInt16], "\(label) holds text")
         }
-        XCTAssertEqual(labels, ["gen", "bundleID", "processID", "element", "location", "length", "fingerprint",
-                                "original", "originalCaret", "from", "to"],
-                       "a new field must be checked here before it is added")
-        XCTAssertTrue(rec.original == "akuo vh, nhv", "only the replaced range, not the whole box")
-        XCTAssertEqual(rec.fingerprint.count, 32)
+        XCTAssertFalse(labels.contains("lastRun"), "no undo record")
+        XCTAssertFalse(labels.contains("lastClip"), "no clipboard undo record")
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("שלום"))
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("akuo"))
-
-        // P3-35 QA (owner): no timer; the first key, click or focus change after the convert drops it (and its text).
-        sut.forgetUndoRecord()
-        XCTAssertNil(sut.lastRun)
     }
 
     // MARK: - Every new path finishes exactly once, last
@@ -590,11 +446,11 @@ final class ConvertControllerRunTests: XCTestCase {
                 await sut.handle(t.request(t.buffer([], current: "akuo", in: IDs.abc), gen: g, switchAfter: false),
                                  layouts: t.layouts)
             },
-            Case(name: "record undo") { t, g in
+            Case(name: "second convert (P3-40: was the record undo)") { t, g in
                 let (sut, _, _) = t.real(FakeTextField("akuo"))
                 await sut.handle(t.request(t.empty(), gen: g - 1), layouts: t.layouts)
                 t.log.clear()
-                await sut.handle(t.request(t.empty(untouched: g - 1), gen: g), layouts: t.layouts)
+                await sut.handle(t.request(t.empty(in: IDs.hebrew), gen: g, current: IDs.hebrew), layouts: t.layouts)
             },
             Case(name: "keys, kept") { t, g in
                 let (sut, _) = t.scripted()

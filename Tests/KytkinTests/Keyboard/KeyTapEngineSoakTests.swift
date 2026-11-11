@@ -96,10 +96,7 @@ final class KeyTapEngineSoakTests: XCTestCase {
             fifoMayOverflow = engine.processor.heldCount >= config.holdBackCapacity - 1
             defer { fifoMayOverflow = false }
             let passed = backend.deliver(isDown ? .keyDown : .keyUp, e) ?? true // no tap: straight to the app
-            // P2-59a: a user keyDown (passed or held) always ends "untouched since the last convert".
-            if isDown, engine.mode != .off, engine.processor.lastConvertGen != nil {
-                fail("a keyDown left lastConvertGen set")
-            }
+            // P3-40: the P2-59a "a keyDown ends `lastConvertGen`" check is gone with that state (no undo).
             if passed {
                 if postsInCallback > 0 { fail("a key passed in a callback that also re-posted held keys") }
                 output.append(e.timestamp)

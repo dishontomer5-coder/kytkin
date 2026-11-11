@@ -61,17 +61,12 @@ struct ConvertRequest: Sendable, Equatable {
     func convert(_ request: ConvertRequest)
     /// Settings → Apps changed: the user's per-app overrides (001 §12 T5), for `ReplacementCapabilities`.
     func methodHintsChanged(_ overrides: [String: MethodHint])
-    /// P3-35 QA (owner): the user touched the field (key, click), focus or the app changed, Kytkin paused or Secure
-    /// Input started: drop the last convert's undo record and the replaced text it holds (no timer any more).
-    func forgetUndo()
     /// P3-37 (b): a terminal's word buffer started (its first key after an empty buffer): note which element has focus,
     /// so a buffer kept across clicks and app switches is used only in that same window / tab / split.
     func anchorTerminalBuffer(epoch: UInt64)
 }
 
 extension ConvertControlling {
-    /// P3-35 QA (owner): a controller that keeps no undo record has nothing to drop.
-    func forgetUndo() {}
     /// P3-37: a controller that never converts has no terminal buffer to anchor.
     func anchorTerminalBuffer(epoch: UInt64) {}
 }

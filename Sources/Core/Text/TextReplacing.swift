@@ -40,7 +40,7 @@ import Foundation
     var readRangeEndsAtCaret: Bool { get }
 
     /// P2-59c (001 §12.3 X6): the element the last `focusInfo` read as safe (not secure, not composing), until
-    /// `endReplacement`. Identity only, for the undo record's same-element check; nil = unknown.
+    /// `endReplacement`. Identity only, for same-element checks (P3-37 clipboard, terminal anchor); nil = unknown.
     var focusedElement: (any FocusedElementIdentity)? { get }
 
     /// Drops the element, ranges and any text held for this replacement (privacy: nothing outlives it).
@@ -52,7 +52,7 @@ import Foundation
 }
 
 extension TextReplacing {
-    /// P2-59c: a replacer that can't name its element never gets an undo record (the safe default).
+    /// P2-59c: a replacer that can't name its element: no clipboard convert, no terminal anchor (the safe default).
     var focusedElement: (any FocusedElementIdentity)? { nil }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
