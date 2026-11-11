@@ -326,7 +326,8 @@ final class AppControllerTests: XCTestCase {
         monitor.activate(notes, pid: 10)
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
-                                                          useClipboard: true, processID: 10)])   // P3-37, P3-41
+                                                          useClipboard: true, processID: 10,
+                                                          allowsChromiumAX: true)])   // P3-37, P3-41, P3-42
         XCTAssertTrue(watcher.finishes.isEmpty, "the convert controller finishes it")
 
         make(accessibility: .denied, inputMonitoring: .granted, withConvert: true)
@@ -443,6 +444,17 @@ final class AppControllerTests: XCTestCase {
         monitor.activate("com.google.Chrome.app.abcdefghijklmnop", pid: 10)
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests.first?.useClipboard, false)
+        XCTAssertEqual(convert?.requests.first?.allowsChromiumAX, false, "P3-42: nor the AX piece convert")
+    }
+
+    /// P3-42: the Chromium AX convert doesn't depend on the clipboard switch.
+    func testTheChromiumAXPathIgnoresTheClipboardSetting() {
+        var p = Preferences()
+        p.convert.useClipboardInUnreadableApps = false
+        make(p, withConvert: true)
+        monitor.activate("com.tinyspeck.slackmacgap", pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests.first?.allowsChromiumAX, true)
     }
 
     /// P3-37 QA: whole-document web apps (Google Docs / Sheets, Office, web IDEs) never use the clipboard.
@@ -573,7 +585,7 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
                                                           pair: p.languagePair, currentSource: IDs.russian,
                                                           switchAfterConvert: false, useClipboard: true,
-                                                          processID: 10)])
+                                                          processID: 10, allowsChromiumAX: true)])
     }
 
     func testConvertOffForTheAppLeavesDoubleShiftAsAToggle() {

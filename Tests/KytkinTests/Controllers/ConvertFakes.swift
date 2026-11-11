@@ -195,6 +195,7 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         case .axReadRunBeforeCaret, .axReadField: .read
         case .pasteboard: .paste
         case .keyCodesAfterSwitch: .keyCodes
+        case .axSelectAndType: .typeOver   // P3-42: never planned; ChromiumAXConvert runs it
         }
     }
 }
