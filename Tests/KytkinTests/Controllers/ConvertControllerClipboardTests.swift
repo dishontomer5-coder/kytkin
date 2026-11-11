@@ -146,6 +146,8 @@ final class ConvertControllerClipboardTests: XCTestCase {
             XCTAssertFalse(child.value is String, "\(child.label ?? "?") holds text")
             XCTAssertNotEqual(child.label, "lastClip")
         }
+        // P3-40 QA: recursively too (the pending restore, the only snapshot held, is dropped by the end of `handle`).
+        XCTAssertFalse(ConvertControllerTests.containsString(Mirror(reflecting: rig.sut)), "no text anywhere inside")
         _ = await rig.sut.handle(request(empty(), gen: 2, current: IDs.hebrew), layouts: layouts)
         XCTAssertEqual(rig.pasteboard.box, "akuo", "a fresh convert (the capital is not kept)")
     }
@@ -405,6 +407,17 @@ final class ConvertControllerClipboardTests: XCTestCase {
         XCTAssertEqual(log.beeps, 1)
         XCTAssertEqual(pastes(rig.poster), 0)
         XCTAssertEqual(rig.pasteboard.box, "hello akuo world")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    /// P3-40 QA: a copied selection over the box cap (16,384 units) beeps, pastes nothing, and the clipboard goes back.
+    @TextActor func testACopiedSelectionOverTheCapBeepsAndPastesNothing() async {
+        let big = String(repeating: "akuo ", count: ReplacementPlanner.maxFieldReadChars / 5 + 1)
+        let rig = rig(box: big, focus: selected(big))
+        rig.pasteboard.userSelection = big
+        let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(log.beeps, 1, "\(out)")
+        XCTAssertEqual(pastes(rig.poster), 0)
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 

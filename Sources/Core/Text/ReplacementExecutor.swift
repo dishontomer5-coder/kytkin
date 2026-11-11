@@ -67,6 +67,11 @@ import Foundation
         return el
     }
 
+    /// P3-41 QA: the focused application's pid, nil = unknown (identity only).
+    func focusedApplicationPID(timeout: Double) -> Int32? {
+        focusProvider.focusedApplicationPID(timeout: timeout)
+    }
+
     /// A read that gives up on the whole focus read (timeout, no permission, element gone).
     private struct Abort: Error {}
 
@@ -98,14 +103,18 @@ import Foundation
                 subroleUnreadable = e == .failed
             }
             // Secure first, and read nothing else from a password field.
-            if role == FocusInfo.secureTextFieldRole || subrole == FocusInfo.secureTextFieldRole
-                || subroleUnreadable {
+            let securelyNamed = role == FocusInfo.secureTextFieldRole || subrole == FocusInfo.secureTextFieldRole
+            if securelyNamed || subroleUnreadable {
+                // P3-41 QA: say whether only the failed read made it "secure" (a real subrole must never get keys).
                 return FocusInfo(role: role, isSecure: true, hasMarkedText: false, selTextSettable: false,
-                                 selRangeSettable: false, selection: nil)
+                                 selRangeSettable: false, selection: nil, fromFailedRead: !securelyNamed)
             }
-            if try isComposing(el) {
+            switch try composing(el) {
+            case .no: break
+            case let c:
+                // P3-41 QA: a real marked range (an IME composing) is never typed over, even by a terminal fallback.
                 return FocusInfo(role: role, isSecure: false, hasMarkedText: true, selTextSettable: false,
-                                 selRangeSettable: false, selection: nil)
+                                 selRangeSettable: false, selection: nil, fromFailedRead: c == .unknown)
             }
             let selection = try optional(el.string(.selectedText))
             let range = try currentSelectedRange(el)
@@ -127,18 +136,22 @@ import Foundation
 
     /// R5: Cocoa's marked range, or WebKit's marked text. A read that fails (not just "absent") counts as
     /// composing: an IME composition can't be ruled out.
-    private func isComposing(_ el: any AXTextElement) throws -> Bool {
+    /// P3-41 QA: `.yes` = AX reports marked text; `.unknown` = only a failed read says so (still composing for every
+    /// caller except a terminal's fallback, `FocusInfo.fromFailedRead`).
+    private enum Composing { case no, yes, unknown }
+
+    private func composing(_ el: any AXTextElement) throws -> Composing {
         switch el.range(.markedTextRange) {
-        case .success(let r): if r.length > 0 { return true }
+        case .success(let r): if r.length > 0 { return .yes }
         case .failure(let e):
             if e.abortsFocusRead { throw Abort() }
-            if e == .failed { return true }
+            if e == .failed { return .unknown }
         }
         switch el.string(.webKitMarkedText) {
-        case .success(let s): return !s.isEmpty
+        case .success(let s): return s.isEmpty ? .no : .yes
         case .failure(let e):
             if e.abortsFocusRead { throw Abort() }
-            return e == .failed
+            return e == .failed ? .unknown : .no
         }
     }
 
@@ -320,7 +333,9 @@ import Foundation
 
     private func fieldTextAgrees(_ el: any AXTextElement, old: String, at r: TextRange) -> Bool {
         switch el.string(in: r) {
-        case .success(let s): return Self.readsBackAs(s, old)
+        // P3-41 QA (P3-40 (b)): an empty answer for a non-empty range is a non-answer (some apps give "" for ranges they
+        // don't support), not a disagreement: no false refusal in such an app.
+        case .success(let s): return s.isEmpty || Self.readsBackAs(s, old)
         case .failure(let e): return !e.abortsFocusRead
         }
     }

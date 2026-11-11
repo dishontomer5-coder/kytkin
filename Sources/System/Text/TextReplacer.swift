@@ -43,4 +43,8 @@ import Foundation
     func postTerminalKeys(count: Int, new: String) -> StepOutcome {   // P3-41
         executor.postTerminalKeys(count: count, new: new)
     }
+
+    func focusedApplicationPID(timeout: Double) -> Int32? {   // P3-41 QA
+        executor.focusedApplicationPID(timeout: timeout)
+    }
 }

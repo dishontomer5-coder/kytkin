@@ -81,6 +81,10 @@ struct KeyStreamProcessor: Sendable {
     private(set) var crossedFocus = false
     /// P3-41: the current terminal buffer was kept across a click (not only an app switch away and back).
     private(set) var clickedSinceStart = false
+    /// P3-41 QA: a click came after the last user key. A click that brings a parked terminal back to the front (on
+    /// another of its windows) arrives while another app is frontmost, so it can't mark the buffer itself; the restore
+    /// counts it (`contextChanged`). A ⌘Tab back is a key, so it clears this.
+    private var pointerSinceKey = false
     /// P3-37 (b): a terminal's buffer, kept while another app is in front. At most one (the last terminal left).
     private struct ParkedBuffer: Sendable {
         let pid: Int32
@@ -155,6 +159,7 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, handleFlags(e))
 
         case .pointerDown:
+            pointerSinceKey = true   // P3-41 QA
             _ = detector.handle(.pointerDown)
             // P3-37 (b): a terminal keeps its buffer across a click (owner: clicking may move the cursor, accepted;
             // ⌘Z undoes). A click during a replacement still aborts it, which forgets the buffer.
@@ -168,6 +173,7 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, signal)
 
         case .keyDown, .keyUp:
+            if e.kind == .keyDown { pointerSinceKey = false }   // P3-41 QA
             if holdsKeys { return hold(e) }
             guard e.kind == .keyDown else { return (.pass, nil) }
             _ = detector.handle(.otherKeyDown)
@@ -288,7 +294,9 @@ struct KeyStreamProcessor: Sendable {
             bufferRendering = p.rendering == inputSource ? nil : p.rendering
             bufferEpoch = p.epoch
             crossedFocus = true
-            clickedSinceStart = p.clicked   // P3-41
+            // P3-41 (+ QA): a click before this restore (the one that brought the terminal back, maybe in another
+            // window) counts as a click since the buffer's first key.
+            clickedSinceStart = p.clicked || pointerSinceKey
         }
         parked = nil
     }

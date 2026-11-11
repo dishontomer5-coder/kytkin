@@ -116,9 +116,9 @@ final class ConvertControllerTerminalTests: XCTestCase {
 
     @TextActor func testErrorAnswersThatLookSecureOrComposingStillConvert() async {
         for focus in [FocusInfo(role: "AXTextArea", isSecure: true, hasMarkedText: false, selTextSettable: false,
-                                selRangeSettable: false, selection: nil),
+                                selRangeSettable: false, selection: nil, fromFailedRead: true),
                       FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: true, selTextSettable: false,
-                                selRangeSettable: false, selection: nil)] {
+                                selRangeSettable: false, selection: nil, fromFailedRead: true)] {
             log.clear()
             let (sut, r, _) = make()
             r.focus = focus
@@ -155,6 +155,51 @@ final class ConvertControllerTerminalTests: XCTestCase {
         _ = await sut.handle(request(typed("akuo"), gen: 1, app: cmux), layouts: layouts)
         XCTAssertEqual(r.terminalKeyPosts, 0)
         XCTAssertTrue(r.writes.isEmpty)
+    }
+
+    /// P3-41 QA: an NSSecureTextField reads as role AXTextField with subrole AXSecureTextField (`isSecure`, not from a
+    /// failed read), and an IME's real marked text: the fallback must refuse both (the role check alone missed them).
+    @TextActor func testASecureSubroleOrARealCompositionGetsNoKeys() async {
+        for focus in [FocusInfo(role: "AXTextField", isSecure: true, hasMarkedText: false, selTextSettable: false,
+                                selRangeSettable: false, selection: nil),
+                      FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: true, selTextSettable: false,
+                                selRangeSettable: false, selection: nil)] {
+            log.clear()
+            let (sut, r, _) = make()
+            r.focus = focus
+            _ = await sut.handle(request(typed("akuo"), gen: 1, app: cmux), layouts: layouts)
+            XCTAssertEqual(r.terminalKeyPosts, 0, "secure \(focus.isSecure)")
+            XCTAssertTrue(r.writes.isEmpty)
+        }
+    }
+
+    /// P3-41 QA: AX names no focused element, but another app is in front now (it came forward after the double-Shift,
+    /// before main's context change): no keys. And a request with no pid can't be checked: no keys either.
+    @TextActor func testAnotherFocusedAppOrNoRequestPIDGetsNoKeys() async {
+        let (sut, r, _) = make()
+        r.focus = nil
+        r.setNowFocused(nil)
+        r.focusedAppPID = 999
+        let out = await sut.handle(request(typed("akuo"), gen: 1, app: cmux), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(r.terminalKeyPosts, 0)
+
+        log.clear()
+        let (sut2, r2, _) = make()
+        r2.focus = nil
+        r2.setNowFocused(nil)
+        let noPID = ConvertRequest(snapshot: typed("akuo"), gen: 1, bundleID: cmux, mode: .convert,
+                                   pair: ConvertFixtures.pair, currentSource: IDs.abc, processID: nil)
+        _ = await sut2.handle(noPID, layouts: layouts)
+        XCTAssertEqual(r2.terminalKeyPosts, 0)
+
+        log.clear()
+        let (sut3, r3, _) = make()
+        r3.focus = nil
+        r3.setNowFocused(nil)
+        r3.focusedAppPID = 4242   // the request's own terminal: fine
+        let ok = await sut3.handle(request(typed("akuo"), gen: 1, app: cmux), layouts: layouts)
+        XCTAssertEqual(ok, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 4), switched: true))
     }
 
     @TextActor func testNothingTypedAndNoFocusJustSwitches() async {

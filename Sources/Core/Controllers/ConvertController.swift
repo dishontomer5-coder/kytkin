@@ -437,6 +437,10 @@ import Foundation
         case .replaced, .halted, .abandoned: return nil
         case .refused(let why):
             if focus?.role == FocusInfo.secureTextFieldRole { return nil }   // a real password field: never keys
+            // P3-41 QA: "looks secure / composing" may be skipped only when a failed read alone said so. A secure
+            // *subrole* (NSSecureTextField reads as role AXTextField, subrole AXSecureTextField) or a real marked
+            // range (an IME composing: Backspace would eat the composition) refuses, as everywhere else.
+            if why == .secureField || why == .composing, focus?.fromFailedRead != true { return nil }
             guard why == .focusUnknown || why == .secureField || why == .composing else {
                 return r.snapshot.hasRun ? .fieldUnreadable : nil
             }
@@ -447,9 +451,15 @@ import Foundation
         }
         guard r.snapshot.hasRun else { return .fieldUnreadable }
         guard let old, let rendered, rendered.text != old else { return .fieldUnreadable }
-        // The focus AX names now, if any, must be in the terminal the request came from.
-        if let pid = r.processID,
-           let now = replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.processID, now != pid {
+        // The focus AX names now, if any, must be in the terminal the request came from. P3-41 QA: so must the focused
+        // application, which AX names even where it names no focused element (an app that came to the front between
+        // the double-Shift and now, before main's context change reset the request); and with no pid for the request
+        // there is nothing to compare: no keys.
+        guard let pid = r.processID else { return .fieldUnreadable }
+        if let now = replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.processID, now != pid {
+            return .fieldUnreadable
+        }
+        if let app = replacer.focusedApplicationPID(timeout: ReplacementExecutor.axTimeout), app != pid {
             return .fieldUnreadable
         }
         guard claim(r.gen) else { return .failed(.replacement(.abandoned), beeps: false, textMayHaveChanged: false) }
@@ -540,6 +550,8 @@ import Foundation
             if !job.mayPasteLineBreaks, ReplacementPlanner.containsUnsafeCharacter(text) { return .unsafe }
             switch job.source {
             case .copiedSelection:
+                // P3-40 QA: the same cap as the box (a huge selection would be a slow convert and paste).
+                guard text.utf16.count <= ReplacementPlanner.maxFieldReadChars else { return .tooLong }
                 guard let c = layouts.convertGuessing(text), c.text != text else { return .nothing }
                 target = c.target
                 return .replace(c.text)

@@ -52,6 +52,7 @@ final class ReplacementExecutorTests: XCTestCase {
         f.subrole = FocusInfo.secureTextFieldRole
         let x = makeExecutor(f)
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.isSecure, true)
+        XCTAssertEqual(x.focusInfo(timeout: 0.25)?.fromFailedRead, false, "P3-41 QA: a real password field")
         XCTAssertFalse(f.reads.contains(.selectedText))
     }
 
@@ -60,6 +61,7 @@ final class ReplacementExecutorTests: XCTestCase {
         f.markedRange = sel(0, 5)
         let x = makeExecutor(f)
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.hasMarkedText, true)
+        XCTAssertEqual(x.focusInfo(timeout: 0.25)?.fromFailedRead, false, "P3-41 QA: a real composition")
         f.markedRange = sel(5, 0)   // an empty marked range is no composition
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.hasMarkedText, false)
     }
@@ -69,11 +71,13 @@ final class ReplacementExecutorTests: XCTestCase {
         f.webKitMarked = .success("に")
         let x = makeExecutor(f)
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.hasMarkedText, true)
+        XCTAssertEqual(x.focusInfo(timeout: 0.25)?.fromFailedRead, false)
         f.webKitMarked = .success("")
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.hasMarkedText, false)
         // Present but unreadable: a composition can't be ruled out.
         f.webKitMarked = .failure(.failed)
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.hasMarkedText, true)
+        XCTAssertEqual(x.focusInfo(timeout: 0.25)?.fromFailedRead, true, "P3-41 QA: only the failed read says so")
     }
 
     @TextActor func testTimeoutsMakeFocusUnknown() async {
@@ -552,6 +556,7 @@ final class ReplacementExecutorTests: XCTestCase {
         f.subroleResult = .failure(.failed)   // an AX error, or a value of the wrong type (adapter: `.failed`)
         let x = makeExecutor(f)
         XCTAssertEqual(x.focusInfo(timeout: 0.25)?.isSecure, true)
+        XCTAssertEqual(x.focusInfo(timeout: 0.25)?.fromFailedRead, true, "P3-41 QA")
         XCTAssertFalse(f.reads.contains(.selectedText), "nothing more is read from a field that may be a password")
         XCTAssertNil(x.focusedElement)
         for step in [ReplacementStep.axWriteSelection(verify: true), .typeOverSelection, .backspaceAndType(count: 6)] {
@@ -774,5 +779,29 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertTrue(f.isSameElement(as: x.focusedElement!))
         x.endReplacement()
         XCTAssertNil(x.focusedElement)
+    }
+
+    // MARK: - P3-40 QA: the selection guard never refuses a normal TextEdit / Mail selection
+
+    /// `AXStringForRange` may answer the selected range with CR or U+2028 where `AXSelectedText` has LF, a no-break
+    /// space where it has a space, or "" (a non-answer); none of these is a dropped line break. Other text is refused.
+    @TextActor func testP340QASelectionGuardAcceptsEquivalentBreaksSpacesAndNonAnswers() async {
+        let cases: [(text: String, answer: String, steps: [ReplacementStep], ok: Bool)] = [
+            ("q akuo\nvh", "akuo\rvh", [.axWriteSelection(verify: false)], true),
+            ("q akuo\nvh", "akuo\u{2028}vh", [.axWriteSelection(verify: false)], true),
+            ("q akuo vh", "akuo\u{A0}vh", [.axWriteSelection(verify: false), .typeOverSelection], true),
+            ("q akuo vh", "", [.axWriteSelection(verify: false), .typeOverSelection], true),
+            ("q akuo vh", "akuoXvh", [.axWriteSelection(verify: false), .typeOverSelection], false),
+        ]
+        for c in cases {
+            for step in c.steps {
+                let f = FakeTextField(c.text, selection: sel(2, 7))
+                f.stringForRangeOverride = c.answer
+                let x = makeExecutor(f)
+                _ = x.focusInfo(timeout: 0.25)
+                let verdict = x.perform(step, old: String(c.text.dropFirst(2)), new: "שלום הי").verdict
+                XCTAssertEqual(verdict, c.ok ? .done : .unavailable, "\(step) \(c.answer.debugDescription)")
+            }
+        }
     }
 }

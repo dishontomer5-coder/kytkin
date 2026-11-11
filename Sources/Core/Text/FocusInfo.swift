@@ -16,9 +16,13 @@ struct FocusInfo: Sendable, Equatable {
     let selection: String?
     /// `AXStringForRange` and the caret range can be read, so the stale-buffer path can find the last word.
     let canReadBeforeCaret: Bool
+    /// P3-41 QA: `isSecure` / `hasMarkedText` come only from an AX read that *failed* (P2-49 item 6 / R5: a password
+    /// field or a composition can't be ruled out), not from a secure role or subrole or a real marked range. Only then
+    /// may a terminal post its buffer's keys anyway (`ConvertController.terminalFallback`).
+    let fromFailedRead: Bool
 
     init(role: String?, isSecure: Bool, hasMarkedText: Bool, selTextSettable: Bool, selRangeSettable: Bool,
-         selection: String?, canReadBeforeCaret: Bool = false) {
+         selection: String?, canReadBeforeCaret: Bool = false, fromFailedRead: Bool = false) {
         self.role = role
         self.isSecure = isSecure
         self.hasMarkedText = hasMarkedText
@@ -26,6 +30,7 @@ struct FocusInfo: Sendable, Equatable {
         self.selRangeSettable = selRangeSettable
         self.selection = selection
         self.canReadBeforeCaret = canReadBeforeCaret
+        self.fromFailedRead = fromFailedRead
     }
 
     /// The AX role of a password field.

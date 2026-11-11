@@ -167,6 +167,10 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return terminalKeysResult
     }
 
+    /// P3-41 QA: what `focusedApplicationPID` answers (nil = unknown, the default).
+    var focusedAppPID: Int32?
+    func focusedApplicationPID(timeout: Double) -> Int32? { focusedAppPID }
+
     func setNowFocused(_ e: (any FocusedElementIdentity)?) {
         nowFocused = e
         nowFocusedIsUnset = false

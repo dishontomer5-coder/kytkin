@@ -555,7 +555,7 @@ final class ConvertControllerTests: XCTestCase {
     }
 
     /// Bundle IDs (in the capabilities) and input-source IDs (in the outcome) are allowed; typed text is not.
-    private static func containsString(_ mirror: Mirror) -> Bool {
+    static func containsString(_ mirror: Mirror) -> Bool {   // P3-40 QA: shared with the run / clipboard tests
         for child in mirror.children {
             if child.label == "capabilities" || child.label == "appliedOverrides" || child.value is InputSourceID {
                 continue

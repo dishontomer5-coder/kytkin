@@ -55,6 +55,10 @@ import Foundation
     /// × `count`, then `new`, with the same event rules as `.backspaceAndType` (no line break, no control character, the
     /// `ours` marker, no modifiers) but no AX check. The caller decides when that is allowed.
     func postTerminalKeys(count: Int, new: String) -> StepOutcome
+
+    /// P3-41 QA: the pid of the app AX says has focus now, nil = unknown. Identity only. Lets the terminal fallback
+    /// refuse when another app is in front even where AX names no focused element.
+    func focusedApplicationPID(timeout: Double) -> Int32?
 }
 
 extension TextReplacing {
@@ -63,6 +67,9 @@ extension TextReplacing {
 
     /// P3-41: a replacer without a key poster posts nothing (the safe default).
     func postTerminalKeys(count: Int, new: String) -> StepOutcome { .unavailable }
+
+    /// P3-41 QA: unknown by default.
+    func focusedApplicationPID(timeout: Double) -> Int32? { nil }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }

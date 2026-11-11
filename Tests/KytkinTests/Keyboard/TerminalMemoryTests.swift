@@ -229,4 +229,29 @@ final class TerminalMemoryTests: XCTestCase {
         XCTAssertEqual(snap?.clickedSinceStart, false)
         XCTAssertEqual(snap?.crossedFocus, false)
     }
+
+    /// P3-41 QA: ⌘Tab away, then a click that brings the terminal back, maybe on another of its windows. That click
+    /// arrives while the other app is in front (it can't mark the parked buffer itself): the restore counts it, so a
+    /// terminal whose AX names no element doesn't type the buffer into the other window.
+    func testP341QAAClickThatBringsTheTerminalBackCountsAsAClick() {
+        var p = inTerminal()
+        type(&p, [a, s])
+        p.contextChanged(terminalPID: nil)
+        _ = p.handle(F.pointer(at: 1_000))
+        p.contextChanged(terminalPID: terminalPID)
+        let snap = snapshot(&p)
+        XCTAssertEqual(snap?.crossedFocus, true)
+        XCTAssertEqual(snap?.clickedSinceStart, true)
+
+        // A click in the other app followed by a key there (⌘Tab back is a key): not the click that came back.
+        var q = inTerminal()
+        type(&q, [a, s])
+        q.contextChanged(terminalPID: nil)
+        _ = q.handle(F.pointer(at: 1_000))
+        _ = q.handle(F.key(a))
+        q.contextChanged(terminalPID: terminalPID)
+        let back = snapshot(&q)
+        XCTAssertEqual(back?.clickedSinceStart, false)
+        XCTAssertEqual(back?.strokes.count, 2, "the buffer is restored whole")
+    }
 }

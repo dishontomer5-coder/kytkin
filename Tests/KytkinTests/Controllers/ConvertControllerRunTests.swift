@@ -436,6 +436,8 @@ final class ConvertControllerRunTests: XCTestCase {
                            || child.value is [UInt16], "\(label) holds text")
         }
         XCTAssertFalse(labels.contains("lastRun"), "no undo record")
+        // P3-40 QA: and recursively (a struct or tuple holding text, like the old `LastRun`, would fail this).
+        XCTAssertFalse(ConvertControllerTests.containsString(Mirror(reflecting: sut)), "no text anywhere inside")
         XCTAssertFalse(labels.contains("lastClip"), "no clipboard undo record")
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("שלום"))
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("akuo"))
