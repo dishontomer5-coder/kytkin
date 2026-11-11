@@ -100,7 +100,8 @@ import Foundation
     /// P3-37 (c): the user's clipboard, to put back after this request's finish (bounded).
     private var pendingRestore: ClipboardConvert.PendingRestore?
     /// P3-37 (b): the focused element a terminal's buffer started in.
-    private var terminalAnchor: (epoch: UInt64, element: any FocusedElementIdentity)?
+    /// P3-41: `element` nil = AX named no focused element when the buffer started (Ghostty-based terminals may not).
+    private var terminalAnchor: (epoch: UInt64, element: (any FocusedElementIdentity)?)?
     /// P3-37: the generation whose B3 claim this controller holds (the clipboard and a key fallback share one claim).
     private var claimedGen: UInt64?
     /// Session verdicts + the user's per-app overrides (§12 T5). Never persisted (§12 T6).
@@ -378,6 +379,12 @@ import Foundation
 
         let outcome = runChain(request, focus: focus, old: old, gen: r.gen, replacer: replacer, locateField: locate,
                                convert: convert)
+        // P3-41 (cmux): a terminal whose AX facts got in the way of the key step converts the buffer by keys anyway, or
+        // at least switches (never a silent nothing or a beep with no switch).
+        if capabilities.method(for: r.bundleID) == .terminal, let decision = terminalFallback(
+            outcome, r, focus: focus, old: old, rendered: rendered, replacer: replacer) {
+            return decision
+        }
         switch outcome.result {
         case .replaced(let step):
             guard let target else {   // can't happen (see `convert`)
@@ -407,6 +414,55 @@ import Foundation
             return .fieldUnreadable   // P3-37 (a): an unreadable app's chain that wrote nothing
         default:
             return Self.failure(outcome)
+        }
+    }
+
+    /// P3-41 (owner 2026-11-11, cmux): the terminal key path needs no AX text, but the chain still asks AX three things
+    /// first: is there a focused element (`focusUnknown`), does it look secure or composing (a subrole or marked-range
+    /// read that *fails* counts as both, P2-49 item 6 / R5), and is the focus still the element `focusInfo` read
+    /// (P2-49 item 3, `CFEqual`). A Ghostty-based terminal can fail each of them: no AX focus, error answers, or a fresh
+    /// element on every read. Before P3-37 cmux was unseeded (`.auto`); P3-37 seeded it `.terminal`, and with a buffer
+    /// any of these refusals beeped and did not even switch. In a terminal:
+    ///   - AX said nothing it could vouch for (refused: focus unknown / looks secure / composing; or the chain ran out
+    ///     with nothing posted, e.g. the P2-49 same-element check failed): post the buffer's keys without the AX checks, if the focus AX names (if
+    ///     any) still belongs to the request's process. A real secure prompt is covered by Secure Input (the request is
+    ///     then toggle-only and never gets here); a real `AXSecureTextField` role still refuses.
+    ///   - Anything else that wrote nothing: just switch the language (the buffer's keys were typed in the old layout;
+    ///     the switch forgets them).
+    /// Returns nil to let the normal outcome handling run (converted, partly posted, a role-secure field…).
+    private func terminalFallback(_ outcome: ReplacementOutcome, _ r: ConvertRequest, focus: FocusInfo?, old: String?,
+                                  rendered: (target: InputSourceID, text: String)?,
+                                  replacer: any TextReplacing) -> Decision? {
+        switch outcome.result {
+        case .replaced, .halted, .abandoned: return nil
+        case .refused(let why):
+            if focus?.role == FocusInfo.secureTextFieldRole { return nil }   // a real password field: never keys
+            guard why == .focusUnknown || why == .secureField || why == .composing else {
+                return r.snapshot.hasRun ? .fieldUnreadable : nil
+            }
+        case .exhausted, .timedOut:
+            break   // by definition nothing was written or posted (ReplacementOutcome)
+        case .notConvertible:
+            return nil
+        }
+        guard r.snapshot.hasRun else { return .fieldUnreadable }
+        guard let old, let rendered, rendered.text != old else { return .fieldUnreadable }
+        // The focus AX names now, if any, must be in the terminal the request came from.
+        if let pid = r.processID,
+           let now = replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.processID, now != pid {
+            return .fieldUnreadable
+        }
+        guard claim(r.gen) else { return .failed(.replacement(.abandoned), beeps: false, textMayHaveChanged: false) }
+        let count = old.count
+        let result = replacer.postTerminalKeys(count: count, new: rendered.text)
+        switch result.verdict {
+        case .done:
+            return .replaced(target: rendered.target, step: .backspaceAndType(count: count), keptBuffer: true,
+                             isRun: true)
+        default:
+            return result.fieldUntouched ? .fieldUnreadable
+                : .failed(.replacement(.halted(after: .backspaceAndType(count: count))), beeps: true,
+                          textMayHaveChanged: true)
         }
     }
 
@@ -576,19 +632,25 @@ import Foundation
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
 
-    /// P3-37 (b): the kept terminal buffer started in the element that has focus now. Unknown either way = no.
+    /// P3-37 (b): the kept terminal buffer started in the element that has focus now.
+    /// P3-41 (cmux): when AX can't name the element (no element at the buffer's first key, or none now), the identity
+    /// check can't run. The buffer is then trusted only if no click happened since its first key, i.e. it crossed only
+    /// an app switch away and back to the same terminal process (the processor already matched the pid). Before P3-41
+    /// an unknown identity always forgot the buffer, so in such a terminal every buffer kept across an app switch was
+    /// lost. Two known elements that differ: another window / tab / split, forgotten as before.
     private func terminalBufferStillFocused(_ snap: WordSnapshot) -> Bool {
-        guard let anchor = terminalAnchor, anchor.epoch == snap.epoch,
-              let now = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout) else {
-            return false
+        let now = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout)
+        if let anchor = terminalAnchor, anchor.epoch == snap.epoch, let then = anchor.element, let now {
+            return now.isSameElement(as: then)
         }
-        return now.isSameElement(as: anchor.element)
+        // P3-41: identity unknown at either end (or no anchor for this buffer: its note may not have run yet).
+        return !snap.clickedSinceStart
     }
 
     /// P3-37 (b): a terminal buffer started (from the tap, through main): note the focused element. Identity only.
     func anchorTerminalBuffer(epoch: UInt64) {
-        terminalAnchor = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout)
-            .map { (epoch, $0) }
+        // P3-41: kept with a nil element too, so the check above knows the buffer started where AX names nothing.
+        terminalAnchor = (epoch, currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout))
     }
 
     /// P3-40 (b): the same text once spaces, line breaks and other invisible characters are left out (scalar by

@@ -509,7 +509,8 @@ import Observation
                                        useClipboard: prefs.convert.useClipboardInUnreadableApps
                                            && !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
                                                                                        host: c.host),
-                                       inAddressBar: c.pageState == .editingAddress))
+                                       inAddressBar: c.pageState == .editingAddress,
+                                       processID: c.pid))   // P3-41
     }
 
     /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.

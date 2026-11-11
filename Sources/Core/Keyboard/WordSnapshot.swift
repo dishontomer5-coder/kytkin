@@ -25,12 +25,15 @@ struct WordSnapshot: Sendable, Equatable {
     /// P3-37 (b): the buffer was kept across a click or an app switch away and back (terminals only): the caret may
     /// have moved and the focus may be another window, so the controller re-checks the element before using it.
     let crossedFocus: Bool
+    /// P3-41: of those, a click (in the terminal) happened since the buffer's first key; false = only an app switch away
+    /// and back to the same terminal process. Decides whether a buffer may be trusted when AX can't name the element.
+    let clickedSinceStart: Bool
 
     /// P2-59 (X5): the buffer holds something before the caret: a current word, or earlier words (with their spaces).
     var hasRun: Bool { !strokes.isEmpty || !previousWords.isEmpty }
 
     init(strokes: [Stroke], previousWords: [[Stroke]], renderedIn: InputSourceID?, isValid: Bool,
-         gaps: [Int]? = nil, epoch: UInt64 = 0, crossedFocus: Bool = false) {
+         gaps: [Int]? = nil, epoch: UInt64 = 0, crossedFocus: Bool = false, clickedSinceStart: Bool = false) {
         self.strokes = strokes
         self.previousWords = previousWords
         self.renderedIn = renderedIn
@@ -41,6 +44,7 @@ struct WordSnapshot: Sendable, Equatable {
         self.gaps = g
         self.epoch = epoch
         self.crossedFocus = crossedFocus
+        self.clickedSinceStart = clickedSinceStart
     }
 
     /// P3-37: nothing remembered (a terminal buffer that can't be trusted any more).

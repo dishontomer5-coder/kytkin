@@ -317,10 +317,22 @@ final class ConvertControllerRunTests: XCTestCase {
         let (sut, _) = scripted()
         let dead = WordSnapshot(strokes: [Stroke(keyCode: 14, layer: .option)] + ConvertFixtures.strokes("akuo"),
                                 previousWords: [], renderedIn: IDs.abc, isValid: true)
-        let out = await sut.handle(request(dead, gen: 1, bundleID: terminal), layouts: layouts)
+        let out = await sut.handle(request(dead, gen: 1, bundleID: slack), layouts: layouts)
         XCTAssertEqual(out, .noop(.replacement(.refused(.noMethod))))
         XCTAssertEqual(log.beeps, 1)
         XCTAssertTrue(log.performs.isEmpty)
+    }
+
+    /// P3-41 (owner: in a terminal double-Shift at least switches): the same uncountable buffer in a terminal posts no
+    /// keys either, but switches the language instead of beeping.
+    @TextActor func testAnUncountableBufferInATerminalJustSwitches() async {
+        let (sut, _) = scripted()
+        let dead = WordSnapshot(strokes: [Stroke(keyCode: 14, layer: .option)] + ConvertFixtures.strokes("akuo"),
+                                previousWords: [], renderedIn: IDs.abc, isValid: true)
+        let out = await sut.handle(request(dead, gen: 1, bundleID: terminal), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(log.beeps, 0)
+        XCTAssertTrue(log.performs.isEmpty, "no Backspace count is made up")
     }
 
     // MARK: - P2-54(a): unreadable and nothing remembered → just switch

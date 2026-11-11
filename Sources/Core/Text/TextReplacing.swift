@@ -49,11 +49,20 @@ import Foundation
     /// P3-37: the focused element now (identity only; reads no text and starts no replacement), for the clipboard
     /// convert's focus re-check before each shortcut and the terminal buffer's same-window check. nil = unknown.
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)?
+
+    /// P3-41: a terminal's key step when AX can't vouch for the focus (Ghostty-based terminals such as cmux may name no
+    /// focused element, or a different one on every read, or answer the secure/marked-text reads with errors): Backspace
+    /// × `count`, then `new`, with the same event rules as `.backspaceAndType` (no line break, no control character, the
+    /// `ours` marker, no modifiers) but no AX check. The caller decides when that is allowed.
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome
 }
 
 extension TextReplacing {
     /// P2-59c: a replacer that can't name its element: no clipboard convert, no terminal anchor (the safe default).
     var focusedElement: (any FocusedElementIdentity)? { nil }
+
+    /// P3-41: a replacer without a key poster posts nothing (the safe default).
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome { .unavailable }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }

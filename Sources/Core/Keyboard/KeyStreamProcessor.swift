@@ -79,12 +79,15 @@ struct KeyStreamProcessor: Sendable {
     private(set) var bufferEpoch: UInt64 = 0
     /// P3-37 (b): the current buffer was kept across a click or restored after an app switch.
     private(set) var crossedFocus = false
+    /// P3-41: the current terminal buffer was kept across a click (not only an app switch away and back).
+    private(set) var clickedSinceStart = false
     /// P3-37 (b): a terminal's buffer, kept while another app is in front. At most one (the last terminal left).
     private struct ParkedBuffer: Sendable {
         let pid: Int32
         let buffer: WordBuffer
         let rendering: InputSourceID?
         let epoch: UInt64
+        let clicked: Bool   // P3-41
     }
     private var parked: ParkedBuffer?
     var hasParkedBuffer: Bool { parked != nil }
@@ -156,7 +159,7 @@ struct KeyStreamProcessor: Sendable {
             // P3-37 (b): a terminal keeps its buffer across a click (owner: clicking may move the cursor, accepted;
             // ⌘Z undoes). A click during a replacement still aborts it, which forgets the buffer.
             if terminalPID != nil, case .idle = phase {
-                if !buffer.isEmpty { crossedFocus = true }
+                if !buffer.isEmpty { crossedFocus = true; clickedSinceStart = true }   // P3-41: a click
                 return (.pass, nil)
             }
             // R5: a click during a replacement finishes it: flush, and the buffer is stale.
@@ -274,7 +277,7 @@ struct KeyStreamProcessor: Sendable {
     mutating func contextChanged(terminalPID new: Int32?, deviceFlags: UInt64? = nil) {
         if let current = terminalPID, !buffer.isEmpty, case .idle = phase {
             parked = ParkedBuffer(pid: current, buffer: buffer, rendering: bufferRendering ?? inputSource,
-                                  epoch: bufferEpoch)
+                                  epoch: bufferEpoch, clicked: clickedSinceStart)
         }
         reset(.contextChange, deviceFlags: deviceFlags)
         terminalPID = new
@@ -285,6 +288,7 @@ struct KeyStreamProcessor: Sendable {
             bufferRendering = p.rendering == inputSource ? nil : p.rendering
             bufferEpoch = p.epoch
             crossedFocus = true
+            clickedSinceStart = p.clicked   // P3-41
         }
         parked = nil
     }
@@ -480,11 +484,13 @@ struct KeyStreamProcessor: Sendable {
         buffer.invalidate()
         bufferRendering = nil
         crossedFocus = false   // P3-37
+        clickedSinceStart = false   // P3-41
     }
 
     /// P2-59 (X5): the buffer as a worker sees it. Allocates: call it only on a trigger.
     private func currentSnapshot() -> WordSnapshot {
-        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, epoch: bufferEpoch, crossedFocus: crossedFocus)
+        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, epoch: bufferEpoch, crossedFocus: crossedFocus,
+                        clickedSinceStart: clickedSinceStart)
     }
 
     /// A Shift already down at reset joins the detector as held and spoiled, so it can't start a tap,

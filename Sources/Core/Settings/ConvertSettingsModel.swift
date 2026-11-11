@@ -24,7 +24,8 @@ import Observation
         "With nothing selected, Kytkin converts the whole text box: every letter in the language next to the "
             + "cursor changes to the other language, on every line. Text already in the other language stays.",
         "With text selected, it converts only the selection, so select just the part you want to change.",
-        "Press Shift twice again right away to undo.",
+        // P3-40 (owner 2026-11-11): again = convert again, not undo.
+        "Press Shift twice again to convert the whole text to the other language. To undo, use the app's ⌘Z.",
         // P3-37 (owner 2026-11-11): the clipboard in apps Kytkin can't read; terminals remember until Return.
         "Where Kytkin can't read the text (Slack, VS Code, Chrome and other web apps), it copies the text box "
             + "through the clipboard and pastes it back converted, then puts your clipboard back (if you allow it below).",

@@ -326,7 +326,7 @@ final class AppControllerTests: XCTestCase {
         monitor.activate(notes, pid: 10)
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
-                                                          useClipboard: true)])   // P3-37: on by default
+                                                          useClipboard: true, processID: 10)])   // P3-37, P3-41
         XCTAssertTrue(watcher.finishes.isEmpty, "the convert controller finishes it")
 
         make(accessibility: .denied, inputMonitoring: .granted, withConvert: true)
@@ -572,7 +572,8 @@ final class AppControllerTests: XCTestCase {
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
                                                           pair: p.languagePair, currentSource: IDs.russian,
-                                                          switchAfterConvert: false, useClipboard: true)])
+                                                          switchAfterConvert: false, useClipboard: true,
+                                                          processID: 10)])
     }
 
     func testConvertOffForTheAppLeavesDoubleShiftAsAToggle() {

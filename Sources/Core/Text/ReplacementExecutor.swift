@@ -373,6 +373,13 @@ import Foundation
         return post(deletes + typing)
     }
 
+    /// P3-41: see `TextReplacing.postTerminalKeys`. Composed and checked exactly like `backspaceAndType`'s events.
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome {
+        guard count > 0, let deletes = KeyStrokeComposer.backspaces(count), let typing = KeyStrokeComposer.typing(new)
+        else { return .unavailable }
+        return post(deletes + typing)
+    }
+
     /// P2-59 (001 §12.3 X4): one `AXStringForRange` read of `[max(0, caret − maxChars), caret)` (P3-33: smaller
     /// retries if that read fails or has the wrong length), then `locate`
     /// finds the run in it; its range is remembered for the AX write that follows. Writes nothing.

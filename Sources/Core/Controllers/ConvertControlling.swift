@@ -32,10 +32,13 @@ struct ConvertRequest: Sendable, Equatable {
     /// P3-37: the browser's address bar has focus (`BrowserPageState.editingAddress`). The clipboard never copies it
     /// (design.md: a focused address bar is never read).
     let inAddressBar: Bool
+    /// P3-41: the frontmost app's process (the context's pid), nil = unknown. A terminal whose AX can't name its focused
+    /// element still converts by keys while the focus (if AX names one at all) belongs to this process.
+    let processID: Int32?
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
          currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
-         useClipboard: Bool = false, inAddressBar: Bool = false) {
+         useClipboard: Bool = false, inAddressBar: Bool = false, processID: Int32? = nil) {
         self.snapshot = snapshot
         self.gen = gen
         self.bundleID = bundleID
@@ -45,6 +48,7 @@ struct ConvertRequest: Sendable, Equatable {
         self.switchAfterConvert = switchAfterConvert
         self.useClipboard = useClipboard
         self.inAddressBar = inAddressBar
+        self.processID = processID
     }
 
     /// The same request with other values for the fields that change on the way (the dispatcher's resolved pair; the
@@ -52,7 +56,7 @@ struct ConvertRequest: Sendable, Equatable {
     func with(snapshot: WordSnapshot? = nil, pair: LanguagePair? = nil) -> ConvertRequest {
         ConvertRequest(snapshot: snapshot ?? self.snapshot, gen: gen, bundleID: bundleID, mode: mode,
                        pair: pair ?? self.pair, currentSource: currentSource, switchAfterConvert: switchAfterConvert,
-                       useClipboard: useClipboard, inAddressBar: inAddressBar)
+                       useClipboard: useClipboard, inAddressBar: inAddressBar, processID: processID)
     }
 }
 
