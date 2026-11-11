@@ -132,6 +132,10 @@ import Foundation
         /// The remembered buffer's side (the box's direction), nil = the box's last letter.
         let direction: PairSide?
         let undo: ClipUndo?
+        /// P3-37 QA: the text may hold line breaks (and other control characters). True only in an app seeded as
+        /// keys-only (Slack, Chrome…); an unseeded app could be a terminal Kytkin doesn't know (an Electron one whose
+        /// xterm.js box reads as an AXTextArea), where a pasted line break without bracketed paste runs a command.
+        let mayPasteLineBreaks: Bool
     }
 
     private let keyWatcher: any KeyWatching
@@ -543,13 +547,18 @@ import Foundation
                          element: (any FocusedElementIdentity)?, source: ClipboardConvert.Source,
                          direction: PairSide?, undo: ClipUndo?) -> ClipJob? {
         guard makeClipboard != nil, !r.inAddressBar, let f = focus, let element, !f.isSecure,
-              f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText, layouts.clipboardShortcutsAreSafe
+              f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText, layouts.clipboardShortcutsAreSafe,
+              // P3-37 QA: ⌘ + key 0 / 8 / 9 is read in the layout in front: one outside the pair is unchecked.
+              layouts.side(of: r.currentSource) != nil
         else { return nil }
         // Never in a terminal (bracketed paste, the prompt), a remote desktop or VM, or an app the user set to "Off"
         // or to "Keys only" (their choice means keys and nothing else).
+        let mayPasteLineBreaks: Bool
         switch capabilities.method(for: r.bundleID) {
-        case .keysOnly: break   // Chromium / Electron: AX may be off, so the role says nothing; the seed vouches for it
+        case .keysOnly:   // Chromium / Electron: AX may be off, so the role says nothing; the seed vouches for it
+            mayPasteLineBreaks = true
         case .auto, .preferPaste:
+            mayPasteLineBreaks = false   // P3-37 QA
             // Any other app: only a real text box. ⌘A in a list, table or file browser selects items, and ⌘V could
             // paste over all of them (Numbers, Finder).
             guard let role = f.role, Self.clipboardTextRoles.contains(role) else { return nil }
@@ -558,7 +567,8 @@ import Foundation
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
-        return ClipJob(source: source, element: element, direction: direction, undo: undo)
+        return ClipJob(source: source, element: element, direction: direction, undo: undo,
+                       mayPasteLineBreaks: mayPasteLineBreaks)
     }
 
     /// P3-37 (c): the AX roles of a text box, for apps not seeded as keys-only.
@@ -576,6 +586,8 @@ import Foundation
         var target: InputSourceID?
         var undone: ClipUndo?
         let convert: (String) -> ClipboardConvert.Conversion = { text in
+            // P3-37 QA: in an unseeded app a line break (or any control character) is never pasted (ClipJob).
+            if !job.mayPasteLineBreaks, ReplacementPlanner.containsUnsafeCharacter(text) { return .unsafe }
             if case .box = job.source, let rec = job.undo, Self.clipFingerprint(of: text) == rec.fingerprint {
                 undone = rec
                 target = layouts.source(of: rec.to)
@@ -640,7 +652,18 @@ import Foundation
         case .tooLong:
             beep()
             return .noop(.runTooLong)
+        case .unsafeText:   // P3-37 QA
+            beep()
+            return .noop(.replacement(.refused(.unsafeSelection)))
+        case .boxEmpty where r.snapshot.hasRun:
+            // P3-37 QA: ⌘A (and the Right arrow that dropped its selection) were posted, so the caret is at the end of
+            // the box, or one character further right if ⌘A did nothing: not where the remembered buffer ends. Typing
+            // the buffer by keys now would backspace over the wrong text. Forget it and beep.
+            finish.bufferAfter = []
+            beep()
+            return .noop(.replacement(.exhausted))
         case .boxEmpty, .unavailable:
+            // `.unavailable`: nothing was posted (no snapshot, the first event refused), so the caret is where it was.
             return await fallBack(r, layouts: layouts, finish: &finish)
         case .abandoned:
             return .noop(.replacement(.abandoned))

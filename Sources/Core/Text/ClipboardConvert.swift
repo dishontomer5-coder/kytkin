@@ -58,6 +58,8 @@ import Foundation
         case replace(String)
         case nothing
         case tooLong
+        /// P3-37 QA: the text may not be pasted here (a line break in an app that might be a terminal). Beeps.
+        case unsafe
     }
 
     enum Result: Sendable, Equatable {
@@ -67,6 +69,8 @@ import Foundation
         case nothingToConvert
         /// The box is longer than the convert cap (beeps).
         case tooLong
+        /// P3-37 QA: the caller refused to paste this text (`Conversion.unsafe`); the clipboard put back (beeps).
+        case unsafeText
         /// ⌘C changed nothing, or copied nothing: an empty box, or an app that can't copy. The caller falls back.
         case boxEmpty
         /// Nothing was posted or written (no snapshot, the first event refused). The caller falls back.
@@ -165,6 +169,7 @@ import Foundation
         switch convert(text) {
         case .nothing: return stop(.nothingToConvert)
         case .tooLong: return stop(.tooLong)
+        case .unsafe: return stop(.unsafeText)
         case .replace(let s): new = s
         }
         guard !new.isEmpty, !new.unicodeScalars.elementsEqual(text.unicodeScalars) else {

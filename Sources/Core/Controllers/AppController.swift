@@ -513,7 +513,10 @@ import Observation
         convert.convert(ConvertRequest(snapshot: snapshot, gen: gen, bundleID: c.bundleID, mode: mode,
                                        pair: prefs.languagePair, currentSource: switcher.current,
                                        switchAfterConvert: prefs.convert.switchLanguageAfterConvert,
-                                       useClipboard: prefs.convert.useClipboardInUnreadableApps,   // P3-37
+                                       // P3-37; QA: never on whole-document web apps (Google Docs / Sheets…)
+                                       useClipboard: prefs.convert.useClipboardInUnreadableApps
+                                           && !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
+                                                                                       host: c.host),
                                        inAddressBar: c.pageState == .editingAddress))
     }
 

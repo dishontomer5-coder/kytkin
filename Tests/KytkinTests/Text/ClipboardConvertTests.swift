@@ -273,5 +273,19 @@ final class ClipboardConvertTests: XCTestCase {
         let hebrew = ConvertFixtures.hebrew
         let pair = LanguagePair(a: IDs.abc, b: IDs.hebrew)
         XCTAssertFalse(LayoutSnapshot(pair: pair, a: azerty, b: hebrew)!.clipboardShortcutsAreSafe)
+        // P3-37 QA: ABC ⇄ AZERTY. ABC types a/c/v, but with AZERTY in front ⌘ + key 0 is ⌘Q: never.
+        var french = azerty
+        french.id = IDs.hebrew
+        XCTAssertFalse(LayoutSnapshot(pair: pair, a: ConvertFixtures.abc, b: french)!.clipboardShortcutsAreSafe)
+        // Dvorak's C key types `j` (⌘J), V `k`.
+        var dvorak = ConvertFixtures.abc
+        dvorak.id = IDs.hebrew
+        dvorak.keys[8] = KeyCell(plain: "j", shift: "J")
+        dvorak.keys[9] = KeyCell(plain: "k", shift: "K")
+        XCTAssertFalse(LayoutSnapshot(pair: pair, a: ConvertFixtures.abc, b: dvorak)!.clipboardShortcutsAreSafe)
+        // Two non-Latin layouts: nothing vouches for the keys.
+        var hebrew2 = hebrew
+        hebrew2.id = IDs.abc
+        XCTAssertFalse(LayoutSnapshot(pair: pair, a: hebrew2, b: hebrew)!.clipboardShortcutsAreSafe)
     }
 }

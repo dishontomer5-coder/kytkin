@@ -444,6 +444,26 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(convert?.requests.first?.useClipboard, false)
     }
 
+    /// P3-37 QA: an installed web app (a Docs / Sheets shim) never uses the clipboard: ⌘A there is the whole document.
+    func testAWebAppShimNeverUsesTheClipboard() {
+        make(withConvert: true)
+        monitor.activate("com.google.Chrome.app.abcdefghijklmnop", pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests.first?.useClipboard, false)
+    }
+
+    /// P3-37 QA: whole-document web apps (Google Docs / Sheets, Office, web IDEs) never use the clipboard.
+    func testWholeDocumentSitesBlockTheClipboard() {
+        for host in ["docs.google.com", "DOCS.google.com", "colab.research.google.com", "foo.sharepoint.com",
+                     "vscode.dev", "x.github.dev"] {
+            XCTAssertTrue(ReplacementCapabilities.blocksClipboard(bundleID: "com.google.Chrome", host: host), host)
+        }
+        for host in ["app.slack.com", "mail.google.com", "github.com", "notdocs.google.com.evil.io", nil] as [String?] {
+            XCTAssertFalse(ReplacementCapabilities.blocksClipboard(bundleID: "com.google.Chrome", host: host),
+                           host ?? "nil")
+        }
+    }
+
     /// Kytkin's own window is not a Context, so the root must reset the word buffer itself: otherwise a word typed in
     /// Settings would still be in the buffer after ⌘Tab back to the same app (no new Context) and a double-Shift there
     /// would replace the wrong text once P2-21 converts.

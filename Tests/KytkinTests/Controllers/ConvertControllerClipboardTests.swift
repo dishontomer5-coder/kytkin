@@ -157,13 +157,64 @@ final class ConvertControllerClipboardTests: XCTestCase {
 
     // MARK: - Fallbacks
 
-    @TextActor func testAnEmptyBoxFallsBackToTheRememberedBufferWithOneClaim() async {
-        let rig = rig(box: "")
-        rig.pasteboard.copiesInstead = ""
+    // P3-37 QA: after ⌘A and the Right arrow the caret is at the end of the box (or one character further), not where
+    // the buffer ends: typing the buffer by keys then would backspace over the wrong text.
+    @TextActor func testNoCopyAfterSelectAllWithABufferBeepsAndTypesNothing() async {
+        for copies in ["", nil] as [String?] {
+            log = ConvertLog()
+            watcher = ConvertKeyWatcher(log: log)
+            switches = SwitchRecorder(log: log)
+            let rig = rig(box: "akuo")
+            if let copies { rig.pasteboard.copiesInstead = copies } else { rig.pasteboard.copyDelayNanos = nil }
+            let out = await rig.sut.handle(request(buffer("akuo"), gen: 1), layouts: layouts)
+            XCTAssertEqual(out, .noop(.replacement(.exhausted)))
+            XCTAssertEqual(log.beeps, 1)
+            XCTAssertTrue(log.performs.isEmpty, "no key steps")
+            XCTAssertFalse(rig.poster.events.contains { $0.keyCode == KeyCode.delete }, "no Backspace posted")
+            XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: nil, bufferAfter: [])], "buffer forgotten")
+            XCTAssertEqual(rig.pasteboard.box, "akuo", "the box is untouched")
+            XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+        }
+    }
+
+    @TextActor func testNoSnapshotFallsBackToTheRememberedBufferWithOneClaim() async {
+        let rig = rig(box: "akuo")
+        rig.pasteboard.snapshotFails = true   // nothing posted: the caret is still where the buffer ends
         let out = await rig.sut.handle(request(buffer("akuo"), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 4), switched: true))
-        XCTAssertEqual(log.claims, [1], "the clipboard's claim is reused by the key step")
+        XCTAssertEqual(clipboardKeys(rig.poster), 0)
+        XCTAssertEqual(log.claims, [1])
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    // P3-37 QA: an unseeded app could be a terminal Kytkin doesn't know (xterm.js reads as an AXTextArea).
+    @TextActor func testAnUnseededAppNeverGetsAPastedLineBreak() async {
+        let rig = rig(box: "akuo\nls")
+        let out = await rig.sut.handle(request(empty(), gen: 1, app: "com.example.Chat"), layouts: layouts)
+        XCTAssertEqual(out, .noop(.replacement(.refused(.unsafeSelection))))
+        XCTAssertEqual(log.beeps, 1)
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertEqual(rig.pasteboard.box, "akuo\nls")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    @TextActor func testAnUnseededAppsKnownMultiLineSelectionIsNotPasted() async {
+        let selected = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: false,
+                                 selRangeSettable: false, selection: "akuo\nvh")
+        let rig = rig(box: "", focus: selected)
+        _ = await rig.sut.handle(request(empty(), gen: 1, app: "com.example.Chat"), layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertTrue(rig.pasteboard.transientWrites.isEmpty)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    // P3-37 QA: ⌘ + key 0 is read in the layout in front; one outside the pair is unchecked (AZERTY: ⌘Q).
+    @TextActor func testNeverWhenTheLayoutInFrontIsOutsideThePair() async {
+        let rig = rig(box: "akuo")
+        let out = await rig.sut.handle(request(empty(), gen: 1, current: InputSourceID("com.apple.keylayout.French")),
+                                       layouts: layouts)
+        XCTAssertEqual(clipboardKeys(rig.poster), 0)
+        if case .converted = out { XCTFail("no clipboard convert") }
     }
 
     @TextActor func testAnAppThatCantCopyWithNothingRememberedJustSwitches() async {
@@ -215,6 +266,11 @@ final class ConvertControllerClipboardTests: XCTestCase {
         let out = await rig.sut.handle(request(empty(), gen: 1, app: terminal), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
         XCTAssertTrue(rig.poster.events.isEmpty)
+        // P3-37 QA: more terminals seeded (Electron / xterm.js ones would otherwise be `.auto`).
+        for id in ["org.tabby", "dev.commandline.waveterm", "com.raphaelamorim.rio", "dev.warp.Warp-Preview",
+                   "com.cmuxterm.app"] {
+            XCTAssertEqual(ReplacementCapabilities().method(for: id), .terminal, id)
+        }
     }
 
     @TextActor func testNeverInACodeEditor() async {

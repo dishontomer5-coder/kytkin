@@ -79,11 +79,24 @@ extension LayoutSnapshot {
     /// P3-37: ⌘ + the ANSI A / C / V keys is ⌘A / ⌘C / ⌘V for this pair: one of its layouts types plain `a`, `c` and `v`
     /// on exactly those key codes (ABC, U.S., British…; Apple Hebrew's Command layer is QWERTY). On AZERTY the A
     /// position types `q` (⌘Q would quit the app) and on Dvorak C is `j`, so the clipboard convert is never used there.
+    ///
+    /// P3-37 QA: macOS reads ⌘ + key in the layout **in front**, so one Latin layout of the pair typing a/c/v is not
+    /// enough: with ABC ⇄ French (AZERTY) and French in front, key 0 is ⌘Q. Now every layout of the pair that types Latin
+    /// letters on those keys must type exactly a, c, v; a non-Latin one (Hebrew, Russian, Greek: their Command layer is
+    /// QWERTY) is allowed, and at least one layout must type a/c/v. (A non-Latin layout with an AZERTY Command layer,
+    /// e.g. Arabic-AZERTY, can't be told apart from its plain keys: a known gap.)
     var clipboardShortcutsAreSafe: Bool {
         guard let a = converter(from: pair.a)?.from, let b = converter(from: pair.b)?.from else { return false }
-        func types(_ map: LayoutMap) -> Bool {
-            ClipboardShortcut.allCases.allSatisfy { map.keys[$0.keyCode]?.plain == $0.letter }
+        enum Kind { case acv, nonLatin, unsafe }
+        func kind(_ map: LayoutMap) -> Kind {
+            let cells = ClipboardShortcut.allCases.map { (map.keys[$0.keyCode]?.plain, $0.letter) }
+            if cells.allSatisfy({ $0.0 == $0.1 }) { return .acv }
+            let latin = cells.contains { cell in
+                cell.0?.unicodeScalars.contains { $0.isASCII && $0.properties.isAlphabetic } ?? false
+            }
+            return latin ? .unsafe : .nonLatin
         }
-        return types(a) || types(b)
+        let kinds = [kind(a), kind(b)]
+        return !kinds.contains(.unsafe) && kinds.contains(.acv)
     }
 }
