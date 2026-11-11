@@ -100,7 +100,8 @@ final class KeyStreamProcessorTests: XCTestCase {
         XCTAssertEqual(p.handle(F.key(KeyCode.space)).1, .wordBoundary)
         _ = p.handle(F.key(a))
         XCTAssertEqual(p.handle(F.key(KeyCode.space)).1, .wordBoundary)
-        XCTAssertEqual(p.buffer.wordCount, 2, "current (empty) word + 2 previous; the oldest was dropped")
+        // P3-33: was 2 (3 words, the oldest dropped); every word since the last reset is kept now.
+        XCTAssertEqual(p.buffer.wordCount, 4, "a, s, d and a: all four words kept")
         // P2-59: Return and Tab still emit the boundary (the learner), but they end the buffer.
         _ = p.handle(F.key(s))
         XCTAssertEqual(p.handle(F.key(KeyCode.returnKey)).1, .wordBoundary)

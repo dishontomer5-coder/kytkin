@@ -1,33 +1,44 @@
-// P2-12: The last few words the user typed, as strokes (key code + layer), never as text (design.md privacy).
-// Bounded: at most 64 strokes and 3 words (the current word + 2 before it). The oldest word is dropped first.
-// Storage is reserved up front, so appending on the per-key path never allocates (B1). Every operation touches
-// at most 64 strokes, so it is O(1) per event.
+// P2-12: What the user typed since the last reset, as strokes (key code + layer), never as text (design.md privacy).
+// P3-33 (owner 2026-11-11): no word limit any more. It holds everything typed since the last Return/Enter, Tab,
+// Option-Space, click, focus change or other reset (the processor ends it there), so a double-Shift in an app whose
+// text box can't be read converts the whole wrong-language run, not just the last 3 words.
+// Bounded: at most `maxStrokes` keys in all, letters plus the spaces between words (so the key path never backspaces
+// more than that many characters). When full, the oldest word (and the spaces after it) is dropped first, so the
+// buffer always starts on a word boundary and a convert turns as much of the tail as fits.
+// Storage is reserved up front, so appending on the per-key path never allocates (B1). Typing appends in O(1); only
+// dropping the oldest word when full moves the (≤ 512) kept strokes, a bounded copy of a few hundred bytes.
 
 import Foundation
 
 struct WordBuffer: Sendable, Equatable {
-    static let maxStrokes = 64
-    static let maxWords = 3
+    /// P3-33: keys held at most, letters and spaces together (was 64 strokes / 3 words). 512 is several long chat
+    /// messages or a long shell command; retyping it posts ≤ 512 Backspaces + ≤ 512 / 16 text events, which stays far
+    /// inside the 400 ms convert budget (B5) and the 1 s hold-back cap (B3). See 001 §12.3 X2 (P3-33).
+    static let maxStrokes = 512
 
     /// Every kept word, oldest first, with no separators.
     private var storage: [Stroke] = []
-    /// Start index in `storage` of each word. The last one is the current word. Always 1...maxWords entries.
+    /// Start index in `storage` of each word. The last one is the current word. Never empty.
     private var wordStarts: [Int] = [0]
     /// gaps[i] = whitespace keys typed between word i and word i + 1 (so Backspace can rejoin them).
     private var gaps: [Int] = []
+    /// P3-33: `gaps`' sum, so the letters-plus-spaces bound is checked in O(1).
+    private var spaceCount = 0
     /// The current word grew past `maxStrokes`; ignore strokes until the next boundary.
     private var overflowed = false
 
     init() {
         storage.reserveCapacity(Self.maxStrokes)
-        wordStarts.reserveCapacity(Self.maxWords + 1)
-        gaps.reserveCapacity(Self.maxWords)
+        wordStarts.reserveCapacity(Self.maxStrokes + 2)
+        gaps.reserveCapacity(Self.maxStrokes + 1)
     }
 
     // MARK: - Reading
 
     var isEmpty: Bool { storage.isEmpty && !overflowed }
     var strokeCount: Int { storage.count }
+    /// P3-33: letters plus the spaces between words, what a key-path convert backspaces over (≤ `maxStrokes`).
+    var keyCount: Int { storage.count + spaceCount }
     /// Words held, counting a non-empty current word.
     var wordCount: Int { wordStarts.count - (currentWordIsEmpty ? 1 : 0) }
     var currentWord: ArraySlice<Stroke> { storage[currentStart...] }
@@ -38,6 +49,7 @@ struct WordBuffer: Sendable, Equatable {
     /// P2-59 (001 §12.3 X5): with the spaces after each earlier word (`gaps`), so the whole buffer can be rendered.
     func snapshot(renderedIn: InputSourceID?, untouchedSinceConvert: UInt64? = nil) -> WordSnapshot {
         var previous: [[Stroke]] = []
+        previous.reserveCapacity(wordStarts.count - 1)
         for i in 0..<(wordStarts.count - 1) {
             previous.append(Array(storage[wordStarts[i]..<wordStarts[i + 1]]))
         }
@@ -51,15 +63,11 @@ struct WordBuffer: Sendable, Equatable {
 
     mutating func append(_ s: Stroke) {
         if overflowed { return }
-        while storage.count >= Self.maxStrokes {
-            if wordStarts.count > 1 {
-                dropOldestWord()
-            } else {
-                // P2-12: one word longer than 64 strokes can't be converted exactly; forget it until whitespace.
-                invalidate()
-                overflowed = true
-                return
-            }
+        // P3-33: make room by dropping whole old words; one word longer than the cap can't be converted exactly.
+        guard makeRoom() else {
+            invalidate()
+            overflowed = true
+            return
         }
         storage.append(s)
     }
@@ -73,12 +81,22 @@ struct WordBuffer: Sendable, Equatable {
         }
         if currentWordIsEmpty {
             // More whitespace after a word. With nothing before it we know nothing, so record nothing.
-            if !gaps.isEmpty { gaps[gaps.count - 1] += 1 }
+            guard !gaps.isEmpty else { return false }
+            // P3-33: room for one more space. Dropping the only earlier word leaves nothing known before the caret.
+            guard makeRoom() else { return false }
+            if gaps.isEmpty { return false }
+            gaps[gaps.count - 1] += 1
+            spaceCount += 1
             return false
+        }
+        if !makeRoom() {
+            // The current word alone fills the buffer: the space can't be counted, so forget it all.
+            invalidate()
+            return true
         }
         wordStarts.append(storage.count)
         gaps.append(1)
-        if wordStarts.count > Self.maxWords { dropOldestWord() }
+        spaceCount += 1
         return true
     }
 
@@ -93,6 +111,7 @@ struct WordBuffer: Sendable, Equatable {
             return
         }
         guard !gaps.isEmpty else { return } // nothing known before the caret
+        spaceCount -= 1
         if gaps[gaps.count - 1] > 1 {
             gaps[gaps.count - 1] -= 1
         } else {
@@ -102,12 +121,13 @@ struct WordBuffer: Sendable, Equatable {
         }
     }
 
-    /// Forget everything (mouse, navigation, shortcut, context change, Secure Input, tap re-enable).
+    /// Forget everything (mouse, navigation, shortcut, context change, Secure Input, tap re-enable, Return…).
     mutating func invalidate() {
         storage.removeAll(keepingCapacity: true)
         wordStarts.removeAll(keepingCapacity: true)
         wordStarts.append(0)
         gaps.removeAll(keepingCapacity: true)
+        spaceCount = 0
         overflowed = false
     }
 
@@ -120,8 +140,18 @@ struct WordBuffer: Sendable, Equatable {
         }
         overflowed = false
         storage.removeSubrange(currentStart...)
-        while storage.count + strokes.count > Self.maxStrokes, wordStarts.count > 1 { dropOldestWord() }
+        while keyCount + strokes.count > Self.maxStrokes, wordStarts.count > 1 { dropOldestWord() }
         storage.append(contentsOf: strokes)
+    }
+
+    /// P3-33: room for one more key (letter or space), dropping the oldest words first. False when the current word
+    /// alone fills the buffer.
+    private mutating func makeRoom() -> Bool {
+        while keyCount >= Self.maxStrokes {
+            guard wordStarts.count > 1 else { return false }
+            dropOldestWord()
+        }
+        return true
     }
 
     private mutating func dropOldestWord() {
@@ -129,6 +159,6 @@ struct WordBuffer: Sendable, Equatable {
         storage.removeFirst(n)
         wordStarts.removeFirst()
         for i in wordStarts.indices { wordStarts[i] -= n }
-        gaps.removeFirst()
+        spaceCount -= gaps.removeFirst()
     }
 }

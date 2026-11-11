@@ -8,7 +8,7 @@ import Foundation
 struct WordSnapshot: Sendable, Equatable {
     /// The current word (since the last whitespace), oldest stroke first.
     let strokes: [Stroke]
-    /// Up to 2 words before it, oldest first.
+    /// The words before it since the last reset, oldest first (P3-33: no word limit; ≤ `WordBuffer.maxStrokes` keys).
     let previousWords: [[Stroke]]
     /// The layout the strokes were typed in, as far as the processor knows. P2-59: after a convert that kept the buffer
     /// without switching, the layout the kept buffer is rendered in (`bufferRenderedIn`).

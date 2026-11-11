@@ -5,9 +5,12 @@
 import Foundation
 
 enum KeyStrokeComposer {
-    /// Defensive cap on backspaces in one step: the word buffer holds ≤ 64 strokes (design.md), and an undo
-    /// deletes a fix plus its trigger. Anything larger is a bug upstream, never typed.
-    static let maxBackspaces = 128
+    /// Defensive cap on backspaces in one step: the word buffer holds ≤ `WordBuffer.maxStrokes` keys (letters and
+    /// spaces, so ≤ that many graphemes), and an undo deletes a fix plus its trigger. Anything larger is a bug
+    /// upstream, never typed. P3-33: raised from 128 with the buffer (64 → 512). The whole step is posted at once
+    /// (no budget check inside it: stopping half way would leave a half-deleted run); ≤ 512 × 2 Backspace events
+    /// plus ≤ 2 × ⌈text / 16 units⌉ text events take a few tens of ms to post, inside B5's 400 ms (001 §12.3 X2).
+    static let maxBackspaces = WordBuffer.maxStrokes
 
     /// Down + up for each of `count` Backspaces. One Backspace deletes one grapheme cluster in Cocoa (R5).
     /// nil if `count` is outside 1…`maxBackspaces`.

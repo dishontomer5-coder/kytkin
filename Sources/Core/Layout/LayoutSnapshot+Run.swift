@@ -20,6 +20,8 @@ extension LayoutSnapshot {
     /// letter with niqqud is strong B, as `LayoutConverter.forEachUnit` treats it).
     func runClass(of character: Character) -> RunCharClass {
         let grapheme = String(character)
+        // P3-33: line breaks are crossed (the whole run, any number of lines); other control characters still stop it.
+        if character.unicodeScalars.allSatisfy(ReplacementPlanner.isLineBreak) { return .lineBreak }
         if ReplacementPlanner.containsUnsafeCharacter(grapheme) { return .hardStop }
         if character.isWhitespace { return .space }
         let a = converter(from: pair.a)?.sourceIndex

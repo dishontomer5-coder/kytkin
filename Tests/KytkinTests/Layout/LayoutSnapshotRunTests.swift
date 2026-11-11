@@ -33,7 +33,11 @@ final class LayoutSnapshotRunTests: XCTestCase {
     func testSpacesAndHardStops() {
         XCTAssertEqual(s.runClass(of: " "), .space)
         XCTAssertEqual(s.runClass(of: "\u{00A0}"), .space, "no-break space")
-        for ch: Character in ["\n", "\r", "\r\n", "\t", "\u{2028}", "\u{2029}", "\u{0}", "\u{1B}"] {
+        // P3-33: line breaks are their own class now (the run crosses them); other control characters stay hard stops.
+        for ch: Character in ["\n", "\r", "\r\n", "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}"] {
+            XCTAssertEqual(s.runClass(of: ch), .lineBreak, ch.debugDescription)
+        }
+        for ch: Character in ["\t", "\u{0}", "\u{1B}", "\u{7F}"] {
             XCTAssertEqual(s.runClass(of: ch), .hardStop, ch.debugDescription)
         }
     }
