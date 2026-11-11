@@ -85,6 +85,9 @@ final class ConvertSettingsModelTests: XCTestCase {
         let text = ConvertSettingsModel.explanation.joined(separator: " ")
         XCTAssertTrue(text.contains("before the cursor"))
         XCTAssertTrue(text.contains("other language starts"))
+        // P3-33 QA: the run crosses line breaks now; the old "on the current line" would tell the user the opposite.
+        XCTAssertFalse(text.contains("current line"))
+        XCTAssertTrue(text.contains("several lines"))
         XCTAssertTrue(text.contains("converts only the selection"))
         XCTAssertTrue(text.contains("again"))
         XCTAssertTrue(text.contains("undo"))

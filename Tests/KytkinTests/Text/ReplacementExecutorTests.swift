@@ -344,6 +344,36 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty)
     }
 
+    /// P3-33 QA: the 4,096-unit cut can land inside an emoji (a surrogate pair). The cut word is dropped (X1 step 6),
+    /// the run starts at the next whole word, and the AX write never touches the emoji or the word glued to it.
+    @TextActor func testTheFullWindowCutInsideAnEmojiNeverTouchesIt() async {
+        let head = "q\u{1F600}akuo "                                    // 8 units; the window starts at unit 2
+        let body = String(repeating: "akuo ", count: 818)               // 4,090 units
+        let f = FakeTextField(head + body)
+        XCTAssertEqual(f.units.count, 2 + ReplacementPlanner.maxRunReadChars)
+        let x = makeExecutor(f)
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars, locate: scan).verdict, .done)
+        XCTAssertEqual(field.stringRangesRead, [sel(2, ReplacementPlanner.maxRunReadChars)], "one read, no retry")
+        XCTAssertEqual(x.wordBeforeCaret, body)
+        let new = ConvertFixtures.layouts.converter(from: IDs.abc)!.convert(body).text
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: body, new: new), .done)
+        XCTAssertEqual(field.text, head + new, "the emoji and the cut word before the run are unchanged")
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    /// P3-33 QA: CRLF is one grapheme but two UTF-16 units; the run's range, the write and the read-back all count it
+    /// as two, so nothing before the run is overwritten and nothing after the caret is left behind.
+    @TextActor func testACRLFRunIsCountedInUnitsEndToEnd() async {
+        let x = makeExecutor(FakeTextField("\u{05E9}\u{05DC}\u{05D5}\u{05DD}\r\nakuo\r\nvh"))
+        _ = x.focusInfo(timeout: 0.25)
+        XCTAssertEqual(x.readRunBeforeCaret(maxChars: ReplacementPlanner.maxRunReadChars, locate: scan).verdict, .done)
+        XCTAssertEqual(x.wordBeforeCaret, "akuo\r\nvh")
+        XCTAssertEqual(x.perform(.axWriteSelection(verify: true), old: "akuo\r\nvh", new: "XYZW\r\nQR"), .done)
+        XCTAssertEqual(field.text, "\u{05E9}\u{05DC}\u{05D5}\u{05DD}\r\nXYZW\r\nQR")
+        XCTAssertEqual(field.selection, sel(field.units.count, 0), "the caret is back at the end")
+    }
+
     /// P3-33: a run holding a tab (or any non-line-break control) is never handed on, even if a locator returned it.
     @TextActor func testRunWithATabIsUnavailable() async {
         let x = makeExecutor(FakeTextField("akuo\tvh"))
@@ -398,7 +428,11 @@ final class ReplacementExecutorTests: XCTestCase {
         XCTAssertFalse(ReplacementExecutor.readsBackAs("ab", "a b"))
         XCTAssertFalse(ReplacementExecutor.readsBackAs("a\r\nb", "a\nb"), "different lengths")
         XCTAssertFalse(ReplacementExecutor.readsBackAs("שלוס", "שלום"))
-        XCTAssertFalse(ReplacementExecutor.readsBackAs("e\u{0301}", "\u{00E9}"), "scalars, not canonical equivalence")
+        // P3-33 QA: canonical equivalence verifies, as it did before P3-33 (the builder's strict scalar compare would
+        // mark AX broken for an app that reorders combining marks). Hebrew dagesh + qamats in either order.
+        XCTAssertTrue(ReplacementExecutor.readsBackAs("e\u{0301}", "\u{00E9}"))
+        XCTAssertTrue(ReplacementExecutor.readsBackAs("\u{05D1}\u{05BC}\u{05B8}", "\u{05D1}\u{05B8}\u{05BC}"))
+        XCTAssertFalse(ReplacementExecutor.readsBackAs("\u{05D1}\u{05B8}", "\u{05D1}\u{05BC}"), "a different mark")
     }
 
     @TextActor func testRunReadPendingRangeIsAbsolute() async {

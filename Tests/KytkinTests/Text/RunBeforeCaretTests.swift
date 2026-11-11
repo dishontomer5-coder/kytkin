@@ -94,6 +94,13 @@ final class RunBeforeCaretTests: XCTestCase {
         XCTAssertEqual(run("מס' 5\ntkhk"), "A:tkhk")
     }
 
+    /// P3-33 QA: pins today's behaviour on an empty new line (checklist §P3-33 step 8 asks the owner): the run crosses
+    /// the line break back into the line above, so correct Hebrew there converts. Before P3-33 this was "nothing".
+    func testAnEmptyNewLineConvertsTheLineAbove() {
+        XCTAssertEqual(run("שלום עולם\n"), "B:שלום עולם\n")
+        XCTAssertEqual(run("שלום עולם\r\n  "), "B:שלום עולם\r\n  ")
+    }
+
     func testForeignScriptsAndEmoji() {
         XCTAssertEqual(run("привет akuo"), "A:akuo")
         XCTAssertEqual(run("akuo привет"), "nothing", "another script nearest the caret")

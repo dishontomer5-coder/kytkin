@@ -30,8 +30,8 @@ enum ConvertOutcome: Sendable, Equatable {
         case notInPair
         /// The toggle's input-source select failed. Beeps.
         case switchFailed
-        /// P2-59 (001 §12.3 X2): the run before the caret is a single token longer than the 256-unit window (a URL,
-        /// a hash). Nothing written. Beeps.
+        /// P2-59 (001 §12.3 X2): the run before the caret is a single token longer than the window (a URL, a hash;
+        /// P3-33 QA: 4,096 units, was 256). Nothing written. Beeps.
         case runTooLong
         /// The replacement chain didn't replace anything (refused, notConvertible, exhausted, halted, abandoned,
         /// timedOut). Beeps exactly when `ReplacementOutcome.shouldBeep` does (abandoned is silent).

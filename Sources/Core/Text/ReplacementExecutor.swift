@@ -234,8 +234,12 @@ import Foundation
     /// U+2028 / U+2029). Same UTF-16 length, every other unit identical. A strict compare there failed the write's
     /// verify, which marks AX broken for the app for the session (`ReplacementCapabilities.record`), and every later
     /// double-Shift then fell back to the word buffer: a likely cause of "only ~3 words change" in Mail.
+    /// P3-33 QA: canonical equivalence (`==`) still counts, as before P3-33 (`textThere == new`): an app that stores
+    /// combining marks in canonical order wrote our text. A strict scalar compare there would fail the verify and mark
+    /// AX broken for the app for the session, the very fallback this tolerance exists to avoid. A failed write leaves
+    /// the old run, whose letters differ, so neither rule can hide one.
     nonisolated static func readsBackAs(_ read: String, _ new: String) -> Bool {
-        if read.unicodeScalars.elementsEqual(new.unicodeScalars) { return true }
+        if read == new { return true }
         let r = Array(read.utf16), n = Array(new.utf16)
         guard r.count == n.count else { return false }
         func space(_ u: UInt16) -> Bool { u == 0x20 || u == 0xA0 }
