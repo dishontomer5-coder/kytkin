@@ -1,7 +1,9 @@
 // P3-37 (owner 2026-11-11, plan.md P3-37; 001 §12.3 X12): ConvertController in apps whose text box can't be read:
 // (a) nothing remembered → at least switch the language, (c) the clipboard convert (Slack multi-line box, direction,
-// undo, every reason it is not used, fallback to the buffer, a known multi-line selection), with fakes only: a scripted
-// replacer, a fake pasteboard + app, the fake clock. No real clipboard, no real events.
+// every reason it is not used, fallback to the buffer), with fakes only: a scripted replacer, a fake pasteboard + app,
+// the fake clock. No real clipboard, no real events.
+// P3-40 (owner 2026-11-11): double-Shift again converts the box again (the `ClipUndo` tests are replaced), and a
+// selection AX reports is copied with ⌘C and pasted over (Chromium's AXSelectedText can drop its line breaks).
 
 import XCTest
 
@@ -53,9 +55,8 @@ final class ConvertControllerClipboardTests: XCTestCase {
         return Rig(sut: sut, replacer: r, pasteboard: pb, poster: poster, element: element)
     }
 
-    private func empty(untouched: UInt64? = nil) -> WordSnapshot {
-        WordSnapshot(strokes: [], previousWords: [], renderedIn: IDs.abc, isValid: false,
-                     untouchedSinceConvert: untouched)
+    private func empty() -> WordSnapshot {
+        WordSnapshot(strokes: [], previousWords: [], renderedIn: IDs.abc, isValid: false)
     }
 
     private func buffer(_ current: String, in source: InputSourceID = IDs.abc) -> WordSnapshot {
@@ -119,40 +120,36 @@ final class ConvertControllerClipboardTests: XCTestCase {
         XCTAssertEqual(rig.pasteboard.box, "akuo akuo")
     }
 
-    @TextActor func testDoubleShiftAgainRightAwayPastesTheOriginalBack() async {
-        let rig = rig(box: "Akuo\nvh")
+    /// P3-40: was "double-Shift again right away pastes the original back". The owner's Slack test (`1 2 1` →
+    /// `2 2 2` → `1 1 1`): each double-Shift converts the whole box to the other language.
+    @TextActor func testDoubleShiftAgainConvertsTheWholeBoxToTheOtherLanguage() async {
+        let rig = rig(box: "akuo שלום\nvh")
         _ = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(rig.pasteboard.box, "שלום\nהי")
-        XCTAssertNotNil(rig.sut.lastClip)
-        let back = await rig.sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(back, .converted(to: IDs.abc, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.box, "Akuo\nvh", "exactly, capital A too")
-        XCTAssertNil(rig.sut.lastClip, "an undo keeps no record")
+        XCTAssertEqual(rig.pasteboard.box, "שלום שלום\nהי")
+        let second = await rig.sut.handle(request(empty(), gen: 2, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(second, .converted(to: IDs.abc, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "akuo akuo\nvh", "not the original: every word in the other language")
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
-        _ = await rig.sut.handle(request(empty(untouched: 2), gen: 3), layouts: layouts)
-        XCTAssertEqual(rig.pasteboard.box, "שלום\nהי", "a third double-Shift converts again")
+        _ = await rig.sut.handle(request(empty(), gen: 3), layouts: layouts)
+        XCTAssertEqual(rig.pasteboard.box, "שלום שלום\nהי")
+        XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: nil, bufferAfter: []),
+                                      .finish(gen: 2, newRendering: nil, bufferAfter: []),
+                                      .finish(gen: 3, newRendering: nil, bufferAfter: [])],
+                       "the buffer is forgotten each time (the caret is at the box end)")
     }
 
-    @TextActor func testTheUndoNeedsNothingTouchedSince() async {
+    /// P3-40: no clipboard undo record (it held the replaced box): the controller keeps no text after a paste.
+    @TextActor func testAClipboardConvertKeepsNoText() async {
         let rig = rig(box: "Akuo")
         _ = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
-        _ = await rig.sut.handle(request(empty(untouched: nil), gen: 2), layouts: layouts)   // a key since
-        XCTAssertEqual(rig.pasteboard.box, "akuo", "a normal convert back, not the exact original")
-    }
-
-    @TextActor func testTheUndoRecordIsDroppedOnTheNextKeyClickOrFocusChange() async {
-        let rig = rig(box: "akuo")
-        _ = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertNotNil(rig.sut.lastClip)
-        rig.sut.forgetUndoRecord()
-        XCTAssertNil(rig.sut.lastClip)
-    }
-
-    @TextActor func testTheUndoRecordHoldsOnlyTheReplacedText() async {
-        let rig = rig(box: "akuo")
-        _ = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
-        let fields = Mirror(reflecting: rig.sut.lastClip!).children.compactMap(\.label)
-        XCTAssertEqual(fields, ["gen", "bundleID", "processID", "fingerprint", "original", "from", "to"])
+        for child in Mirror(reflecting: rig.sut).children {
+            XCTAssertFalse(child.value is String, "\(child.label ?? "?") holds text")
+            XCTAssertNotEqual(child.label, "lastClip")
+        }
+        // P3-40 QA: recursively too (the pending restore, the only snapshot held, is dropped by the end of `handle`).
+        XCTAssertFalse(ConvertControllerTests.containsString(Mirror(reflecting: rig.sut)), "no text anywhere inside")
+        _ = await rig.sut.handle(request(empty(), gen: 2, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(rig.pasteboard.box, "akuo", "a fresh convert (the capital is not kept)")
     }
 
     // MARK: - Fallbacks
@@ -201,7 +198,8 @@ final class ConvertControllerClipboardTests: XCTestCase {
     @TextActor func testAnUnseededAppsKnownMultiLineSelectionIsNotPasted() async {
         let selected = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: false,
                                  selRangeSettable: false, selection: "akuo\nvh")
-        let rig = rig(box: "", focus: selected)
+        let rig = rig(box: "x akuo\nvh", focus: selected)
+        rig.pasteboard.userSelection = "akuo\nvh"   // P3-40: ⌘C copies it; the line break still is never pasted
         _ = await rig.sut.handle(request(empty(), gen: 1, app: "com.example.Chat"), layouts: layouts)
         XCTAssertEqual(pastes(rig.poster), 0)
         XCTAssertTrue(rig.pasteboard.transientWrites.isEmpty)
@@ -363,26 +361,89 @@ final class ConvertControllerClipboardTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 4), switched: true))
     }
 
-    // MARK: - A known selection
+    // MARK: - P3-40 (b): a known selection is copied with ⌘C and pasted over
 
-    @TextActor func testAKnownMultiLineSelectionIsPastedOver() async {
-        let selected = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: false,
-                                 selRangeSettable: false, selection: "akuo\nvh")
-        let rig = rig(box: "", focus: selected)
+    private func selected(_ ax: String) -> FocusInfo {
+        FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: false,
+                  selRangeSettable: false, selection: ax)
+    }
+
+    /// The owner's Slack bug: lines `1 4` / `4 4` / `2 2` (4 = selected words in language 2), the selection running
+    /// from line 1 into line 2. Chromium's AXSelectedText leaves the line break out; typing that over joined the lines.
+    @TextActor func testASelectionAcrossLinesKeepsItsLineBreakWhenAXDropsIt() async {
+        for ax in ["שלוםשלום שלום", "שלום שלום שלום", "שלום\nשלום שלום"] {   // dropped, a space, kept
+            log = ConvertLog()
+            watcher = ConvertKeyWatcher(log: log)
+            switches = SwitchRecorder(log: log)
+            let rig = rig(box: "akuo שלום\nשלום שלום\nהי הי", focus: selected(ax))
+            rig.pasteboard.userSelection = "שלום\nשלום שלום"
+            let out = await rig.sut.handle(request(empty(), gen: 1, current: IDs.hebrew), layouts: layouts)
+            XCTAssertEqual(out, .converted(to: IDs.abc, by: .pasteboard, switched: true), ax)
+            XCTAssertEqual(rig.pasteboard.box, "akuo akuo\nakuo akuo\nהי הי", "same lines, \(ax)")
+            XCTAssertEqual(rig.pasteboard.transientWrites, ["akuo\nakuo akuo"], ax)
+            XCTAssertEqual(clipboardKeys(rig.poster), 4, "⌘C and ⌘V only, no ⌘A: \(ax)")
+            XCTAssertFalse(rig.poster.events.contains { $0.keyCode == KeyCode.rightArrow }, "selection not dropped")
+            XCTAssertTrue(log.performs.isEmpty, "never typed over: \(ax)")
+            XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+        }
+    }
+
+    @TextActor func testAOneLineSelectionIsCopiedAndPastedToo() async {
+        let rig = rig(box: "hello akuo world", focus: selected("akuo"))
+        rig.pasteboard.userSelection = "akuo"
         let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.transientWrites, ["שלום\nהי"])
-        XCTAssertEqual(clipboardKeys(rig.poster), 2, "⌘V only")
-        XCTAssertNil(rig.sut.lastClip, "a selection keeps no clipboard undo")
+        XCTAssertEqual(rig.pasteboard.box, "hello שלום world")
+        XCTAssertTrue(log.performs.isEmpty)
+    }
+
+    /// ⌘C copied something else than AX's selection: nothing is pasted, the clipboard goes back, a beep.
+    @TextActor func testACopyThatIsNotTheSelectionBeepsAndPastesNothing() async {
+        let rig = rig(box: "hello akuo world", focus: selected("akuo"))
+        rig.pasteboard.userSelection = "akuo"
+        rig.pasteboard.copiesInstead = "hello akuo world"
+        let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .noop(.replacement(.refused(.selectionUnreadable))))
+        XCTAssertEqual(log.beeps, 1)
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertEqual(rig.pasteboard.box, "hello akuo world")
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 
-    @TextActor func testAKnownOneLineSelectionIsStillTypedOver() async {
-        let selected = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: false,
-                                 selRangeSettable: false, selection: "akuo")
-        let rig = rig(box: "", focus: selected)
+    /// P3-40 QA: a copied selection over the box cap (16,384 units) beeps, pastes nothing, and the clipboard goes back.
+    @TextActor func testACopiedSelectionOverTheCapBeepsAndPastesNothing() async {
+        let big = String(repeating: "akuo ", count: ReplacementPlanner.maxFieldReadChars / 5 + 1)
+        let rig = rig(box: big, focus: selected(big))
+        rig.pasteboard.userSelection = big
+        let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(log.beeps, 1, "\(out)")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    /// An app that can't copy: only ⌘C was posted, the selection is still there: the P2-21 type-over.
+    @TextActor func testASelectionTheAppWontCopyIsTypedOver() async {
+        let rig = rig(box: "", focus: selected("akuo"))
+        rig.pasteboard.copyDelayNanos = nil
         let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .typeOverSelection, switched: true))
+        XCTAssertFalse(rig.poster.events.contains { $0.keyCode == ClipboardShortcut.selectAll.keyCode },
+                       "never ⌘A")
+    }
+
+    @TextActor func testWithTheClipboardOffASelectionIsStillTypedOver() async {
+        let rig = rig(box: "", focus: selected("akuo"))
+        let out = await rig.sut.handle(request(empty(), gen: 1, useClipboard: false), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .typeOverSelection, switched: true))
         XCTAssertTrue(rig.poster.events.isEmpty)
+    }
+
+    func testSameVisibleTextIgnoresOnlyInvisibleCharacters() {
+        XCTAssertTrue(ConvertController.sameVisibleText("a\nb c", "ab c"))
+        XCTAssertTrue(ConvertController.sameVisibleText("a\u{2029}b", "a b"))
+        XCTAssertTrue(ConvertController.sameVisibleText("a\u{A0}b\n", "ab"))
+        XCTAssertFalse(ConvertController.sameVisibleText("ab", "abc"))
+        XCTAssertFalse(ConvertController.sameVisibleText("ba", "ab"))
+        XCTAssertFalse(ConvertController.sameVisibleText(" \n", " "), "nothing visible: no proof")
     }
 }

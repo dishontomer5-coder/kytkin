@@ -18,4 +18,19 @@ final class AXFocusedElementProvider: FocusedElementProviding {
         AXUIElementSetMessagingTimeout(element, Float(timeout))
         return .success(AXUIElementTextElement(element))
     }
+
+    /// P3-41 QA: the focused application's pid (identity only, no attribute values read from it).
+    func focusedApplicationPID(timeout: Double) -> Int32? {
+        guard AXIsProcessTrusted() else { return nil }
+        let systemWide = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(systemWide, Float(timeout))
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(unsafeDowncast(value, to: AXUIElement.self), &pid) == .success, pid > 0 else {
+            return nil
+        }
+        return pid
+    }
 }

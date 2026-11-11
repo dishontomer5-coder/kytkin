@@ -40,7 +40,7 @@ import Foundation
     var readRangeEndsAtCaret: Bool { get }
 
     /// P2-59c (001 §12.3 X6): the element the last `focusInfo` read as safe (not secure, not composing), until
-    /// `endReplacement`. Identity only, for the undo record's same-element check; nil = unknown.
+    /// `endReplacement`. Identity only, for same-element checks (P3-37 clipboard, terminal anchor); nil = unknown.
     var focusedElement: (any FocusedElementIdentity)? { get }
 
     /// Drops the element, ranges and any text held for this replacement (privacy: nothing outlives it).
@@ -49,11 +49,27 @@ import Foundation
     /// P3-37: the focused element now (identity only; reads no text and starts no replacement), for the clipboard
     /// convert's focus re-check before each shortcut and the terminal buffer's same-window check. nil = unknown.
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)?
+
+    /// P3-41: a terminal's key step when AX can't vouch for the focus (Ghostty-based terminals such as cmux may name no
+    /// focused element, or a different one on every read, or answer the secure/marked-text reads with errors): Backspace
+    /// × `count`, then `new`, with the same event rules as `.backspaceAndType` (no line break, no control character, the
+    /// `ours` marker, no modifiers) but no AX check. The caller decides when that is allowed.
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome
+
+    /// P3-41 QA: the pid of the app AX says has focus now, nil = unknown. Identity only. Lets the terminal fallback
+    /// refuse when another app is in front even where AX names no focused element.
+    func focusedApplicationPID(timeout: Double) -> Int32?
 }
 
 extension TextReplacing {
-    /// P2-59c: a replacer that can't name its element never gets an undo record (the safe default).
+    /// P2-59c: a replacer that can't name its element: no clipboard convert, no terminal anchor (the safe default).
     var focusedElement: (any FocusedElementIdentity)? { nil }
+
+    /// P3-41: a replacer without a key poster posts nothing (the safe default).
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome { .unavailable }
+
+    /// P3-41 QA: unknown by default.
+    func focusedApplicationPID(timeout: Double) -> Int32? { nil }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }

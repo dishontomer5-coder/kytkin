@@ -299,7 +299,7 @@ final class KeyTapEngine: @unchecked Sendable {
         switch signal {
         case let .doubleShift(_, gen), let .wordEnded(_, gen):
             if processor.isReplacing, processor.activeGeneration == gen { commit.arm(gen: gen) }
-        case .wordBoundary, .bufferInvalidated, .undoCandidate, .undoTouched, .terminalBufferStarted:
+        case .wordBoundary, .bufferInvalidated, .undoCandidate, .terminalBufferStarted:
             break
         }
         sendSignal(signal)

@@ -90,7 +90,6 @@ final class AbortedKeepBufferTests: XCTestCase {
                 p.inputSourceChanged(to: hebrew, isOurs: true)
                 XCTAssertTrue(p.buffer.isEmpty, "\(how), \(String(describing: bufferAfter)): no stale kept buffer")
                 XCTAssertNil(p.bufferRendering)
-                XCTAssertNil(p.lastConvertGen)
                 XCTAssertEqual(p.inputSource, hebrew)
             }
         }
@@ -110,7 +109,6 @@ final class AbortedKeepBufferTests: XCTestCase {
             _ = p.finishReplacement(gen: gen, newRendering: hebrew, bufferAfter: nil, bufferRenderedIn: nil)
             XCTAssertTrue(p.buffer.isEmpty, "\(how)")
             XCTAssertNil(p.bufferRendering)
-            XCTAssertNil(p.lastConvertGen)
             XCTAssertEqual(p.inputSource, hebrew)
         }
     }
@@ -128,7 +126,6 @@ final class AbortedKeepBufferTests: XCTestCase {
             XCTAssertTrue(p.buffer.isEmpty, "\(how)")
             _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: [])
             XCTAssertTrue(p.buffer.isEmpty, "\(how)")
-            XCTAssertNil(p.lastConvertGen)
         }
     }
 
@@ -164,6 +161,5 @@ final class AbortedKeepBufferTests: XCTestCase {
         _ = p.finishReplacement(gen: gen2, newRendering: hebrew, bufferAfter: nil)
         p.inputSourceChanged(to: hebrew, isOurs: true)
         XCTAssertEqual(p.buffer.strokeCount, 2, "a finished convert's own switch keeps the re-rendered buffer")
-        XCTAssertEqual(p.lastConvertGen, gen2)
     }
 }

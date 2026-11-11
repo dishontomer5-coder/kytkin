@@ -3,6 +3,7 @@
 // the convert posted (`RecordingPoster`) each time the pasteboard is asked anything, and answers on the fake clock:
 // ⌘C copies its box after `copyDelayNanos` (nil = never), ⌘V pastes the pasteboard's text over the ⌘A selection (or at
 // the end) and counts a read of a transient write.
+// P3-40: `userSelection`, a part of the box the user selected: ⌘C without ⌘A copies it, ⌘V replaces it.
 
 import Foundation
 
@@ -36,6 +37,8 @@ import Foundation
     /// ⌘C copies this instead of the box (e.g. "" for an app that copies nothing).
     var copiesInstead: String?
     private(set) var selectedAll = false
+    /// P3-40: the user's selection in the box (its text, found in `box`), nil = a caret.
+    var userSelection: String?
     private(set) var pastes = 0
     private var copyDue: UInt64?
     private var pasteDue: UInt64?
@@ -115,19 +118,20 @@ import Foundation
                 switch e.keyCode {
                 case ClipboardShortcut.selectAll.keyCode: selectedAll = true
                 case ClipboardShortcut.copy.keyCode:
-                    if selectedAll, let d = copyDelayNanos { copyDue = clock.nowNanos + d }
+                    if selectedAll || userSelection != nil, let d = copyDelayNanos { copyDue = clock.nowNanos + d }
                 case ClipboardShortcut.paste.keyCode:
                     if let d = pasteDelayNanos { pasteDue = clock.nowNanos + d }
                 default: break
                 }
             } else if e.keyCode == KeyCode.rightArrow {
                 selectedAll = false
+                userSelection = nil
             }
         }
         let now = clock.nowNanos
         if let due = copyDue, now >= due {
             copyDue = nil
-            let copied = copiesInstead ?? box
+            let copied = copiesInstead ?? (selectedAll ? box : userSelection ?? box)
             items = [[PasteboardEntry(type: Self.plain, data: Data(copied.utf8))]]
             count += 1
         }
@@ -135,8 +139,15 @@ import Foundation
             pasteDue = nil
             let pasted = text(of: items) ?? ""
             if items.first?.contains(where: { $0.type == Self.transient }) == true { reads += 1 }
-            box = selectedAll ? pasted : box + pasted
+            if selectedAll {
+                box = pasted
+            } else if let sel = userSelection, let r = box.range(of: sel) {
+                box.replaceSubrange(r, with: pasted)   // P3-40: the paste replaces the selection
+            } else {
+                box += pasted
+            }
             selectedAll = false
+            userSelection = nil
             pastes += 1
         }
     }

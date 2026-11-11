@@ -1,8 +1,9 @@
 // P3-35: ConvertController's whole-box convert (owner 2026-11-11, plan.md P3-35, 001 §12.3 X11), end to end over the
 // real executor on a FakeTextField: a mixed box (Hebrew correct + English wrong, before and after the caret), the empty
-// new line after Return, the caret kept, punctuation next to Hebrew kept, a box over the 16,384-unit cap, an exact
-// undo (capitals and mixed text, which a per-character round trip would lose), the tolerant read-back, no key
-// fallback for a range past the caret, and the selection path unchanged. Fakes only.
+// new line after Return, the caret kept, punctuation next to Hebrew kept, a box over the 16,384-unit cap, the tolerant
+// read-back, no key fallback for a range past the caret, and the selection path unchanged. P3-40 (owner 2026-11-11):
+// a second double-Shift converts the whole box again to the other language (`1 2 1` → `2 2 2` → `1 1 1`), no undo;
+// these replace the P3-35 exact-undo tests. Fakes only.
 
 import XCTest
 
@@ -31,15 +32,13 @@ final class ConvertControllerBoxTests: XCTestCase {
         return (sut, poster)
     }
 
-    private func empty(untouched: UInt64? = nil, in source: InputSourceID = IDs.abc) -> WordSnapshot {
-        WordSnapshot(strokes: [], previousWords: [], renderedIn: source, isValid: false,
-                     untouchedSinceConvert: untouched)
+    private func empty(in source: InputSourceID = IDs.abc) -> WordSnapshot {
+        WordSnapshot(strokes: [], previousWords: [], renderedIn: source, isValid: false)
     }
 
-    private func buffer(_ current: String, untouched: UInt64? = nil) -> WordSnapshot {
+    private func buffer(_ current: String) -> WordSnapshot {
         let strokes = ConvertFixtures.strokes(current)
-        return WordSnapshot(strokes: strokes, previousWords: [], renderedIn: IDs.abc, isValid: true,
-                            untouchedSinceConvert: untouched)
+        return WordSnapshot(strokes: strokes, previousWords: [], renderedIn: IDs.abc, isValid: true)
     }
 
     private func request(_ snapshot: WordSnapshot, gen: UInt64, current: InputSourceID = IDs.abc) -> ConvertRequest {
@@ -140,40 +139,79 @@ final class ConvertControllerBoxTests: XCTestCase {
         let (sut, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(field.text, "akuo הי nv")
-        XCTAssertNil(sut.lastRun)
     }
 
-    // MARK: - Undo
+    // MARK: - P3-40 (b): a selection whose AXSelectedText lost its line breaks is never written without them
 
-    @TextActor func testUndoRestoresExactlyWhatAPerCharacterRoundTripWouldLose() async {
-        // Capitals (Shift letters convert to plain Hebrew) and correct Hebrew between the converted words.
-        let original = "Akuo שלום, VH.\nnhv"
-        let field = FakeTextField(original, selection: TextRange(location: 4, length: 0))
+    /// TextEdit/Mail path (AX write): AXSelectedText drops the break, and the app's range agrees with that length.
+    /// Before P3-40 the AX write replaced the real (longer) selection with converted text that had no line break.
+    @TextActor func testAnAXWriteIsRefusedWhenTheSelectedTextLostItsLineBreak() async {
+        let field = FakeTextField("x akuo\nvh y", selection: TextRange(location: 2, length: 7))
+        field.selectedTextDropsLineBreaks = true
+        field.reportedRange = TextRange(location: 2, length: 6)   // what a Chromium-like app reports for "akuovh"
         let (sut, poster) = real(field)
-        await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום שלום, היץ\nמיה")
-        XCTAssertEqual(field.selection, TextRange(location: 4, length: 0))
-
-        let back = await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew),
-                                    layouts: layouts)
-        XCTAssertEqual(back, .converted(to: IDs.abc, by: axWrite, switched: true))
-        XCTAssertTrue(field.text == original, "undone exactly, capitals and all")
-        XCTAssertEqual(field.selection, TextRange(location: 4, length: 0), "the caret where it was")
-        XCTAssertNil(sut.lastRun, "the replaced text is dropped with the record")
-        XCTAssertTrue(poster.events.isEmpty)
-        XCTAssertEqual(log.switches.last, .switchTo(IDs.abc, keepsBuffer: true))
+        let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertTrue(field.text == "x akuo\nvh y", "the line break is never lost")
+        XCTAssertTrue(poster.events.isEmpty, "not typed over either")
+        XCTAssertEqual(log.beeps, 1)
+        XCTAssertTrue(out.shouldBeepForTest)
     }
 
-    @TextActor func testWithoutTheRecordASecondDoubleShiftConvertsTheBoxAgain() async {
-        // Once the record is gone (P3-35 QA, owner: a key, click or focus change drops it; no timer) the next
-        // double-Shift is a plain whole-box convert from the letter at the caret (now Hebrew), which is why the undo
-        // record matters. ⌘Z stays available in the app.
-        let field = FakeTextField("akuo")
+    /// The one-line type-over path (a keys-only app with the clipboard off): the same selection is not typed over.
+    @TextActor func testATypeOverIsRefusedWhenTheSelectedTextLostItsLineBreak() async {
+        for reported in [TextRange(location: 2, length: 6), nil] as [TextRange?] {
+            let field = FakeTextField("x akuo\nvh y", selection: TextRange(location: 2, length: 7))
+            field.selectedTextDropsLineBreaks = true
+            field.reportedRange = reported
+            let (sut, poster) = real(field)
+            let r = ConvertRequest(snapshot: empty(), gen: 1, bundleID: "com.tinyspeck.slackmacgap", mode: .convert,
+                                   pair: ConvertFixtures.pair, currentSource: IDs.abc, switchAfterConvert: true)
+            await sut.handle(r, layouts: layouts)
+            XCTAssertTrue(field.text == "x akuo\nvh y", "\(String(describing: reported))")
+            XCTAssertTrue(poster.events.isEmpty, "never typed without the line break: \(String(describing: reported))")
+        }
+    }
+
+    @TextActor func testAMultiLineSelectionWithItsLineBreakStillConvertsThroughAX() async {
+        let field = FakeTextField("x akuo\nvh y", selection: TextRange(location: 2, length: 7))
+        let (sut, _) = real(field)
+        let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axWrite, switched: true))
+        XCTAssertEqual(field.text, "x שלום\nהי y")
+    }
+
+    // MARK: - P3-40: a second double-Shift converts again (no undo)
+
+    @TextActor func testASecondDoubleShiftConvertsTheWholeBoxToTheOtherLanguage() async {
+        // The owner's Slack/TextEdit test, word N = a word in language N: `1 2 1` → `2 2 2` → `1 1 1` → `2 2 2`.
+        let field = FakeTextField("akuo שלום vh")
+        let (sut, poster) = real(field)
+        let first = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(first, .converted(to: IDs.hebrew, by: axWrite, switched: true))
+        XCTAssertEqual(field.text, "שלום שלום הי")
+
+        let second = await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(second, .converted(to: IDs.abc, by: axWrite, switched: true))
+        XCTAssertEqual(field.text, "akuo akuo vh", "not the original `1 2 1`: the whole box in the other language")
+
+        await sut.handle(request(empty(), gen: 3), layouts: layouts)
+        XCTAssertEqual(field.text, "שלום שלום הי")
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: true), .switchTo(IDs.abc, keepsBuffer: true),
+                                      .switchTo(IDs.hebrew, keepsBuffer: true)])
+    }
+
+    @TextActor func testTheSecondConvertIsAFreshConvertCapitalsAndAll() async {
+        // A per-character convert doesn't round-trip capitals (`A` → `ש` → `a`); the original is not kept any more
+        // (P3-40), so ⌘Z in the app is the way back to it. The caret stays where the user had it each time.
+        let field = FakeTextField("Akuo שלום, VH.\nnhv", selection: TextRange(location: 4, length: 0))
         let (sut, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        sut.forgetUndoRecord()
-        await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
-        XCTAssertEqual(field.text, "akuo")
+        XCTAssertEqual(field.text, "שלום שלום, היץ\nמיה")
+        await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
+        // The comma after a Hebrew word converts with it (BoxConversion rule e: on Apple Hebrew `,` is the `'` key).
+        XCTAssertEqual(field.text, "akuo akuo' vh.\nnhv")
+        XCTAssertEqual(field.selection, TextRange(location: 4, length: 0))
     }
 
     @TextActor func testTheReadBackToleranceKeepsAXWorkingInAWebKitField() async {
@@ -184,9 +222,9 @@ final class ConvertControllerBoxTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axWrite, switched: true))
         XCTAssertEqual(field.text, "שלום הי")
         XCTAssertFalse(sut.capabilities.isAXWriteBroken(for: app))
-        // The undo recognises the written text despite the space swap (the fingerprint maps NBSP to a space).
-        await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
-        XCTAssertEqual(field.text, "akuo vh", "the original, with the field's own space")
+        // P3-40: the second double-Shift converts the box again (the field's own space stays a space).
+        await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
+        XCTAssertEqual(field.text, "akuo vh")
     }
 }
 

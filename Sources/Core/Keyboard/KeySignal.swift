@@ -13,9 +13,6 @@ enum KeySignal: Sendable, Equatable {
     case bufferInvalidated
     /// P4: Backspace right after a fix. Not emitted yet: undo records arrive with auto-fix in P4.
     case undoCandidate(gen: UInt64)
-    /// P3-35 QA (owner): the first key, click or tap reset after a finished convert. The convert's undo record (it holds
-    /// the replaced text) is dropped then, not after a timer. Ids only, no text; sent at most once per convert.
-    case undoTouched
     /// P3-37 (b): a terminal's word buffer just started (its first key). Main asks ConvertController to note the focused
     /// element, so the buffer is used after a click or an app switch only in that same element. A number, no text.
     case terminalBufferStarted(epoch: UInt64)

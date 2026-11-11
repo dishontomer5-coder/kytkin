@@ -40,7 +40,7 @@ import Foundation
     /// P3-35: the last read's range ends at the caret (a key fallback could delete exactly it).
     private(set) var readRangeEndsAtCaret = true
 
-    /// P2-59c: the element `focusInfo` read as safe, for the undo record's same-element check (identity only).
+    /// P2-59c: the element `focusInfo` read as safe, for same-element checks (identity only).
     var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element?.inner : nil }
 
     init(focusProvider: any FocusedElementProviding, poster: any KeyEventPosting) {
@@ -65,6 +65,11 @@ import Foundation
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? {
         guard case .success(let el) = focusProvider.focusedTextElement(timeout: timeout) else { return nil }
         return el
+    }
+
+    /// P3-41 QA: the focused application's pid, nil = unknown (identity only).
+    func focusedApplicationPID(timeout: Double) -> Int32? {
+        focusProvider.focusedApplicationPID(timeout: timeout)
     }
 
     /// A read that gives up on the whole focus read (timeout, no permission, element gone).
@@ -98,14 +103,18 @@ import Foundation
                 subroleUnreadable = e == .failed
             }
             // Secure first, and read nothing else from a password field.
-            if role == FocusInfo.secureTextFieldRole || subrole == FocusInfo.secureTextFieldRole
-                || subroleUnreadable {
+            let securelyNamed = role == FocusInfo.secureTextFieldRole || subrole == FocusInfo.secureTextFieldRole
+            if securelyNamed || subroleUnreadable {
+                // P3-41 QA: say whether only the failed read made it "secure" (a real subrole must never get keys).
                 return FocusInfo(role: role, isSecure: true, hasMarkedText: false, selTextSettable: false,
-                                 selRangeSettable: false, selection: nil)
+                                 selRangeSettable: false, selection: nil, fromFailedRead: !securelyNamed)
             }
-            if try isComposing(el) {
+            switch try composing(el) {
+            case .no: break
+            case let c:
+                // P3-41 QA: a real marked range (an IME composing) is never typed over, even by a terminal fallback.
                 return FocusInfo(role: role, isSecure: false, hasMarkedText: true, selTextSettable: false,
-                                 selRangeSettable: false, selection: nil)
+                                 selRangeSettable: false, selection: nil, fromFailedRead: c == .unknown)
             }
             let selection = try optional(el.string(.selectedText))
             let range = try currentSelectedRange(el)
@@ -127,18 +136,22 @@ import Foundation
 
     /// R5: Cocoa's marked range, or WebKit's marked text. A read that fails (not just "absent") counts as
     /// composing: an IME composition can't be ruled out.
-    private func isComposing(_ el: any AXTextElement) throws -> Bool {
+    /// P3-41 QA: `.yes` = AX reports marked text; `.unknown` = only a failed read says so (still composing for every
+    /// caller except a terminal's fallback, `FocusInfo.fromFailedRead`).
+    private enum Composing { case no, yes, unknown }
+
+    private func composing(_ el: any AXTextElement) throws -> Composing {
         switch el.range(.markedTextRange) {
-        case .success(let r): if r.length > 0 { return true }
+        case .success(let r): if r.length > 0 { return .yes }
         case .failure(let e):
             if e.abortsFocusRead { throw Abort() }
-            if e == .failed { return true }
+            if e == .failed { return .unknown }
         }
         switch el.string(.webKitMarkedText) {
-        case .success(let s): return !s.isEmpty
+        case .success(let s): return s.isEmpty ? .no : .yes
         case .failure(let e):
             if e.abortsFocusRead { throw Abort() }
-            return e == .failed
+            return e == .failed ? .unknown : .no
         }
     }
 
@@ -237,6 +250,8 @@ import Foundation
         guard target.length == old.utf16.count, case .success(old) = el.string(.selectedText) else {
             return .unavailable
         }
+        // P3-40 (b): a user's selection (no pending range): the field's own text there must agree with AXSelectedText.
+        if pending == nil, !fieldTextAgrees(el, old: old, at: target) { return .unavailable }
         guard case .success = el.setString(new, for: .selectedText) else {
             return StepOutcome(verdict: .unavailable, fieldUntouched: isIntact(el, old: old, at: target))
         }
@@ -299,9 +314,30 @@ import Foundation
     /// R5 §B: typing replaces the selection. Never types over a selection holding a control character (§12 T2).
     private func typeOverSelection(old: String, new: String) -> StepOutcome {
         guard !old.isEmpty, !ReplacementPlanner.containsUnsafeCharacter(old),
-              let events = KeyStrokeComposer.typing(new), focusIsUnchanged(), selectionStillSpans(old)
+              let events = KeyStrokeComposer.typing(new), focusIsUnchanged(), selectionStillSpans(old),
+              selectedFieldTextAgrees(old)
         else { return .unavailable }
         return post(events)
+    }
+
+    /// P3-40 (b): Chromium/Electron's `AXSelectedText` can leave out the line breaks between paragraphs (Slack: a
+    /// selection over two lines converted into one line). Where the field also answers `AXStringForRange` for the
+    /// selected range, that text must read as `old` (the read-back tolerance: same length, spaces and line-break
+    /// units interchangeable); a break AX's selected text dropped makes it longer, and the type-over or AX write is
+    /// refused. A range or a read the app won't give can't be checked (true: the P2-49 checks above still hold).
+    private func selectedFieldTextAgrees(_ old: String) -> Bool {
+        guard let el = element else { return false }
+        guard case .success(let r) = el.range(.selectedTextRange), r.location >= 0, r.length > 0 else { return true }
+        return fieldTextAgrees(el, old: old, at: r)
+    }
+
+    private func fieldTextAgrees(_ el: any AXTextElement, old: String, at r: TextRange) -> Bool {
+        switch el.string(in: r) {
+        // P3-41 QA (P3-40 (b)): an empty answer for a non-empty range is a non-answer (some apps give "" for ranges they
+        // don't support), not a disagreement: no false refusal in such an app.
+        case .success(let s): return s.isEmpty || Self.readsBackAs(s, old)
+        case .failure(let e): return !e.abortsFocusRead
+        }
     }
 
     /// P2-49 item 2: re-read the selected range right before typing over it. If it became a caret (an earlier
@@ -349,6 +385,13 @@ import Foundation
         if !old.isEmpty && old.count != count { return .unavailable }
         guard let deletes = KeyStrokeComposer.backspaces(count),
               let typing = KeyStrokeComposer.typing(new), focusIsUnchanged() else { return .unavailable }
+        return post(deletes + typing)
+    }
+
+    /// P3-41: see `TextReplacing.postTerminalKeys`. Composed and checked exactly like `backspaceAndType`'s events.
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome {
+        guard count > 0, let deletes = KeyStrokeComposer.backspaces(count), let typing = KeyStrokeComposer.typing(new)
+        else { return .unavailable }
         return post(deletes + typing)
     }
 

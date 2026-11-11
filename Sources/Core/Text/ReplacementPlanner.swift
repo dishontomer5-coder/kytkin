@@ -112,6 +112,15 @@ enum ReplacementPlanner {
         return writesThroughAX(bundleID: bundleID, hint: hint, caps: caps, focus: f) && f.canReadBeforeCaret
     }
 
+    /// P3-40 (b): a selection is replaced through AX here (the `.convertSelection` plan's AX write). False = it would be
+    /// typed over from AX's selected text, which in Chromium/Electron may have lost its line breaks: the clipboard
+    /// copies it instead (ConvertController).
+    static func writesSelection(bundleID: String, caps: ReplacementCapabilities, focus f: FocusInfo) -> Bool {
+        let hint = caps.method(for: bundleID)
+        guard hint != .disabled else { return false }
+        return writesThroughAX(bundleID: bundleID, hint: hint, caps: caps, focus: f)
+    }
+
     /// P2-36 (001 §12 T2): true if the text holds a Cc (newline, tab, CR, ESC…), Zl (U+2028) or Zp (U+2029)
     /// scalar, any of which could send a message or run a command if typed.
     static func containsUnsafeCharacter(_ text: String) -> Bool {

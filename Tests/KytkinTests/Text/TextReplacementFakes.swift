@@ -53,13 +53,16 @@ final class FakeTextField: AXTextElement {
     var stringForRangeExactUpTo: Int?
     /// P3-35: `AXNumberOfCharacters` answers this error instead (an app that won't say how long the field is).
     var numberOfCharactersError: AXAccessError?
+    /// P3-40: Chromium-like: `AXSelectedText` leaves out the line breaks inside the selection (Slack's contenteditable
+    /// joins paragraphs in it). `AXStringForRange` and the field itself keep them.
+    var selectedTextDropsLineBreaks = false
     /// P2-59: every range `AXStringForRange` was asked for.
     private(set) var stringRangesRead: [TextRange] = []
 
     private(set) var reads: [AXTextAttribute] = []
     private(set) var writes: [AXTextAttribute] = []
 
-    /// P2-59c: the owning process, and the identity the undo record compares (the same object = the same element).
+    /// P2-59c: the owning process, and the identity same-element checks compare (the same object = the same element).
     var processID: Int32? = 4242
     /// P2-49: the AX element this fake stands for. Two fakes with the same id are two copies of one element (live:
     /// `CFEqual` on two `AXUIElement`s); a new fake is a different element.
@@ -94,7 +97,11 @@ final class FakeTextField: AXTextElement {
             if let subroleResult { call(); reads.append(a); return subroleResult }
             return read(a) { subrole }
         case .value: return read(a) { text }
-        case .selectedText: return read(a) { String(decoding: units[selection.location..<selection.end], as: UTF16.self) }
+        case .selectedText:
+            return read(a) {
+                let s = String(decoding: units[selection.location..<selection.end], as: UTF16.self)
+                return selectedTextDropsLineBreaks ? s.filter { !$0.isNewline } : s   // P3-40
+            }
         case .webKitMarkedText:
             call()
             reads.append(a)

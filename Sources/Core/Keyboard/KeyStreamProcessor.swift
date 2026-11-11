@@ -27,8 +27,8 @@
 // double-Shift or auto-fix trigger starts nothing (passes, no signal, no hold), so two workers never post at once.
 // `reset` doesn't clear it: the worker is still running.
 // P3-37 (b) (owner 2026-11-11): in a terminal (main says so with every context change, `contextChanged(terminalPID:)`)
-// the buffer survives a click (the caret may move; accepted risk, double-Shift again undoes) and an app switch away
-// and back to the same terminal process: it is parked on the way out and restored on the way back. Snapshots of such a
+// the buffer survives a click (the caret may move; accepted risk, ⌘Z undoes; P3-40: double-Shift no longer does) and
+// an app switch away and back to the same terminal process: it is parked on the way out and restored on the way back. Snapshots of such a
 // buffer say `crossedFocus`, and ConvertController uses it only if the focused element is still the one the buffer
 // started in (`.terminalBufferStarted(epoch)` lets it note that element). Return, keypad Enter, Shift+Return, Tab, ⌃C,
 // Secure Input, a tap re-enable, a mode change (Pause) or another terminal process still end it. Shift+Return ends the
@@ -71,25 +71,27 @@ struct KeyStreamProcessor: Sendable {
     /// `bufferRendering ?? inputSource`. The next letter typed while it differs from `inputSource` first invalidates
     /// the buffer (that stroke is in another layout); Space and Backspace keep it.
     private(set) var bufferRendering: InputSourceID?
-    /// P2-59 (X6): the last convert generation finished (not aborted, no keyDown held behind it). Cleared by any
-    /// keyDown (user or replay), a click, a reset, a buffer invalidation and the start of the next replacement.
-    /// Snapshots carry it as `untouchedSinceConvert`.
-    private(set) var lastConvertGen: UInt64?
-    /// P3-35 QA (owner): a convert finished (aborted or not) and no user key, click or tap reset has come since, so
-    /// the convert controller may still hold an undo record. The next such event sends `.undoTouched` and clears it.
-    private(set) var undoMayBeHeld = false
+    // P3-40 (owner 2026-11-11): `lastConvertGen` (snapshots' `untouchedSinceConvert`) and `undoMayBeHeld` (the
+    // `.undoTouched` signal) are gone with the double-Shift undo: a second double-Shift is a fresh convert.
     /// P3-37 (b): the frontmost app is a terminal (this pid), as main last said (`contextChanged`).
     private(set) var terminalPID: Int32?
     /// P3-37 (b): the current buffer's number; grows when a terminal buffer starts after an empty one.
     private(set) var bufferEpoch: UInt64 = 0
     /// P3-37 (b): the current buffer was kept across a click or restored after an app switch.
     private(set) var crossedFocus = false
+    /// P3-41: the current terminal buffer was kept across a click (not only an app switch away and back).
+    private(set) var clickedSinceStart = false
+    /// P3-41 QA: a click came after the last user key. A click that brings a parked terminal back to the front (on
+    /// another of its windows) arrives while another app is frontmost, so it can't mark the buffer itself; the restore
+    /// counts it (`contextChanged`). A ⌘Tab back is a key, so it clears this.
+    private var pointerSinceKey = false
     /// P3-37 (b): a terminal's buffer, kept while another app is in front. At most one (the last terminal left).
     private struct ParkedBuffer: Sendable {
         let pid: Int32
         let buffer: WordBuffer
         let rendering: InputSourceID?
         let epoch: UInt64
+        let clicked: Bool   // P3-41
     }
     private var parked: ParkedBuffer?
     var hasParkedBuffer: Bool { parked != nil }
@@ -143,19 +145,6 @@ struct KeyStreamProcessor: Sendable {
     // MARK: - Per event (tap thread)
 
     mutating func handle(_ e: KeyEvent) -> (TapVerdict, KeySignal?) {
-        let (verdict, signal) = handleEvent(e)
-        // P3-35 QA (owner): the first user key, click or tap reset after a convert finished tells main to drop the
-        // undo record (it holds the replaced text): no timer any more. One Bool test per event; at most one signal per
-        // convert. If this event already signals (a word boundary, a buffer invalidation), main treats that signal as
-        // the touch too (AppController.keySignal).
-        if undoMayBeHeld, e.origin != .ours, e.kind == .keyDown || e.kind == .pointerDown || e.kind == .tapReset {
-            undoMayBeHeld = false
-            return (verdict, signal ?? .undoTouched)
-        }
-        return (verdict, signal)
-    }
-
-    private mutating func handleEvent(_ e: KeyEvent) -> (TapVerdict, KeySignal?) {
         // P2-12: marker check first (design.md). Our own posted text must never reach the buffer or detector,
         // or auto-fix could loop on itself (R4 §5).
         if e.origin == .ours { return (.pass, nil) }
@@ -170,12 +159,12 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, handleFlags(e))
 
         case .pointerDown:
-            lastConvertGen = nil // P2-59 (X6): the caret may have moved
+            pointerSinceKey = true   // P3-41 QA
             _ = detector.handle(.pointerDown)
             // P3-37 (b): a terminal keeps its buffer across a click (owner: clicking may move the cursor, accepted;
-            // double-Shift again undoes). A click during a replacement still aborts it, which forgets the buffer.
+            // ⌘Z undoes). A click during a replacement still aborts it, which forgets the buffer.
             if terminalPID != nil, case .idle = phase {
-                if !buffer.isEmpty { crossedFocus = true }
+                if !buffer.isEmpty { crossedFocus = true; clickedSinceStart = true }   // P3-41: a click
                 return (.pass, nil)
             }
             // R5: a click during a replacement finishes it: flush, and the buffer is stale.
@@ -184,8 +173,7 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, signal)
 
         case .keyDown, .keyUp:
-            // P2-59 (X6): any user or replayed key (held or not) touches the field after the last convert.
-            if e.kind == .keyDown { lastConvertGen = nil }
+            if e.kind == .keyDown { pointerSinceKey = false }   // P3-41 QA
             if holdsKeys { return hold(e) }
             guard e.kind == .keyDown else { return (.pass, nil) }
             _ = detector.handle(.otherKeyDown)
@@ -231,8 +219,7 @@ struct KeyStreamProcessor: Sendable {
     /// earlier words would let a Backspace make one of them "current" again, over text that is no longer there).
     /// P2-59 (001 §12.3 X5): `newRendering` keeps its meaning ("the input source is now this"; a kept buffer is in it).
     /// `bufferRenderedIn`: the kept buffer was re-rendered into this layout while the input source stayed the same
-    /// (convert with "switch after converting" off), so a second double-Shift converts it back. A finished convert
-    /// that wasn't aborted becomes `lastConvertGen` (X6).
+    /// (convert with "switch after converting" off), so a second double-Shift converts it to the other language.
     mutating func finishReplacement(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?,
                                     bufferRenderedIn: InputSourceID? = nil) -> [HeldEvent] {
         // P2-59c (X5): a re-rendered kept buffer is the whole buffer; new strokes for the current word contradict it.
@@ -268,16 +255,6 @@ struct KeyStreamProcessor: Sendable {
                 if KeyCode.endsBuffer(trigger.keyCode, deviceFlags: trigger.deviceFlags) { forgetBuffer() }
             }
         }
-        // P2-59 (X6): set last, after any buffer change above, so this finish's own bookkeeping doesn't clear it.
-        // QA (P2-59a): not when a held keyDown is about to be replayed: it types after the convert, so the field is
-        // already "touched". Its replay would clear it anyway, but a double-Shift handled before the replay comes back
-        // through the tap must not see this generation as untouched. ≤ 32 compares, on a finish only (not per key).
-        if r.kind == .convert, !r.aborted, !held.contains(where: { $0.event.kind == .keyDown }) {
-            lastConvertGen = gen
-        }
-        // P3-35 QA (owner): any convert may have left an undo record, even an aborted one or one with held keys
-        // (their replay, or the next key, sends `.undoTouched`).
-        if r.kind == .convert { undoMayBeHeld = true }
         return held
     }
 
@@ -306,7 +283,7 @@ struct KeyStreamProcessor: Sendable {
     mutating func contextChanged(terminalPID new: Int32?, deviceFlags: UInt64? = nil) {
         if let current = terminalPID, !buffer.isEmpty, case .idle = phase {
             parked = ParkedBuffer(pid: current, buffer: buffer, rendering: bufferRendering ?? inputSource,
-                                  epoch: bufferEpoch)
+                                  epoch: bufferEpoch, clicked: clickedSinceStart)
         }
         reset(.contextChange, deviceFlags: deviceFlags)
         terminalPID = new
@@ -317,6 +294,9 @@ struct KeyStreamProcessor: Sendable {
             bufferRendering = p.rendering == inputSource ? nil : p.rendering
             bufferEpoch = p.epoch
             crossedFocus = true
+            // P3-41 (+ QA): a click before this restore (the one that brought the terminal back, maybe in another
+            // window) counts as a click since the buffer's first key.
+            clickedSinceStart = p.clicked || pointerSinceKey
         }
         parked = nil
     }
@@ -410,8 +390,6 @@ struct KeyStreamProcessor: Sendable {
         generation &+= 1
         let gen = generation
         let snapshot = currentSnapshot()
-        // P2-59 (X6): the snapshot carries the last convert; this new generation replaces it (set again at its finish).
-        lastConvertGen = nil
         // §3c: the second release passes; from now on user keys are held. Listen-only can't hold, so main
         // only toggles the language (§3c step 10).
         if mode == .active { startReplacement(.convert, gen: gen) }
@@ -509,18 +487,18 @@ struct KeyStreamProcessor: Sendable {
         return .bufferInvalidated
     }
 
-    /// P2-59: every buffer invalidation also forgets the kept rendering and the last convert (X5/X6).
+    /// P2-59: every buffer invalidation also forgets the kept rendering (X5).
     private mutating func forgetBuffer() {
         buffer.invalidate()
         bufferRendering = nil
-        lastConvertGen = nil
         crossedFocus = false   // P3-37
+        clickedSinceStart = false   // P3-41
     }
 
-    /// P2-59 (X5/X6): the buffer as a worker sees it. Allocates: call it only on a trigger.
+    /// P2-59 (X5): the buffer as a worker sees it. Allocates: call it only on a trigger.
     private func currentSnapshot() -> WordSnapshot {
-        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, untouchedSinceConvert: lastConvertGen,
-                        epoch: bufferEpoch, crossedFocus: crossedFocus)
+        buffer.snapshot(renderedIn: bufferRendering ?? inputSource, epoch: bufferEpoch, crossedFocus: crossedFocus,
+                        clickedSinceStart: clickedSinceStart)
     }
 
     /// A Shift already down at reset joins the detector as held and spoiled, so it can't start a tap,

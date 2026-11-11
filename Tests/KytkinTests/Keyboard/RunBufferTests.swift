@@ -1,6 +1,7 @@
 // P2-59a (001 §12.3 X3/X5/X6, X8 "Processor / buffer"): Return, keypad Enter, Tab and Option-Space end the buffer;
-// snapshot `gaps` / `hasRun` / `untouchedSinceConvert`; the kept re-rendered buffer (`bufferRenderedIn`) for the
-// double-Shift undo. Pure value tests with a fake clock; nothing is installed or posted.
+// snapshot `gaps` / `hasRun`; the kept re-rendered buffer (`bufferRenderedIn`) for the second double-Shift (P3-40: a
+// fresh convert to the other language, no longer an undo). P3-40: the `untouchedSinceConvert` / `lastConvertGen`
+// tests are gone with that state (the undo's "nothing touched the field" check); `NoUndoSignalTests` covers the rest. Pure value tests with a fake clock; nothing is installed or posted.
 // P3-33: no word limit; the buffer holds ≤ 512 keys since the last Return/Enter, Tab, ⌥Space, click or focus change.
 
 import XCTest
@@ -135,7 +136,6 @@ final class RunBufferTests: XCTestCase {
         XCTAssertEqual(snap.strokes, [st(d)])
         XCTAssertTrue(snap.hasRun)
         XCTAssertTrue(snap.isValid)
-        XCTAssertNil(snap.untouchedSinceConvert)
     }
 
     func testTrailingSpacesAreTheLastGap() {
@@ -228,7 +228,6 @@ final class RunBufferTests: XCTestCase {
     func testFixtureInitDefaultsToOneSpacePerGap() {
         let snap = WordSnapshot(strokes: [st(a)], previousWords: [[st(s)], [st(d)]], renderedIn: nil, isValid: true)
         XCTAssertEqual(snap.gaps, [1, 1])
-        XCTAssertNil(snap.untouchedSinceConvert)
     }
 
     func testDoubleShiftSnapshotCarriesGaps() {
@@ -387,37 +386,15 @@ final class RunBufferTests: XCTestCase {
         XCTAssertEqual(p.bufferRendering, hebrew)
     }
 
-    // MARK: - untouchedSinceConvert
-
-    private func convertedOnce(_ p: inout KeyStreamProcessor) -> UInt64? {
-        type(&p, [a, KeyCode.space, s])
-        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return nil }
-        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
-        return gen
-    }
-
-    func testFinishedConvertIsCarriedByTheNextSnapshot() {
-        var p = processor()
-        guard let (first, gen1) = doubleShift(&p, at: 500) else { return }
-        XCTAssertNil(first.untouchedSinceConvert)
-        _ = p.finishReplacement(gen: gen1, newRendering: nil, bufferAfter: nil)
-        XCTAssertEqual(p.lastConvertGen, gen1)
-        guard let (second, gen2) = doubleShift(&p, at: 1_500) else { return }
-        XCTAssertEqual(second.untouchedSinceConvert, gen1)
-        XCTAssertNil(p.lastConvertGen, "a new replacement replaces it until its own finish")
-        _ = p.finishReplacement(gen: gen2, newRendering: nil, bufferAfter: [])
-        XCTAssertEqual(p.lastConvertGen, gen2, "even when the finish forgets the buffer")
-        guard let (third, _) = doubleShift(&p, at: 2_500) else { return }
-        XCTAssertEqual(third.untouchedSinceConvert, gen2)
-    }
+    // MARK: - After a convert
 
     /// QA (P2-59c deviation): after an AX run that differs from the buffer, ConvertController finishes with
     /// `bufferAfter: []` and switches with `keepsBuffer: true` (`isOurs`). The finish and the change notification
     /// reach the tap thread in either order; both orders must end in the same state: buffer forgotten, no kept
-    /// rendering, the new source, and the convert still "untouched" for the X6 undo.
+    /// rendering, the new source. (P3-40: no longer "still untouched for the undo".)
     func testAXRunFinishAndOurSwitchEndTheSameInEitherOrder() {
-        func state(_ p: KeyStreamProcessor) -> (Bool, InputSourceID?, InputSourceID?, UInt64?) {
-            (p.buffer.isEmpty, p.bufferRendering, p.inputSource, p.lastConvertGen)
+        func state(_ p: KeyStreamProcessor) -> (Bool, InputSourceID?, InputSourceID?) {
+            (p.buffer.isEmpty, p.bufferRendering, p.inputSource)
         }
         var finishFirst = processor()
         type(&finishFirst, [a, KeyCode.space, s])
@@ -437,77 +414,13 @@ final class RunBufferTests: XCTestCase {
         XCTAssertNil(y.1)
         XCTAssertEqual(x.2, hebrew)
         XCTAssertEqual(y.2, hebrew)
-        XCTAssertEqual(x.3, g1)
-        XCTAssertEqual(y.3, g2, "the switch arriving first doesn't abort the generation (no reset)")
+        XCTAssertFalse(switchFirst.keepBufferRevoked, "the switch arriving first doesn't abort the generation")
         guard let (snap, _) = doubleShift(&switchFirst, at: 1_500) else { return }
         XCTAssertFalse(snap.hasRun)
-        XCTAssertEqual(snap.untouchedSinceConvert, g2)
         XCTAssertEqual(snap.renderedIn, hebrew)
     }
 
-    func testAnyKeyDownClearsUntouchedSinceConvert() {
-        let keys: [KeyEvent] = [F.key(d), F.key(d, origin: .replay), F.key(KeyCode.space), F.key(KeyCode.delete),
-                                F.key(KeyCode.escape), F.key(KeyCode.leftArrow), F.key(d, command: true),
-                                F.key(d, autoRepeat: true)]
-        for key in keys {
-            var p = processor()
-            guard convertedOnce(&p) != nil else { return }
-            _ = p.handle(key)
-            XCTAssertNil(p.lastConvertGen, "\(key)")
-            guard let (snap, _) = doubleShift(&p, at: 3_000) else { return }
-            XCTAssertNil(snap.untouchedSinceConvert, "\(key)")
-        }
-    }
-
-    func testOursKeyUpAndFlagsKeepUntouchedSinceConvert() {
-        var p = processor()
-        guard let gen = convertedOnce(&p) else { return }
-        _ = p.handle(F.key(d, origin: .ours))     // the convert's own late posts
-        _ = p.handle(F.keyUp(s))
-        _ = p.handle(F.flags(56, F.left, at: 1_800))
-        _ = p.handle(F.flags(56, 0, at: 1_850))
-        p.inputSourceChanged(to: hebrew, isOurs: true)  // our after-convert switch
-        XCTAssertEqual(p.lastConvertGen, gen)
-        guard let (snap, _) = doubleShift(&p, at: 3_000) else { return }
-        XCTAssertEqual(snap.untouchedSinceConvert, gen)
-    }
-
-    func testHeldKeyDownClearsUntouchedSinceConvert() {
-        var p = processor()
-        guard convertedOnce(&p) != nil else { return }
-        guard let (snap, _) = doubleShift(&p, at: 3_000) else { return }
-        XCTAssertNotNil(snap.untouchedSinceConvert)
-        XCTAssertEqual(p.handle(F.key(d)).0, .hold)
-        XCTAssertNil(p.lastConvertGen)
-    }
-
-    func testReplayedKeysAfterTheFinishClearIt() {
-        var p = processor()
-        type(&p, [a])
-        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
-        XCTAssertEqual(p.handle(F.key(d)).0, .hold)
-        let held = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
-        // QA (P2-59a): a held keyDown types after the convert, so the finish never marks it untouched, even before
-        // the replay comes back through the tap (a double-Shift handled in between must not see it).
-        XCTAssertNil(p.lastConvertGen, "a keyDown held behind the convert")
-        guard let (snap, _) = doubleShift(&p, at: 2_000) else { return }
-        XCTAssertNil(snap.untouchedSinceConvert)
-        for h in held { _ = p.handle(KeyEvent(kind: h.event.kind, keyCode: h.event.keyCode, origin: .replay)) }
-        XCTAssertNil(p.lastConvertGen, "the replayed key typed after the convert")
-    }
-
     // MARK: - QA (P2-59a) additions
-
-    func testOnlyKeyUpsHeldStillSetIt() {
-        var p = processor()
-        type(&p, [a])
-        _ = p.handle(F.key(d))  // down before the convert, released during it
-        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
-        XCTAssertEqual(p.handle(F.keyUp(d)).0, .hold)
-        let held = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
-        XCTAssertEqual(held.count, 1)
-        XCTAssertEqual(p.lastConvertGen, gen, "a keyUp types nothing")
-    }
 
     func testOptionAndShiftLayerLettersInvalidateAKeptBufferInAnotherLayout() {
         for flags in [KeyEvent.optionMask, KeyEvent.shiftMask, KeyEvent.optionMask | KeyEvent.shiftMask] {
@@ -531,7 +444,6 @@ final class RunBufferTests: XCTestCase {
         _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil, bufferRenderedIn: hebrew)
         XCTAssertEqual(p.handle(F.key(KeyCode.delete, flags: KeyEvent.optionMask)).1, .bufferInvalidated)
         XCTAssertNil(p.bufferRendering)
-        XCTAssertNil(p.lastConvertGen)
         XCTAssertTrue(p.buffer.isEmpty)
     }
 
@@ -566,7 +478,6 @@ final class RunBufferTests: XCTestCase {
         c.autoFixEnabled.toggle()
         p.updateConfig(c)
         XCTAssertEqual(p.bufferRendering, hebrew, "a settings change doesn't touch the field")
-        XCTAssertEqual(p.lastConvertGen, gen)
     }
 
     func testAutoFixSnapshotUsesTheKeptRendering() {
@@ -578,55 +489,6 @@ final class RunBufferTests: XCTestCase {
             return XCTFail("Space after a word starts an auto-fix")
         }
         XCTAssertEqual(snap.renderedIn, hebrew, "P4 sees the word as it shows, not as the input source would type it")
-        XCTAssertNil(snap.untouchedSinceConvert, "the trigger is a keyDown")
     }
 
-    func testClickResetAndForeignSwitchClearIt() {
-        let clears: [(inout KeyStreamProcessor) -> Void] = [
-            { _ = $0.handle(F.pointer(at: 2_000)) },
-            { $0.reset(.contextChange) },
-            { _ = $0.handle(KeyEvent(kind: .tapReset)) },
-            { $0.inputSourceChanged(to: InputSourceID("x"), isOurs: false) },
-            { $0.setMode(.listenOnly) },
-        ]
-        for (i, clear) in clears.enumerated() {
-            var p = processor()
-            guard convertedOnce(&p) != nil else { return }
-            clear(&p)
-            XCTAssertNil(p.lastConvertGen, "case \(i)")
-        }
-    }
-
-    func testNotSetForAnAbortedOrFlushedGeneration() {
-        var p = processor()
-        type(&p, [a])
-        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
-        p.reset(.contextChange)  // aborts
-        _ = p.pollFlush()
-        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
-        XCTAssertNil(p.lastConvertGen, "aborted")
-
-        let clock = FakeClock()
-        var q = processor(clock)
-        guard let (_, gen2) = doubleShift(&q, at: 1_000) else { return }
-        clock.advance(byMilliseconds: 500)
-        XCTAssertNotNil(q.pollFlush(), "the deadline flushed")
-        _ = q.finishReplacement(gen: gen2, newRendering: nil, bufferAfter: nil)
-        XCTAssertNil(q.lastConvertGen, "a late finish for a flushed generation")
-    }
-
-    func testAutoFixFinishDoesNotSetIt() {
-        var p = processor(autoFix: true)
-        type(&p, [a])
-        _ = p.handle(F.key(KeyCode.space))
-        _ = p.finishReplacement(gen: 1, newRendering: hebrew, bufferAfter: [st(a)])
-        XCTAssertNil(p.lastConvertGen)
-    }
-
-    func testListenOnlyNeverSetsIt() {
-        var p = processor(mode: .listenOnly)
-        guard let (_, gen) = doubleShift(&p, at: 1_000) else { return }
-        _ = p.finishReplacement(gen: gen, newRendering: nil, bufferAfter: nil)
-        XCTAssertNil(p.lastConvertGen, "no replacement ran, so the finish is stale")
-    }
 }

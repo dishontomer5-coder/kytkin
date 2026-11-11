@@ -49,25 +49,8 @@ final class ConvertDispatcherTests: XCTestCase {
                                      .finish(gen: 1, newRendering: nil, bufferAfter: nil)])
     }
 
-    /// P3-35 QA (owner): `forgetUndo` hops only when a convert ran since the last drop (it is called on every Space).
-    func testForgetUndoHopsOnlyAfterAConvert() async {
-        sut.forgetUndo()
-        XCTAssertNil(sut.lastTask, "no convert yet: nothing to drop, no hop")
-        sut.convert(request(gen: 1, mode: .convert))
-        XCTAssertTrue(sut.undoMayBeHeld)
-        let convertTask = sut.lastTask
-        sut.forgetUndo()
-        XCTAssertFalse(sut.undoMayBeHeld)
-        XCTAssertNotNil(sut.lastTask)
-        XCTAssertFalse(sut.lastTask == convertTask, "queued after the convert")
-        let dropTask = sut.lastTask
-        sut.forgetUndo()
-        XCTAssertTrue(sut.lastTask == dropTask, "already dropped: no second hop")
-        await drain()
-        let controller = sut.controller
-        let hasRecord = await Task { @TextActor in controller.lastRun != nil }.value
-        XCTAssertFalse(hasRecord)
-    }
+    // P3-40: `testForgetUndoHopsOnlyAfterAConvert` (P3-35 QA) is gone with `forgetUndo`: the controller keeps no undo
+    // record, so there is nothing to drop.
 
     func testRequestsReachTheControllerInOrder() async {
         for gen in UInt64(1)...20 { sut.convert(request(gen: gen, mode: .toggleOnly)) }

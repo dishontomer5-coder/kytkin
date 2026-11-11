@@ -18,8 +18,7 @@
 //   input-source change → SwitchController (learner / fights / re-assert), KeyWatcher `.inputSourceChanged`
 //                         (P2-52 item 7: `isOurs: true`, "keep the buffer", only for our own after-convert switch
 //                         that re-rendered the buffer; rule, menu and toggle switches reset it like any change.
-//                         P2-59c: also after an AX run convert, whose finish forgets the buffer itself, so the X6
-//                         `untouchedSinceConvert` survives the switch)
+//                         P2-59c: also after an AX run convert, whose finish forgets the buffer itself)
 //   permission change   → FeatureAvailability + TapModePolicy (retry only on a real change, §12 W7)
 //                         P2-52 item 2: plus one retry on the next app activation if the run's first start came back
 //                         below the desired mode (a timeout at launch); TapModePolicy caps it at one per run
@@ -187,7 +186,6 @@ import Observation
         if !Self.keepsWordBuffer(change) {
             // P3-37 (b): a reset that parks a terminal's buffer on the way out and restores it on the way back.
             keyWatcher.perform(.contextChanged(terminalPID: terminalPID(of: c)))
-            convert.forgetUndo()              // P3-35 QA (owner): another app, window or field
         }
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
         retryTapAfterLaunchTimeout()          // P2-52 item 2: at most once per run
@@ -266,7 +264,6 @@ import Observation
 
     func keyWatcherStatusDidChange(_ status: KeyWatcherStatus) {
         keyWatcherStatus = status
-        if status.secureInputOn { convert.forgetUndo() }   // P3-35 QA (owner)
         policy.statusReported(mode: status.health.mode)
         recompute(grantsChanged: false)
     }
@@ -274,13 +271,11 @@ import Observation
     func keySignal(_ signal: KeySignal) {
         switch signal {
         case .wordBoundary:
-            convert.forgetUndo()              // P3-35 QA (owner): a key after a convert (cheap unless one ran)
             healStaleOwnWindow()              // P2-55 QA
             switching.wordBoundary()
-        case .bufferInvalidated, .undoTouched:
-            convert.forgetUndo()              // P3-35 QA (owner): a key or click after a convert drops its undo
+        case .bufferInvalidated:
+            break                             // P3-40: no undo record to drop any more (was P3-35 QA `forgetUndo`)
         case let .terminalBufferStarted(epoch):
-            convert.forgetUndo()              // a key, like any other
             convert.anchorTerminalBuffer(epoch: epoch)   // P3-37 (b)
         case let .doubleShift(snapshot, gen):
             doubleShiftCount += 1
@@ -314,7 +309,6 @@ import Observation
         cancelLooks()
         switching.kytkinDidBecomeActive(isFrontmost: true)
         keyWatcher.perform(.reset(.contextChange))
-        convert.forgetUndo()                  // P3-35 QA (owner)
         afterEvent()
     }
 
@@ -328,7 +322,6 @@ import Observation
             return
         }
         keyWatcher.perform(.reset(.contextChange))
-        convert.forgetUndo()                  // P3-35 QA (owner)
         keyWatcher.checkSecureInputNow()      // P2-45: like any other app change
         if known == nil {
             resignLookPending = true
@@ -452,7 +445,6 @@ import Observation
         // browser's dropped site never reaches an unpaused SwitchController.
         if isStarted, !on, switching.paused { updateSitePolicy(availabilityFor(paused: false)) }
         switching.setPaused(on)
-        if on { convert.forgetUndo() }        // P3-35 QA (owner)
         recompute(grantsChanged: false)   // Pause turns the tap off; resume turns it back on
         onDisplayChange?()
     }
@@ -517,7 +509,8 @@ import Observation
                                        useClipboard: prefs.convert.useClipboardInUnreadableApps
                                            && !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
                                                                                        host: c.host),
-                                       inAddressBar: c.pageState == .editingAddress))
+                                       inAddressBar: c.pageState == .editingAddress,
+                                       processID: c.pid))   // P3-41
     }
 
     /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.
