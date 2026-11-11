@@ -152,6 +152,16 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
 
     private(set) var calls: [Call] = []
     var startAnswer: TapMode?
+    /// P3-37: the word-buffer resets for a context change: `.reset(.contextChange)` (Kytkin's own window) or
+    /// `.contextChanged(terminalPID:)` (another app, window or field).
+    var contextResets: [Call] {
+        calls.filter {
+            switch $0 {
+            case .perform(.reset(.contextChange)), .perform(.contextChanged): true
+            default: false
+            }
+        }
+    }
 
     func start(mode: TapMode) -> TapMode {
         calls.append(.start(mode))
@@ -192,6 +202,9 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
     /// P3-35 QA (owner): how often AppController asked to drop the undo record.
     private(set) var forgetUndoCount = 0
     func forgetUndo() { forgetUndoCount += 1 }
+    /// P3-37 (b): the terminal buffers AppController asked to anchor.
+    private(set) var anchors: [UInt64] = []
+    func anchorTerminalBuffer(epoch: UInt64) { anchors.append(epoch) }
 }
 
 @MainActor func makeStore(_ prefs: Preferences = Preferences(), clock: any Clock) -> PreferencesStore {

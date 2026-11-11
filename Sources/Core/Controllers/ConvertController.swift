@@ -50,6 +50,22 @@
 // double-Shift. P3-35 QA (owner): no age limit; `forgetUndoRecord` drops it (and its text) on the first key or click
 // after the convert, a focus/app change, Pause or Secure Input.
 //
+// P3-37 (owner 2026-11-11, 001 §12.3 X12):
+//   (a) Nothing remembered (empty buffer) and nothing written → double-Shift just switches the language, whatever the
+//       reason (P2-54(a)): a refused plan (a focus read that looks secure or composing, as Chromium/Electron fields
+//       can after a click or an app switch; no method), or an unreadable app's chain that wrote nothing. It used to
+//       beep and not switch for every reason but "focus unknown" and "read found nothing".
+//   (b) Terminals: a buffer kept across a click or an app switch (`WordSnapshot.crossedFocus`) is used only while the
+//       focused element is the one it started in (`anchorTerminalBuffer`); otherwise it is forgotten and double-Shift
+//       just switches. Only the current line is ever converted (the buffer ends at every Return, Shift+Return too).
+//   (c) The clipboard convert (`ClipboardConvert`) in apps whose text box can't be read through AX and that are not
+//       terminals, not secure, not composing, not "Keys only" by the user, with the setting on and a pair whose ⌘A/⌘C/⌘V
+//       keys are safe: ⌘A ⌘C, convert the box with `BoxConversion` (direction: the remembered buffer's language, else
+//       the box's last letter, as if the caret were at its end), paste it with ⌘V, put the clipboard back after the
+//       finish. A known selection that can't be typed over (a line break) is pasted over. Empty box / no copy →
+//       the remembered buffer by keys, else just switch. Undo: double-Shift again right away pastes the original back
+//       (`ClipUndo`, held until the next key, click or focus change, like P3-35's).
+//
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns). P3-35: the
 // `LastRun` record holds the replaced text in memory, for the undo only (until the next key, click or focus change,
 // then dropped; never stored or logged); the outcome holds steps only. Nothing here logs.
@@ -94,13 +110,48 @@ import Foundation
         let to: PairSide
     }
 
+    /// P3-37 (c): the last clipboard convert of a whole box, for the undo (double-Shift again right away). Ids, a
+    /// fingerprint of what was pasted, and the box it replaced (`original`, the only text; in memory until the next key,
+    /// click or focus change; never stored or logged).
+    struct ClipUndo {
+        let gen: UInt64
+        let bundleID: String
+        let processID: Int32
+        let fingerprint: [UInt8]
+        let original: String
+        /// The side the pasted text is on (the convert's target), and the side the original is on.
+        let from: PairSide
+        let to: PairSide
+    }
+
+    /// P3-37 (c): one clipboard convert, decided synchronously in `decide` and run (with its bounded waits) in `run`.
+    private struct ClipJob {
+        let source: ClipboardConvert.Source
+        /// The focused element at the start: every shortcut goes only while it still has focus.
+        let element: any FocusedElementIdentity
+        /// The remembered buffer's side (the box's direction), nil = the box's last letter.
+        let direction: PairSide?
+        let undo: ClipUndo?
+    }
+
     private let keyWatcher: any KeyWatching
     private let clock: any Clock
     private let beep: @Sendable () -> Void
     private let makeReplacer: @TextActor @Sendable () -> any TextReplacing
     private let switchLanguage: SwitchLanguage
+    /// P3-37 (c): the clipboard convert's seams (live: NSPasteboard + CGEvent); nil = never use the clipboard.
+    private let makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)?
 
     private var replacer: (any TextReplacing)?
+    private var clipboard: ClipboardConvert?
+    /// P3-37 (c): the undo record of the last clipboard convert, for the next double-Shift only.
+    private(set) var lastClip: ClipUndo?
+    /// P3-37 (c): the user's clipboard, to put back after this request's finish (bounded).
+    private var pendingRestore: ClipboardConvert.PendingRestore?
+    /// P3-37 (b): the focused element a terminal's buffer started in.
+    private var terminalAnchor: (epoch: UInt64, element: any FocusedElementIdentity)?
+    /// P3-37: the generation whose B3 claim this controller holds (the clipboard and a key fallback share one claim).
+    private var claimedGen: UInt64?
     /// Session verdicts + the user's per-app overrides (§12 T5). Never persisted (§12 T6).
     private(set) var capabilities: ReplacementCapabilities
     private var appliedOverrides: [String: MethodHint] = [:]
@@ -116,20 +167,32 @@ import Foundation
                      capabilities: ReplacementCapabilities = ReplacementCapabilities(),
                      beep: @escaping @Sendable () -> Void,
                      makeReplacer: @escaping @TextActor @Sendable () -> any TextReplacing,
-                     switchLanguage: @escaping SwitchLanguage) {
+                     switchLanguage: @escaping SwitchLanguage,
+                     makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)? = nil) {
         self.keyWatcher = keyWatcher
         self.clock = clock
         self.capabilities = capabilities
         self.beep = beep
         self.makeReplacer = makeReplacer
         self.switchLanguage = switchLanguage
+        self.makeClipboard = makeClipboard
     }
 
     // MARK: - Entry points
 
     /// Handles one double-Shift. Always ends with exactly one `finishReplacement(gen: request.gen, …)`.
+    /// P3-37 (c): after that finish (so held keys replay at once), the user's clipboard is put back (bounded wait).
     @discardableResult
     func handle(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
+        let outcome = await handleAndFinish(request, layouts: layouts)
+        if let pending = pendingRestore {
+            pendingRestore = nil
+            await clipboard?.finish(pending)
+        }
+        return outcome
+    }
+
+    private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         var finish = Finish()
         defer {
             // P2-59c (X5): a kept, re-rendered buffer is the whole buffer, never new strokes for the current word.
@@ -178,22 +241,42 @@ import Foundation
         /// P2-54(a): focus unknown and nothing remembered.
         case fieldUnreadable
         case failed(ConvertOutcome.NoopReason, beeps: Bool, textMayHaveChanged: Bool)
+        /// P3-37 (c): run the clipboard convert (it waits, so it runs in `run`, not in `decide`).
+        case clipboard(ClipJob)
     }
 
-    private func run(_ r: ConvertRequest, layouts: LayoutSnapshot?, finish: inout Finish) async throws
+    private func run(_ request: ConvertRequest, layouts: LayoutSnapshot?, finish: inout Finish) async throws
         -> ConvertOutcome {
         try Task.checkCancellation()
+        claimedGen = nil
         // X6: a record serves only the very next double-Shift; this one takes it out whatever it does.
         let record = lastRun
         lastRun = nil
+        let clip = lastClip   // P3-37 (c): the same for the clipboard undo
+        lastClip = nil
+        var r = request
         if r.mode == .toggleOnly { return await toggle(r, because: .toggleMode) }
+        // P3-37 (b): a terminal buffer kept across a click or an app switch, in another window / tab / split now (or
+        // focus unknown): forget it, so its keys never go to the wrong place.
+        if r.snapshot.crossedFocus, r.snapshot.hasRun, !terminalBufferStillFocused(r.snapshot) {
+            r = r.with(snapshot: r.snapshot.emptied())
+            finish.bufferAfter = []
+        }
         guard let layouts, layouts.pair == r.pair else {
             // P2-54(a): nothing remembered and nothing that could convert the field → just switch the language.
             if !r.snapshot.hasRun { return await toggle(r, because: .layoutsUnavailable) }
             beep()
             return .noop(.layoutsUnavailable)
         }
-        switch decide(r, layouts: layouts, record: record) {
+        let decision = decide(r, layouts: layouts, record: record, clip: clip, allowClipboard: r.useClipboard)
+        return await apply(decision, r, layouts: layouts, finish: &finish)
+    }
+
+    private func apply(_ decision: Decision, _ r: ConvertRequest, layouts: LayoutSnapshot,
+                       finish: inout Finish) async -> ConvertOutcome {
+        switch decision {
+        case .clipboard(let job):
+            return await runClipboard(job, r, layouts: layouts, finish: &finish)
         case .nothingToConvert:
             return await toggle(r, because: .nothingToConvert)
         case .fieldUnreadable:
@@ -236,12 +319,18 @@ import Foundation
 
     /// Everything that touches the field, synchronously (no suspension), so no other request can reuse the replacer
     /// in between, and nothing read through AX outlives this call.
-    private func decide(_ r: ConvertRequest, layouts: LayoutSnapshot, record: LastRun?) -> Decision {
+    private func decide(_ r: ConvertRequest, layouts: LayoutSnapshot, record: LastRun?, clip: ClipUndo?,
+                        allowClipboard: Bool) -> Decision {
         let replacer = currentReplacer()
         defer { replacer.endReplacement() }
         let focus = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout)
+        // The chain ends the replacement (dropping the element) when it returns: keep the identity for P3-37's job.
+        let element = replacer.focusedElement
 
-        if let selection = focus?.selection, !selection.isEmpty {
+        // P3-37 (a): a terminal's selection is display only (P2-36: never typed over). It used to beep and not even
+        // switch; now it is ignored: the remembered line converts by keys, or double-Shift just switches.
+        let terminalSelection = capabilities.method(for: r.bundleID) == .terminal
+        if let selection = focus?.selection, !selection.isEmpty, !terminalSelection {
             let request = ReplacementRequest(kind: .convertSelection, bundleID: r.bundleID, snapshot: r.snapshot,
                                              selectionLength: selection.count)
             var target: InputSourceID?
@@ -251,20 +340,26 @@ import Foundation
                 target = c.target
                 return c.text
             }
+            // P3-37 (c): a known selection Kytkin can't type over (a line break in it, in an unreadable app): paste it.
+            if case .refused(let why) = outcome.result, why == .unsafeSelection || why == .noMethod, allowClipboard,
+               let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .selection(selection),
+                                 direction: nil, undo: nil) {
+                return .clipboard(job)
+            }
             guard case .replaced(let step) = outcome.result else { return Self.failure(outcome) }
             guard let target else {   // can't happen: a write only runs after `convert` answered
                 return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: true)
             }
             return .replaced(target: target, step: step, keptBuffer: false, isRun: false, record: nil)
         }
-        return decideRun(r, layouts: layouts, focus: focus, element: replacer.focusedElement, record: record,
-                         replacer: replacer)
+        return decideRun(r, layouts: layouts, focus: focus, element: element, record: record, clip: clip,
+                         allowClipboard: allowClipboard, replacer: replacer)
     }
 
     /// P2-59 (001 §12.3 X4–X6): no selection, the run before the caret.
     private func decideRun(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
-                           element: (any FocusedElementIdentity)?, record: LastRun?,
-                           replacer: any TextReplacing) -> Decision {
+                           element: (any FocusedElementIdentity)?, record: LastRun?, clip: ClipUndo?,
+                           allowClipboard: Bool, replacer: any TextReplacing) -> Decision {
         let snap = r.snapshot
 
         // X5: the buffer's run (every word and the spaces between), in the layout it shows in now.
@@ -283,6 +378,25 @@ import Foundation
         }
         let request = ReplacementRequest(kind: .convertRun, bundleID: r.bundleID, snapshot: snap,
                                          typedLength: old?.count)
+
+        // P3-37 (c): an app whose box AX can't read: the clipboard first (the whole box, every line), the remembered
+        // buffer only if that finds nothing. Direction: the buffer's language when it holds a letter of it.
+        if allowClipboard, let f = focus,
+           !ReplacementPlanner.readsField(bundleID: r.bundleID, caps: capabilities, focus: f) {
+            let source = snap.renderedIn ?? r.currentSource
+            let direction = layouts.side(of: source).flatMap { side in
+                old?.contains { $0.isLetter && layouts.runClass(of: $0) == .strong(side) } == true ? side : nil
+            }
+            let undo = clip.flatMap { rec -> ClipUndo? in
+                guard snap.untouchedSinceConvert == rec.gen, rec.bundleID == r.bundleID,
+                      element?.processID == rec.processID else { return nil }
+                return rec
+            }
+            if let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .box,
+                                 direction: direction, undo: undo) {
+                return .clipboard(job)
+            }
+        }
 
         // X6: the record is a candidate only while nothing touched the field since that convert, in the same app,
         // process and element, and while it is fresh. The text check follows in `locate`.
@@ -379,6 +493,10 @@ import Foundation
             return .nothingToConvert
         case .refused(.focusUnknown) where !snap.hasRun:
             return .fieldUnreadable   // P2-54(a)
+        case .refused where !snap.hasRun:
+            // P3-37 (a): nothing remembered and nothing tried (a focus that reads as secure or composing, no method):
+            // just switch, as P2-54(a) says. It beeped before, which is the "doesn't even switch" the owner saw.
+            return .fieldUnreadable
         case .exhausted where outcome.attempts.allSatisfy({ Self.isRead($0.step) }):
             // The read found nothing to convert (or couldn't run and there was no key step).
             if box == .tooLong { return .failed(.runTooLong, beeps: true, textMayHaveChanged: false) }
@@ -389,6 +507,9 @@ import Foundation
                 return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: false)
             }
             return .nothingToConvert
+        case .exhausted where !snap.hasRun && !outcome.attempts.contains(where: { Self.isAXWrite($0.step) }),
+             .timedOut where !snap.hasRun && !outcome.attempts.contains(where: { Self.isAXWrite($0.step) }):
+            return .fieldUnreadable   // P3-37 (a): an unreadable app's chain that wrote nothing
         default:
             return Self.failure(outcome)
         }
@@ -399,13 +520,170 @@ import Foundation
                           convert: (String) -> String?) -> ReplacementOutcome {
         let plan = ReplacementPlanner.plan(request, caps: capabilities, focus: focus)
         var caps = capabilities
-        let keyWatcher = self.keyWatcher
         let outcome = ReplacementChain.run(
             plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateField: locateField,
             capabilities: &caps, clock: clock,
-            mayWrite: { keyWatcher.claimPosting(gen: gen) })   // B3 (§12 W8): before the first write
+            mayWrite: { claim(gen) })   // B3 (§12 W8): before the first write
         capabilities = caps
         return outcome
+    }
+
+    /// B3: the claim, taken once per generation (P3-37: a key fallback after a clipboard attempt reuses it).
+    private func claim(_ gen: UInt64) -> Bool {
+        if claimedGen == gen { return true }
+        guard keyWatcher.claimPosting(gen: gen) else { return false }
+        claimedGen = gen
+        return true
+    }
+
+    // MARK: - P3-37
+
+    /// P3-37 (c): a clipboard job, or nil when the clipboard may not be used here.
+    private func clipJob(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
+                         element: (any FocusedElementIdentity)?, source: ClipboardConvert.Source,
+                         direction: PairSide?, undo: ClipUndo?) -> ClipJob? {
+        guard makeClipboard != nil, !r.inAddressBar, let f = focus, let element, !f.isSecure,
+              f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText, layouts.clipboardShortcutsAreSafe
+        else { return nil }
+        // Never in a terminal (bracketed paste, the prompt), a remote desktop or VM, or an app the user set to "Off"
+        // or to "Keys only" (their choice means keys and nothing else).
+        switch capabilities.method(for: r.bundleID) {
+        case .keysOnly: break   // Chromium / Electron: AX may be off, so the role says nothing; the seed vouches for it
+        case .auto, .preferPaste:
+            // Any other app: only a real text box. ⌘A in a list, table or file browser selects items, and ⌘V could
+            // paste over all of them (Numbers, Finder).
+            guard let role = f.role, Self.clipboardTextRoles.contains(role) else { return nil }
+        case .terminal, .noUnicode, .disabled: return nil
+        }
+        if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
+        // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
+        if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
+        return ClipJob(source: source, element: element, direction: direction, undo: undo)
+    }
+
+    /// P3-37 (c): the AX roles of a text box, for apps not seeded as keys-only.
+    static let clipboardTextRoles: Set<String> = ["AXTextArea", "AXTextField", "AXComboBox"]
+
+    private func currentClipboard() -> ClipboardConvert? {
+        if let clipboard { return clipboard }
+        clipboard = makeClipboard?()
+        return clipboard
+    }
+
+    private func runClipboard(_ job: ClipJob, _ r: ConvertRequest, layouts: LayoutSnapshot,
+                              finish: inout Finish) async -> ConvertOutcome {
+        guard let cb = currentClipboard() else { return await fallBack(r, layouts: layouts, finish: &finish) }
+        var target: InputSourceID?
+        var undone: ClipUndo?
+        let convert: (String) -> ClipboardConvert.Conversion = { text in
+            if case .box = job.source, let rec = job.undo, Self.clipFingerprint(of: text) == rec.fingerprint {
+                undone = rec
+                target = layouts.source(of: rec.to)
+                return .replace(rec.original)
+            }
+            switch job.source {
+            case .selection:
+                guard let c = layouts.convertGuessing(text), c.text != text else { return .nothing }
+                target = c.target
+                return .replace(c.text)
+            case .box:
+                guard text.utf16.count <= ReplacementPlanner.maxFieldReadChars else { return .tooLong }
+                let window = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                                         reachesFieldEnd: true)
+                let result = BoxConversion.plan(window, classify: layouts.runClass, direction: job.direction) {
+                    side, grapheme in
+                    layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
+                }
+                switch result {
+                case .nothing: return .nothing
+                case .tooLong: return .tooLong
+                case .convert(let p):
+                    let units = Array(text.utf16)
+                    let head = String(decoding: units[..<p.edit.offset], as: UTF16.self)
+                    let tail = String(decoding: units[(p.edit.offset + p.edit.length)...], as: UTF16.self)
+                    target = layouts.source(of: p.side.other)
+                    return .replace(head + p.text + tail)
+                }
+            }
+        }
+        let replacer = currentReplacer()
+        let element = job.element
+        let focusIsSame = {
+            replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.isSameElement(as: element) ?? false
+        }
+        let gen = r.gen
+        let (result, pending) = await cb.run(job.source, convert: convert, focusIsSame: focusIsSame,
+                                             mayWrite: { self.claim(gen) })
+        pendingRestore = pending
+        switch result {
+        case let .pasted(original, written):
+            guard let target, let toSide = layouts.side(of: target) else {   // can't happen: pasted after `convert`
+                finish.bufferAfter = []
+                beep()
+                return .noop(.replacement(.halted(after: .pasteboard)))
+            }
+            // The caret is at the end of the box now, not where the buffer ended: forget the buffer (X5 table).
+            finish.bufferAfter = []
+            if undone == nil, case .box = job.source, let pid = element.processID {
+                lastClip = ClipUndo(gen: r.gen, bundleID: r.bundleID, processID: pid,
+                                    fingerprint: Self.clipFingerprint(of: written), original: original,
+                                    from: toSide, to: toSide.other)
+            }
+            var switched = false
+            if r.switchAfterConvert, !Task.isCancelled {
+                // keepsBuffer: the finish forgets the buffer itself, so the undo's `untouchedSinceConvert` survives.
+                switched = await switchLanguage(target, true)
+            }
+            return .converted(to: target, by: .pasteboard, switched: switched)
+        case .nothingToConvert:
+            return await toggle(r, because: .nothingToConvert)
+        case .tooLong:
+            beep()
+            return .noop(.runTooLong)
+        case .boxEmpty, .unavailable:
+            return await fallBack(r, layouts: layouts, finish: &finish)
+        case .abandoned:
+            return .noop(.replacement(.abandoned))
+        case .timedOut:
+            finish.bufferAfter = []
+            beep()
+            return .noop(.replacement(.timedOut))
+        case .focusChanged, .failed:
+            finish.bufferAfter = []
+            beep()
+            return .noop(.replacement(.halted(after: .pasteboard)))
+        }
+    }
+
+    /// P3-37 (c): the clipboard found nothing to copy (or couldn't start): the remembered buffer by keys, else switch.
+    private func fallBack(_ r: ConvertRequest, layouts: LayoutSnapshot, finish: inout Finish) async -> ConvertOutcome {
+        let decision = decide(r, layouts: layouts, record: nil, clip: nil, allowClipboard: false)
+        return await apply(decision, r, layouts: layouts, finish: &finish)
+    }
+
+    /// P3-37 (b): the kept terminal buffer started in the element that has focus now. Unknown either way = no.
+    private func terminalBufferStillFocused(_ snap: WordSnapshot) -> Bool {
+        guard let anchor = terminalAnchor, anchor.epoch == snap.epoch,
+              let now = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout) else {
+            return false
+        }
+        return now.isSameElement(as: anchor.element)
+    }
+
+    /// P3-37 (b): a terminal buffer started (from the tap, through main): note the focused element. Identity only.
+    func anchorTerminalBuffer(epoch: UInt64) {
+        terminalAnchor = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout)
+            .map { (epoch, $0) }
+    }
+
+    /// P3-37 (c): the undo's fingerprint of a whole box as ⌘C copies it: P3-35's, ignoring trailing line breaks (some
+    /// apps copy a box with one more or one less at the end).
+    nonisolated static func clipFingerprint(of text: String) -> [UInt8] {
+        var scalars = Array(text.unicodeScalars)
+        while let last = scalars.last, ReplacementPlanner.isLineBreak(last) { scalars.removeLast() }
+        var trimmed = ""
+        trimmed.unicodeScalars.append(contentsOf: scalars)
+        return fingerprint(of: trimmed)
     }
 
     private static func failure(_ outcome: ReplacementOutcome) -> Decision {
@@ -455,6 +733,12 @@ import Foundation
     /// focus, window or app change, Pause and Secure Input. Replaces the P3-35 5 s expiry task.
     func forgetUndoRecord() {
         lastRun = nil
+        lastClip = nil   // P3-37 (c)
+    }
+
+    private static func isAXWrite(_ step: ReplacementStep) -> Bool {
+        if case .axWriteSelection = step { return true }
+        return false
     }
 
     private static func isRead(_ step: ReplacementStep) -> Bool {

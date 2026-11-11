@@ -210,12 +210,25 @@ final class ConvertControllerTests: XCTestCase {
         assertOneFinish(9)
     }
 
-    @TextActor func testTerminalSelectionIsRefusedWithABeep() async {
+    /// P3-37 (a): a terminal's selection is display only. It was refused with a beep (no switch); now it is ignored
+    /// and, with nothing remembered, double-Shift just switches. Nothing is typed over it.
+    @TextActor func testTerminalSelectionIsIgnoredAndDoubleShiftJustSwitches() async {
         let sut = make(field(selection: "akuo"))
         let out = await sut.handle(request(gen: 2, bundleID: "com.apple.Terminal"), layouts: ConvertFixtures.layouts)
-        XCTAssertEqual(out, .noop(.replacement(.refused(.terminalSelection))))
-        XCTAssertEqual(log.beeps, 1)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
+        XCTAssertEqual(log.beeps, 0)
+        XCTAssertFalse(log.performs.contains(.typeOverSelection))
         assertOneFinish(2)
+    }
+
+    @TextActor func testTerminalSelectionWithARememberedLineConvertsTheLineByKeys() async {
+        let sut = make(field(selection: "something else"))
+        let snap = WordSnapshot(strokes: ConvertFixtures.strokes("akuo"), previousWords: [], renderedIn: IDs.abc,
+                                isValid: true)
+        let out = await sut.handle(request(snap, gen: 3, bundleID: "com.apple.Terminal"),
+                                   layouts: ConvertFixtures.layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 4), switched: true))
+        XCTAssertEqual(log.performs, [.backspaceAndType(count: 4)])
     }
 
     // MARK: - Every outcome finishes exactly once

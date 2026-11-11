@@ -35,4 +35,8 @@ import Foundation
     func endReplacement() {
         executor.endReplacement()
     }
+
+    func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? {   // P3-37
+        executor.currentFocusedElement(timeout: timeout)
+    }
 }

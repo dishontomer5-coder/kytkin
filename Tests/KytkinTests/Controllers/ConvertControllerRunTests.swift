@@ -356,11 +356,25 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertTrue(log.switches.isEmpty)
     }
 
-    @TextActor func testAPasswordFieldIsStillRefusedWithAnEmptyBuffer() async {
+    /// P3-37 (a) (owner 2026-11-11, P2-54(a)): nothing remembered and nothing may be written: a password field (or a
+    /// focus that only reads as one, as a Chromium field can after a click) just switches the language. Nothing is read
+    /// or written there; only the input source changes, as under Secure Input. It beeped before.
+    @TextActor func testAPasswordFieldWithAnEmptyBufferJustSwitches() async {
         let (sut, r) = scripted()
         r.focus = FocusInfo(role: FocusInfo.secureTextFieldRole, isSecure: true, hasMarkedText: false,
                             selTextSettable: false, selRangeSettable: false, selection: nil)
         let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(log.switches, [.switchTo(IDs.hebrew, keepsBuffer: false)])
+        XCTAssertEqual(log.beeps, 0)
+        XCTAssertTrue(log.performs.isEmpty, "nothing written")
+    }
+
+    @TextActor func testAPasswordFieldWithABufferStillBeeps() async {
+        let (sut, r) = scripted()
+        r.focus = FocusInfo(role: FocusInfo.secureTextFieldRole, isSecure: true, hasMarkedText: false,
+                            selTextSettable: false, selRangeSettable: false, selection: nil)
+        let out = await sut.handle(request(buffer([], current: "akuo", in: IDs.abc), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .noop(.replacement(.refused(.secureField))))
         XCTAssertTrue(log.switches.isEmpty)
         XCTAssertEqual(log.beeps, 1)

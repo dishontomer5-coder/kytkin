@@ -25,9 +25,17 @@ import Observation
             + "cursor changes to the other language, on every line. Text already in the other language stays.",
         "With text selected, it converts only the selection, so select just the part you want to change.",
         "Press Shift twice again right away to undo.",
-        "Where Kytkin can't read the text, it converts what it remembers you typing, "
-            + "or only switches the language.",
+        // P3-37 (owner 2026-11-11): the clipboard in apps Kytkin can't read; terminals remember until Return.
+        "Where Kytkin can't read the text (Slack, VS Code, Chrome and other web apps), it copies the text box "
+            + "through the clipboard and pastes it back converted, then puts your clipboard back (if you allow it below).",
+        "In terminals it converts what you typed since you last pressed Return, even after you click or switch "
+            + "apps. It never presses Return for you.",
+        "If it can't do either, double-Shift just switches the language.",
     ]
+
+    /// P3-37: the caption under the clipboard toggle.
+    static let clipboardNote = "Kytkin selects the text box, copies it, pastes the converted text and then restores "
+        + "what you had copied. Never in terminals or password fields. Turn it off to keep Kytkin away from the clipboard."
 
     static let autoFixNote = "Fixing words automatically as you type is coming in a later version."
 
@@ -71,6 +79,12 @@ import Observation
     var switchLanguageAfterConvert: Bool {
         get { store.prefs.convert.switchLanguageAfterConvert }
         set { write { $0.convert.switchLanguageAfterConvert = newValue } }
+    }
+
+    /// P3-37: Settings → Convert "Use the clipboard in apps Kytkin can't read".
+    var useClipboardInUnreadableApps: Bool {
+        get { store.prefs.convert.useClipboardInUnreadableApps }
+        set { write { $0.convert.useClipboardInUnreadableApps = newValue } }
     }
 
     private func write(_ change: (inout Preferences) -> Void) {

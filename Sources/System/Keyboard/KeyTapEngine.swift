@@ -117,6 +117,12 @@ final class KeyTapEngine: @unchecked Sendable {
             // P2-50 (§12 W6): keeps the buffer, held keys and the armed deadline; the flush step re-arms as before.
             processor.updateConfig(config)
             runFlushStep()
+        case let .contextChanged(pid):
+            // P3-37 (b): a reset that may park (or restore) a terminal's buffer.
+            let hadWord = !processor.buffer.isEmpty
+            processor.contextChanged(terminalPID: pid, deviceFlags: backend.currentDeviceFlags)
+            if hadWord { sendSignal(.bufferInvalidated) }
+            runFlushStep()
         }
     }
 
@@ -293,7 +299,7 @@ final class KeyTapEngine: @unchecked Sendable {
         switch signal {
         case let .doubleShift(_, gen), let .wordEnded(_, gen):
             if processor.isReplacing, processor.activeGeneration == gen { commit.arm(gen: gen) }
-        case .wordBoundary, .bufferInvalidated, .undoCandidate, .undoTouched:
+        case .wordBoundary, .bufferInvalidated, .undoCandidate, .undoTouched, .terminalBufferStarted:
             break
         }
         sendSignal(signal)

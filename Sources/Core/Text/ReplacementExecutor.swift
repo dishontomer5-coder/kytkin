@@ -61,6 +61,12 @@ import Foundation
 
     // MARK: - Focus
 
+    /// P3-37: the focused element right now, identity only (no attribute read, no replacement state touched).
+    func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? {
+        guard case .success(let el) = focusProvider.focusedTextElement(timeout: timeout) else { return nil }
+        return el
+    }
+
     /// A read that gives up on the whole focus read (timeout, no permission, element gone).
     private struct Abort: Error {}
 

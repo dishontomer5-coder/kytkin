@@ -29,6 +29,7 @@ final class PreferencesCodecTests: XCTestCase {
         XCTAssertEqual(p.convert.doubleShiftSides, .sameSide)
         XCTAssertEqual(p.convert.doubleShiftWindowMs, 300)
         XCTAssertTrue(p.convert.switchLanguageAfterConvert)
+        XCTAssertTrue(p.convert.useClipboardInUnreadableApps, "P3-37: on when the file predates it")
         XCTAssertTrue(p.autoFix.enabled)
         XCTAssertEqual(p.autoFix.mode, .confidentOnly)
         XCTAssertTrue(p.autoFix.switchLanguageAfterFix)

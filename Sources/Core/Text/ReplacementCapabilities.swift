@@ -47,6 +47,12 @@ struct ReplacementCapabilities: Sendable {
         return seed
     }
 
+    /// P3-37: the user's own choice in Settings → Apps, nil for "Default". A user's "Keys only" means no clipboard
+    /// convert either, while a seeded keys-only app (Slack, Chrome, VS Code) may use it.
+    func override(for bundleID: String) -> MethodHint? {
+        overrides[Self.key(bundleID)]
+    }
+
     /// The shipped default for an app, ignoring any override (Settings → Apps "Default (…)").
     func seedMethod(for bundleID: String) -> MethodHint {
         let k = Self.key(bundleID)

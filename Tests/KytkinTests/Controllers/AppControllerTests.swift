@@ -141,7 +141,8 @@ final class AppControllerTests: XCTestCase {
         make()
         watcher.clear()
         monitor.activate(notes, pid: 10)
-        XCTAssertEqual(watcher.calls, [.perform(.reset(.contextChange)), .checkSecureInput])
+        // P3-37 (b): a context change is a reset that may park a terminal's buffer (Notes: not a terminal).
+        XCTAssertEqual(watcher.calls, [.perform(.contextChanged(terminalPID: nil)), .checkSecureInput])
         XCTAssertGreaterThan(displayChanges, 0)
     }
 
@@ -330,7 +331,8 @@ final class AppControllerTests: XCTestCase {
         make(withConvert: true)
         monitor.activate(notes, pid: 10)
         sut.keySignal(.doubleShift(snapshot, gen: 1))
-        XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert)])
+        XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
+                                                          useClipboard: true)])   // P3-37: on by default
         XCTAssertTrue(watcher.finishes.isEmpty, "the convert controller finishes it")
 
         make(accessibility: .denied, inputMonitoring: .granted, withConvert: true)
@@ -398,6 +400,49 @@ final class AppControllerTests: XCTestCase {
     }
 
     // MARK: - P2-20 QA
+
+    /// P3-37 (b): a terminal in front (seeded, or the user's Settings → Apps choice) is named by its pid, so the tap
+    /// parks its buffer on the way out and restores it on the way back.
+    func testATerminalContextIsNamedToTheTapByItsPID() {
+        make()
+        watcher.clear()
+        monitor.activate("com.apple.Terminal", pid: 77)
+        XCTAssertEqual(watcher.calls.first, .perform(.contextChanged(terminalPID: 77)))
+        watcher.clear()
+        monitor.activate("com.cmuxterm.app", pid: 78)
+        XCTAssertEqual(watcher.calls.first, .perform(.contextChanged(terminalPID: 78)))
+        watcher.clear()
+        monitor.activate(notes, pid: 10)
+        XCTAssertEqual(watcher.calls.first, .perform(.contextChanged(terminalPID: nil)))
+    }
+
+    func testAnAppTheUserSetToTerminalCountsToo() {
+        var p = Preferences()
+        p.apps["com.example.MyShell"] = .init(replacementMethod: .terminal)
+        make(p)
+        watcher.clear()
+        monitor.activate("com.example.MyShell", pid: 90)
+        XCTAssertEqual(watcher.calls.first, .perform(.contextChanged(terminalPID: 90)))
+    }
+
+    /// P3-37 (b): the first key of a terminal buffer asks the convert controller to note the focused element.
+    func testATerminalBufferStartIsAnchoredAndCountsAsAKey() {
+        make(withConvert: true)
+        monitor.activate("com.apple.Terminal", pid: 77)
+        let before = convert?.forgetUndoCount ?? 0
+        sut.keySignal(.terminalBufferStarted(epoch: 3))
+        XCTAssertEqual(convert?.anchors, [3])
+        XCTAssertEqual(convert?.forgetUndoCount, before + 1)
+    }
+
+    func testTheClipboardSettingReachesTheRequest() {
+        var p = Preferences()
+        p.convert.useClipboardInUnreadableApps = false
+        make(p, withConvert: true)
+        monitor.activate(notes, pid: 10)
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        XCTAssertEqual(convert?.requests.first?.useClipboard, false)
+    }
 
     /// Kytkin's own window is not a Context, so the root must reset the word buffer itself: otherwise a word typed in
     /// Settings would still be in the buffer after ⌘Tab back to the same app (no new Context) and a double-Shift there
@@ -514,7 +559,7 @@ final class AppControllerTests: XCTestCase {
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
                                                           pair: p.languagePair, currentSource: IDs.russian,
-                                                          switchAfterConvert: false)])
+                                                          switchAfterConvert: false, useClipboard: true)])
     }
 
     func testConvertOffForTheAppLeavesDoubleShiftAsAToggle() {

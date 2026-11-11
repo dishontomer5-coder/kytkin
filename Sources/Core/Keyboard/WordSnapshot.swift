@@ -22,12 +22,18 @@ struct WordSnapshot: Sendable, Equatable {
     /// P2-59 (X6): the generation of the last convert the processor finished (not aborted), while no key, click, reset
     /// or buffer invalidation happened since. Nil otherwise.
     let untouchedSinceConvert: UInt64?
+    /// P3-37 (b): the buffer's number (it grows each time a terminal buffer starts after an empty one), so the
+    /// controller can tell which focused element it was typed into (`ConvertController.anchorTerminalBuffer`).
+    let epoch: UInt64
+    /// P3-37 (b): the buffer was kept across a click or an app switch away and back (terminals only): the caret may
+    /// have moved and the focus may be another window, so the controller re-checks the element before using it.
+    let crossedFocus: Bool
 
     /// P2-59 (X5): the buffer holds something before the caret: a current word, or earlier words (with their spaces).
     var hasRun: Bool { !strokes.isEmpty || !previousWords.isEmpty }
 
     init(strokes: [Stroke], previousWords: [[Stroke]], renderedIn: InputSourceID?, isValid: Bool,
-         gaps: [Int]? = nil, untouchedSinceConvert: UInt64? = nil) {
+         gaps: [Int]? = nil, untouchedSinceConvert: UInt64? = nil, epoch: UInt64 = 0, crossedFocus: Bool = false) {
         self.strokes = strokes
         self.previousWords = previousWords
         self.renderedIn = renderedIn
@@ -37,6 +43,14 @@ struct WordSnapshot: Sendable, Equatable {
         assert(g.count == previousWords.count, "P2-59: one gap per earlier word")
         self.gaps = g
         self.untouchedSinceConvert = untouchedSinceConvert
+        self.epoch = epoch
+        self.crossedFocus = crossedFocus
+    }
+
+    /// P3-37: nothing remembered (a terminal buffer that can't be trusted any more).
+    func emptied() -> WordSnapshot {
+        WordSnapshot(strokes: [], previousWords: [], renderedIn: renderedIn, isValid: false,
+                     untouchedSinceConvert: untouchedSinceConvert, epoch: epoch)
     }
 }
 
