@@ -263,6 +263,7 @@ final class KeyWatcher: @unchecked Sendable { // @unchecked: mutable state is gu
         case let .reset(reason): processor.reset(reason)
         case let .inputSourceChanged(id, isOurs): processor.inputSourceChanged(to: id, isOurs: isOurs)
         case let .updateConfig(config): processor.updateConfig(config)
+        case let .contextChanged(pid): processor.contextChanged(terminalPID: pid)   // P3-37 (b)
         }
     }
 

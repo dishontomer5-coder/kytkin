@@ -13,6 +13,9 @@ extension ReplacementCapabilities {
             "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
             "com.mitchellh.ghostty", "org.alacritty", "io.alacritty", "net.kovidgoyal.kitty",
             "com.github.wez.wezterm", "co.zeit.hyper",
+            // P3-37: cmux (a Ghostty-based terminal; the owner's), read from its installed Info.plist 2026-11-11. It
+            // was `.auto`, so Kytkin tried AX reads and writes in a terminal.
+            "com.cmuxterm.app",
         ]
         // Code editors: the editor owns the text, AX writes are unreliable (R5). Keys only (P3 paste allowed, T3).
         let keysOnly = [
@@ -33,4 +36,19 @@ extension ReplacementCapabilities {
             + [Seed(match: .prefix("com.jetbrains."), hint: .keysOnly)]
             + noUnicode.map { Seed(match: .exact($0), hint: .noUnicode) }
     }()
+
+    /// P3-37 (c): code editors and IDEs, where ⌘A selects the whole file (a whole-box convert would turn every English
+    /// identifier into Hebrew) and the same window hosts a terminal (a pasted box with line breaks could run commands at
+    /// its prompt). The clipboard never converts a whole box there; the remembered buffer does, as before.
+    static let editorBundleIDs: Set<String> = [
+        "com.microsoft.vscode", "com.microsoft.vscodeinsiders", "com.vscodium",
+        "com.todesktop.230313mzl4w4u92",   // Cursor
+        "com.exafunction.windsurf", "dev.zed.zed", "com.sublimetext.4", "com.apple.dt.xcode",
+    ]
+
+    /// P3-37 (c): `bundleID` is a code editor or IDE (`editorBundleIDs`, or JetBrains).
+    static func isEditor(_ bundleID: String) -> Bool {
+        let k = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return editorBundleIDs.contains(k) || k.hasPrefix("com.jetbrains.")
+    }
 }

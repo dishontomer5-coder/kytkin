@@ -19,6 +19,9 @@ extension Preferences {
         }
         /// Owner decision 001 §11 Q1: convert also switches the language, with its own toggle.
         var switchLanguageAfterConvert = true
+        /// P3-37 (owner 2026-11-11): in apps whose text box Kytkin can't read (not terminals), double-Shift may copy the
+        /// box through the clipboard, paste the converted text and put the clipboard back. On by default.
+        var useClipboardInUnreadableApps = true
 
         init() {}
 
@@ -37,6 +40,7 @@ extension Preferences {
 extension Preferences.Convert: Codable {
     private enum CodingKeys: String, CodingKey {
         case doubleShiftEnabled, doubleShiftSides, doubleShiftWindowMs, switchLanguageAfterConvert
+        case useClipboardInUnreadableApps   // P3-37
     }
 
     init(from decoder: Decoder) throws {
@@ -53,5 +57,6 @@ extension Preferences.Convert: Codable {
             if bounded != v { PreferencesDecodingLoss.record() }
         }
         if let v = c.lenient(Bool.self, .switchLanguageAfterConvert) { switchLanguageAfterConvert = v }
+        if let v = c.lenient(Bool.self, .useClipboardInUnreadableApps) { useClipboardInUnreadableApps = v }
     }
 }

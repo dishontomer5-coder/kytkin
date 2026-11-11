@@ -53,7 +53,9 @@ enum BoxConversion {
     /// - Parameters:
     ///   - classify: the pair's grapheme classes (`LayoutSnapshot.runClass`).
     ///   - convert: one grapheme typed on `side`'s keys, retyped on the other layout's.
-    static func plan(_ w: FieldWindow, classify: (Character) -> RunCharClass,
+    ///   - direction: P3-37: the side to convert from, decided by the caller (the clipboard convert has no caret: the
+    ///     remembered buffer's language). nil = step 3 (the letter nearest the caret).
+    static func plan(_ w: FieldWindow, classify: (Character) -> RunCharClass, direction: PairSide? = nil,
                      convert: (PairSide, String) -> String) -> Result {
         let total = w.text.utf16.count
         let caretRel = w.caret - w.location
@@ -92,9 +94,15 @@ enum BoxConversion {
         guard lo < hi else { return hadLetters ? .tooLong : .nothing }
 
         // Step 3: direction.
-        let before = g[lo..<max(lo, min(caret, hi))].last(where: \.isLetter)
-        let after = caret < hi ? g[max(caret, lo)..<hi].first(where: \.isLetter) : nil
-        guard let nearest = before ?? after, case .strong(let side) = nearest.cls else { return .nothing }
+        let side: PairSide
+        if let direction {
+            side = direction   // P3-37
+        } else {
+            let before = g[lo..<max(lo, min(caret, hi))].last(where: \.isLetter)
+            let after = caret < hi ? g[max(caret, lo)..<hi].first(where: \.isLetter) : nil
+            guard let nearest = before ?? after, case .strong(let s) = nearest.cls else { return .nothing }
+            side = s
+        }
 
         // Steps 4–5: which graphemes convert, word by word.
         var converts = [Bool](repeating: false, count: g.count)

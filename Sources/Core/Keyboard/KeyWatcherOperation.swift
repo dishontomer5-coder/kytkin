@@ -21,4 +21,7 @@ enum KeyWatcherOperation: Sendable, Equatable {
     /// P2-50 (001 §12 W6): new settings. `mode` and `holdBackCapacity` are ignored; the double-Shift gesture in progress
     /// is dropped; the buffer, held keys and an armed deadline are kept (`KeyStreamProcessor.updateConfig`).
     case updateConfig(KeyProcessorConfig)
+    /// P3-37 (b): `reset(.contextChange)`, and the new frontmost app is a terminal with this pid (nil: not a terminal).
+    /// Leaving a terminal parks its buffer; returning to the same one restores it (`KeyStreamProcessor.contextChanged`).
+    case contextChanged(terminalPID: Int32?)
 }

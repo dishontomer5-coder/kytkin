@@ -15,6 +15,8 @@ final class ConvertLog: @unchecked Sendable { // @unchecked: guarded by `lock`
         /// P2-59c: `renderedIn` is the finish's `bufferRenderedIn` (defaults to nil in expectations).
         case finish(gen: UInt64, newRendering: InputSourceID?, bufferAfter: [Stroke]?, renderedIn: InputSourceID? = nil)
         case beep
+        /// P3-37: the fake pasteboard put the user's clipboard back.
+        case clipboardRestored
     }
 
     private let lock = NSLock()
@@ -144,6 +146,20 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     }
 
     var focusedElement: (any FocusedElementIdentity)? { focus == nil ? nil : element }
+
+    /// P3-37: what `currentFocusedElement` answers (the clipboard's focus re-check, the terminal anchor). Unset: the
+    /// focused element while there is a focus.
+    var nowFocused: (any FocusedElementIdentity)?
+    var nowFocusedIsUnset = true
+    private(set) var focusChecks = 0
+    func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? {
+        focusChecks += 1
+        return nowFocusedIsUnset ? focusedElement : nowFocused
+    }
+    func setNowFocused(_ e: (any FocusedElementIdentity)?) {
+        nowFocused = e
+        nowFocusedIsUnset = false
+    }
 
     func endReplacement() {
         log.add(.end)

@@ -50,8 +50,7 @@ enum ReplacementPlanner {
 
         // AX writes: not for keys-only or terminal apps, only when both attributes are settable, and not after
         // a failed read-back in this app this session.
-        let axWrite = hint != .keysOnly && hint != .terminal && f.selTextSettable && f.selRangeSettable
-            && !caps.isAXWriteBroken(for: r.bundleID)
+        let axWrite = writesThroughAX(bundleID: r.bundleID, hint: hint, caps: caps, focus: f)
         // Typing needs the app to honour the Unicode string in key events.
         let canType = hint != .noUnicode
         // P2-36 (001 §12 T3): keysOnly allows the opt-in paste (⌘V is a key). Never paste in terminals
@@ -97,6 +96,20 @@ enum ReplacementPlanner {
             guard let n = r.typedLength, n > 0 else { return .refuse(.bufferStale) }
             return canType ? .steps([.backspaceAndType(count: n)]) : .refuse(.noMethod)
         }
+    }
+
+    private static func writesThroughAX(bundleID: String, hint: MethodHint, caps: ReplacementCapabilities,
+                                        focus f: FocusInfo) -> Bool {
+        hint != .keysOnly && hint != .terminal && f.selTextSettable && f.selRangeSettable
+            && !caps.isAXWriteBroken(for: bundleID)
+    }
+
+    /// P3-37: a double-Shift with nothing selected reads (and writes) this box through AX, the `.convertRun` plan's
+    /// first branch. False = the app's box can't be read: the buffer, or (P3-37 (c)) the clipboard.
+    static func readsField(bundleID: String, caps: ReplacementCapabilities, focus f: FocusInfo) -> Bool {
+        let hint = caps.method(for: bundleID)
+        guard hint != .disabled else { return false }
+        return writesThroughAX(bundleID: bundleID, hint: hint, caps: caps, focus: f) && f.canReadBeforeCaret
     }
 
     /// P2-36 (001 §12 T2): true if the text holds a Cc (newline, tab, CR, ESC…), Zl (U+2028) or Zp (U+2029)

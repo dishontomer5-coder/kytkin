@@ -47,7 +47,8 @@ struct WordBuffer: Sendable, Equatable {
 
     /// Copies the buffer for a worker. Allocates, so call it only on a trigger.
     /// P2-59 (001 §12.3 X5): with the spaces after each earlier word (`gaps`), so the whole buffer can be rendered.
-    func snapshot(renderedIn: InputSourceID?, untouchedSinceConvert: UInt64? = nil) -> WordSnapshot {
+    func snapshot(renderedIn: InputSourceID?, untouchedSinceConvert: UInt64? = nil, epoch: UInt64 = 0,
+                  crossedFocus: Bool = false) -> WordSnapshot {
         var previous: [[Stroke]] = []
         previous.reserveCapacity(wordStarts.count - 1)
         for i in 0..<(wordStarts.count - 1) {
@@ -56,7 +57,7 @@ struct WordBuffer: Sendable, Equatable {
         let current = Array(storage[currentStart...])
         return WordSnapshot(strokes: current, previousWords: previous, renderedIn: renderedIn,
                             isValid: !current.isEmpty && !overflowed, gaps: gaps,
-                            untouchedSinceConvert: untouchedSinceConvert)
+                            untouchedSinceConvert: untouchedSinceConvert, epoch: epoch, crossedFocus: crossedFocus)
     }
 
     // MARK: - Writing

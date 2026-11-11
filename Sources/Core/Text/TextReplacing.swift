@@ -45,11 +45,18 @@ import Foundation
 
     /// Drops the element, ranges and any text held for this replacement (privacy: nothing outlives it).
     func endReplacement()
+
+    /// P3-37: the focused element now (identity only; reads no text and starts no replacement), for the clipboard
+    /// convert's focus re-check before each shortcut and the terminal buffer's same-window check. nil = unknown.
+    func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)?
 }
 
 extension TextReplacing {
     /// P2-59c: a replacer that can't name its element never gets an undo record (the safe default).
     var focusedElement: (any FocusedElementIdentity)? { nil }
+
+    /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
+    func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }
 
     /// P3-35: a replacer that can't tell keeps the P2-59 rule (the run read always ended at the caret).
     var readRangeEndsAtCaret: Bool { true }

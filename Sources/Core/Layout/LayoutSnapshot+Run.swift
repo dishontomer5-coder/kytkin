@@ -75,4 +75,15 @@ extension LayoutSnapshot {
         out += c.render(run.strokes)
         return (target, out)
     }
+
+    /// P3-37: ⌘ + the ANSI A / C / V keys is ⌘A / ⌘C / ⌘V for this pair: one of its layouts types plain `a`, `c` and `v`
+    /// on exactly those key codes (ABC, U.S., British…; Apple Hebrew's Command layer is QWERTY). On AZERTY the A
+    /// position types `q` (⌘Q would quit the app) and on Dvorak C is `j`, so the clipboard convert is never used there.
+    var clipboardShortcutsAreSafe: Bool {
+        guard let a = converter(from: pair.a)?.from, let b = converter(from: pair.b)?.from else { return false }
+        func types(_ map: LayoutMap) -> Bool {
+            ClipboardShortcut.allCases.allSatisfy { map.keys[$0.keyCode]?.plain == $0.letter }
+        }
+        return types(a) || types(b)
+    }
 }

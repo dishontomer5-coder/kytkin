@@ -41,6 +41,11 @@ struct ConvertSettingsView: View {
                         .disabled(!model.doubleShiftEnabled)
                     Text("Afterwards, the keyboard is in the language you meant to type.")
                         .font(.caption).foregroundStyle(.secondary)
+                    // P3-37
+                    Toggle("Use the clipboard in apps Kytkin can't read", isOn: $model.useClipboardInUnreadableApps)
+                        .disabled(!model.doubleShiftEnabled)
+                    Text(ConvertSettingsModel.clipboardNote)
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 .disabled(!model.isEditable)
 

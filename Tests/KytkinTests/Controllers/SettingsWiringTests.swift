@@ -221,7 +221,7 @@ final class SettingsWiringTests: XCTestCase {
     // MARK: - P2-55 QA: menu activations vs Settings with a lagging frontmost app
 
     private let textEdit = "com.apple.TextEdit"
-    private var resets: Int { watcher.calls.filter { $0 == .perform(.reset(.contextChange)) }.count }
+    private var resets: Int { watcher.contextResets.count }   // P3-37
 
     /// TextEdit (no rule) in front and settled; frontmost reads TextEdit.
     private func textEditInFront() {

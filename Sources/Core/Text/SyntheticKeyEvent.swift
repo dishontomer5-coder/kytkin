@@ -1,6 +1,9 @@
 // P2-18: One key event Kytkin posts as replacement text (001 §2.2, R5 §B). Only two shapes exist: a Backspace,
 // or a Unicode string on a neutral key code. Both always carry the `ours` marker and no modifier flags (the user
 // may still hold Shift right after a double-Shift). There is no way to build a Return, Tab or other control key.
+// P3-37: two more shapes, for the clipboard convert in unreadable non-terminal apps only: ⌘A / ⌘C / ⌘V (Command and
+// nothing else, on the three ANSI keys, no text) and a plain Right arrow (drops the ⌘A selection, caret at the end).
+// Still never a Return, Tab, Escape, ⌃C or any other key.
 
 import Foundation
 
@@ -20,12 +23,25 @@ struct SyntheticKeyEvent: Sendable, Equatable {
     /// Modifier flags to post with. Always 0: flags are cleared on every event.
     let modifierFlags: UInt64
 
-    private init(keyCode: UInt16, isKeyDown: Bool, unicode: [UInt16]) {
+    /// P3-37: CGEventFlags.maskCommand (bit 20), the only modifier Kytkin ever posts.
+    static let commandFlag: UInt64 = 0x0010_0000
+
+    private init(keyCode: UInt16, isKeyDown: Bool, unicode: [UInt16], modifierFlags: UInt64 = 0) {
         self.keyCode = keyCode
         self.isKeyDown = isKeyDown
         self.unicode = unicode
         marker = EventOrigin.oursMarker
-        modifierFlags = 0
+        self.modifierFlags = modifierFlags
+    }
+
+    /// P3-37: ⌘A / ⌘C / ⌘V for the clipboard convert. Command only, no text.
+    static func shortcut(_ s: ClipboardShortcut, keyDown: Bool) -> SyntheticKeyEvent {
+        SyntheticKeyEvent(keyCode: s.keyCode, isKeyDown: keyDown, unicode: [], modifierFlags: commandFlag)
+    }
+
+    /// P3-37: a plain Right arrow, to drop the ⌘A selection when nothing is pasted (the caret goes to the end).
+    static func rightArrow(keyDown: Bool) -> SyntheticKeyEvent {
+        SyntheticKeyEvent(keyCode: KeyCode.rightArrow, isKeyDown: keyDown, unicode: [])
     }
 
     static func backspace(keyDown: Bool) -> SyntheticKeyEvent {
@@ -41,8 +57,15 @@ struct SyntheticKeyEvent: Sendable, Equatable {
     /// The last check before posting, repeated by the live poster: a marked Backspace, or a marked Unicode
     /// event whose text is 1…16 units with no Cc/Zl/Zp character. Nothing else may be posted.
     var isSafeToPost: Bool {
-        guard marker == EventOrigin.oursMarker, modifierFlags == 0 else { return false }
+        guard marker == EventOrigin.oursMarker else { return false }
+        // P3-37: Command goes only with ⌘A / ⌘C / ⌘V and no text; no other modifier ever.
+        if modifierFlags == Self.commandFlag {
+            return unicode.isEmpty && ClipboardShortcut.allCases.contains { $0.keyCode == keyCode }
+        }
+        guard modifierFlags == 0 else { return false }
         switch keyCode {
+        case KeyCode.rightArrow:
+            return unicode.isEmpty   // P3-37
         case KeyCode.delete:
             return unicode.isEmpty
         case Self.unicodeKeyCode:

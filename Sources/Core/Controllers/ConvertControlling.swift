@@ -26,9 +26,16 @@ struct ConvertRequest: Sendable, Equatable {
     let pair: LanguagePair
     let currentSource: InputSourceID
     let switchAfterConvert: Bool
+    /// P3-37: Settings → Convert "Use the clipboard in apps Kytkin can't read" (on by default in the preferences; off
+    /// here by default so a request built without it never touches the clipboard).
+    let useClipboard: Bool
+    /// P3-37: the browser's address bar has focus (`BrowserPageState.editingAddress`). The clipboard never copies it
+    /// (design.md: a focused address bar is never read).
+    let inAddressBar: Bool
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
-         currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true) {
+         currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
+         useClipboard: Bool = false, inAddressBar: Bool = false) {
         self.snapshot = snapshot
         self.gen = gen
         self.bundleID = bundleID
@@ -36,6 +43,16 @@ struct ConvertRequest: Sendable, Equatable {
         self.pair = pair
         self.currentSource = currentSource
         self.switchAfterConvert = switchAfterConvert
+        self.useClipboard = useClipboard
+        self.inAddressBar = inAddressBar
+    }
+
+    /// The same request with other values for the fields that change on the way (the dispatcher's resolved pair; the
+    /// controller's emptied snapshot, P3-37).
+    func with(snapshot: WordSnapshot? = nil, pair: LanguagePair? = nil) -> ConvertRequest {
+        ConvertRequest(snapshot: snapshot ?? self.snapshot, gen: gen, bundleID: bundleID, mode: mode,
+                       pair: pair ?? self.pair, currentSource: currentSource, switchAfterConvert: switchAfterConvert,
+                       useClipboard: useClipboard, inAddressBar: inAddressBar)
     }
 }
 
@@ -47,11 +64,16 @@ struct ConvertRequest: Sendable, Equatable {
     /// P3-35 QA (owner): the user touched the field (key, click), focus or the app changed, Kytkin paused or Secure
     /// Input started: drop the last convert's undo record and the replaced text it holds (no timer any more).
     func forgetUndo()
+    /// P3-37 (b): a terminal's word buffer started (its first key after an empty buffer): note which element has focus,
+    /// so a buffer kept across clicks and app switches is used only in that same window / tab / split.
+    func anchorTerminalBuffer(epoch: UInt64)
 }
 
 extension ConvertControlling {
     /// P3-35 QA (owner): a controller that keeps no undo record has nothing to drop.
     func forgetUndo() {}
+    /// P3-37: a controller that never converts has no terminal buffer to anchor.
+    func anchorTerminalBuffer(epoch: UInt64) {}
 }
 
 /// P2-20: converts nothing and finishes the generation at once, so held keys replay right away. AppController's

@@ -32,6 +32,9 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertFalse(PreferencesMapping.processorConfig(store.prefs).doubleShiftEnabled, "what updateConfig sends")
         sut.switchLanguageAfterConvert = false
         XCTAssertFalse(store.prefs.convert.switchLanguageAfterConvert)
+        XCTAssertTrue(sut.useClipboardInUnreadableApps)   // P3-37: on by default
+        sut.useClipboardInUnreadableApps = false
+        XCTAssertFalse(store.prefs.convert.useClipboardInUnreadableApps)
     }
 
     func testSides() {
@@ -79,6 +82,16 @@ final class ConvertSettingsModelTests: XCTestCase {
     func testSliderRangeIs200To500() {
         XCTAssertEqual(ConvertSettingsModel.sliderRange, 200...500)
         XCTAssertEqual(ConvertSettingsModel.windowStepMs, 10)
+    }
+
+    /// P3-37: "Use the clipboard in apps Kytkin can't read", on by default, written to `prefs.convert`.
+    func testTheClipboardSwitchIsOnByDefaultAndWrites() {
+        let text = ConvertSettingsModel.explanation.joined(separator: " ")
+        XCTAssertTrue(text.contains("clipboard"))
+        XCTAssertTrue(text.contains("terminals"))
+        XCTAssertTrue(text.contains("never presses Return") || text.contains("It never presses Return"))
+        XCTAssertTrue(ConvertSettingsModel.clipboardNote.contains("Never in terminals or password fields"))
+        XCTAssertTrue(Preferences().convert.useClipboardInUnreadableApps)
     }
 
     func testExplanationDescribesTheWholeBoxConvertSelectionAndUndo() {
