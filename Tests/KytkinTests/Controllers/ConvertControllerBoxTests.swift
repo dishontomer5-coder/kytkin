@@ -165,12 +165,13 @@ final class ConvertControllerBoxTests: XCTestCase {
     }
 
     @TextActor func testWithoutTheRecordASecondDoubleShiftConvertsTheBoxAgain() async {
-        // Past the undo window the record is gone: the next double-Shift is a plain whole-box convert from the letter
-        // at the caret (now Hebrew), which is why the undo record matters. ⌘Z stays available in the app.
+        // Once the record is gone (P3-35 QA, owner: a key, click or focus change drops it; no timer) the next
+        // double-Shift is a plain whole-box convert from the letter at the caret (now Hebrew), which is why the undo
+        // record matters. ⌘Z stays available in the app.
         let field = FakeTextField("akuo")
         let (sut, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        clock.advance(byNanos: ConvertController.lastRunMaxAgeNanos + 1)
+        sut.forgetUndoRecord()
         await sut.handle(request(empty(untouched: 1, in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
         XCTAssertEqual(field.text, "akuo")
     }

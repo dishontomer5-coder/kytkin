@@ -189,6 +189,9 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
     private(set) var hints: [[String: MethodHint]] = []
     func convert(_ request: ConvertRequest) { requests.append(request) }
     func methodHintsChanged(_ overrides: [String: MethodHint]) { hints.append(overrides) }
+    /// P3-35 QA (owner): how often AppController asked to drop the undo record.
+    private(set) var forgetUndoCount = 0
+    func forgetUndo() { forgetUndoCount += 1 }
 }
 
 @MainActor func makeStore(_ prefs: Preferences = Preferences(), clock: any Clock) -> PreferencesStore {

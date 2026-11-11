@@ -447,18 +447,23 @@ final class ConvertControllerRunTests: XCTestCase {
         XCTAssertEqual(field.selection, TextRange(location: 17, length: 0), "the caret from before the convert")
     }
 
-    @TextActor func testUndoRefusedWhenTheRecordIsStale() async {
+    /// P3-35 QA (owner): no age limit any more (was 5 s): an hour later, untouched, the undo still restores exactly.
+    @TextActor func testUndoHasNoAgeLimit() async {
         let (sut, field, _) = await convertedOnce()
-        clock.advance(byNanos: ConvertController.lastRunMaxAgeNanos + 1)
-        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
-        XCTAssertEqual(field.text, wholeLineBack)
-    }
-
-    @TextActor func testUndoStillWorksJustInsideTheAgeLimit() async {
-        let (sut, field, _) = await convertedOnce()
-        clock.advance(byNanos: ConvertController.lastRunMaxAgeNanos)
+        clock.advance(byNanos: 3_600_000_000_000)
         await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
         XCTAssertEqual(field.text, "שלום akuo vh, nhv")
+    }
+
+    /// P3-35 QA (owner): `forgetUndoRecord` (a key, click, focus change, Pause, Secure Input) drops the record and
+    /// its text; the next double-Shift is a normal convert even if the snapshot still says untouched.
+    @TextActor func testForgetUndoRecordDropsTheRecordAndTheUndo() async {
+        let (sut, field, _) = await convertedOnce()
+        XCTAssertNotNil(sut.lastRun)
+        sut.forgetUndoRecord()
+        XCTAssertNil(sut.lastRun)
+        await sut.handle(request(empty(untouched: 1), gen: 2), layouts: layouts)
+        XCTAssertEqual(field.text, wholeLineBack)
     }
 
     @TextActor func testUndoRefusedWhenTheTailNowHoldsTheOtherSide() async {
@@ -542,18 +547,15 @@ final class ConvertControllerRunTests: XCTestCase {
                            || child.value is [Character] || child.value is [UInt16], "\(label) holds text")
         }
         XCTAssertEqual(labels, ["gen", "bundleID", "processID", "element", "location", "length", "fingerprint",
-                                "original", "originalCaret", "from", "to", "madeAtNanos"],
+                                "original", "originalCaret", "from", "to"],
                        "a new field must be checked here before it is added")
         XCTAssertTrue(rec.original == "akuo vh, nhv", "only the replaced range, not the whole box")
         XCTAssertEqual(rec.fingerprint.count, 32)
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("שלום"))
         XCTAssertFalse(String(describing: sut.lastOutcome as Any).contains("akuo"))
 
-        // Inside the window the expiry keeps it; past the age limit it drops it (and its text).
-        sut.dropExpiredRecord()
-        XCTAssertNotNil(sut.lastRun)
-        clock.advance(byNanos: ConvertController.lastRunMaxAgeNanos + 1)
-        sut.dropExpiredRecord()
+        // P3-35 QA (owner): no timer; the first key, click or focus change after the convert drops it (and its text).
+        sut.forgetUndoRecord()
         XCTAssertNil(sut.lastRun)
     }
 

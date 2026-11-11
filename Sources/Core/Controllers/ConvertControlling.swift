@@ -44,6 +44,14 @@ struct ConvertRequest: Sendable, Equatable {
     func convert(_ request: ConvertRequest)
     /// Settings → Apps changed: the user's per-app overrides (001 §12 T5), for `ReplacementCapabilities`.
     func methodHintsChanged(_ overrides: [String: MethodHint])
+    /// P3-35 QA (owner): the user touched the field (key, click), focus or the app changed, Kytkin paused or Secure
+    /// Input started: drop the last convert's undo record and the replaced text it holds (no timer any more).
+    func forgetUndo()
+}
+
+extension ConvertControlling {
+    /// P3-35 QA (owner): a controller that keeps no undo record has nothing to drop.
+    func forgetUndo() {}
 }
 
 /// P2-20: converts nothing and finishes the generation at once, so held keys replay right away. AppController's

@@ -174,4 +174,53 @@ final class BoxConversionTests: XCTestCase {
         let w = box("😀 akuo")
         XCTAssertEqual(edit(w), FieldEdit(offset: 3, length: 4, caretAfter: nil))
     }
+
+    // MARK: - P3-35 QA additions
+
+    /// P3-35 QA: correct English with its punctuation, Hebrew typed wrong at the caret: only the Hebrew converts; the
+    /// `'` `,` `.` `/` `;` `-` inside or next to English words are left alone.
+    func testCorrectEnglishPunctuationIsKeptWhenHebrewConverts() {
+        XCTAssertEqual(converted(box("don't, stop. and/or; e-mail יקךךם")), "don't, stop. and/or; e-mail hello")
+    }
+
+    /// P3-35 QA: Hebrew with gershayim / geresh written with ASCII `"` `'`, `-` and `/` between Hebrew letters, and
+    /// a Hebrew sentence with `,` `.` `;`, all kept while the Latin word after them converts.
+    func testHebrewAbbreviationsAndSentencePunctuationAreKept() {
+        let hebrew = "ש\"ח, צה\"ל; מס' 3-4, ת/ז. שלום;"
+        XCTAssertEqual(converted(box(hebrew + " akuo")), hebrew + " שלום")
+    }
+
+    /// P3-35 QA: CRLF is one grapheme of two units: crossed, written back unchanged, offsets in UTF-16.
+    func testCRLFIsCrossedAndTheOffsetsCountBothUnits() {
+        let w = box("שלום\r\nakuo\r\nvh")
+        XCTAssertEqual(converted(w), "שלום\r\nשלום\r\nהי")
+        XCTAssertEqual(edit(w), FieldEdit(offset: 6, length: 8, caretAfter: nil))
+    }
+
+    /// P3-35 QA: a window that starts on a combining mark (cut after its base letter) or ends on half an emoji
+    /// (decoded as U+FFFD) leaves those cut words alone.
+    func testAWindowCutInsideAGraphemeLeavesThatWordAlone() {
+        let start = FieldWindow(text: "\u{301}vh akuo", location: 40, caret: 48, reachesFieldStart: false,
+                                reachesFieldEnd: true)
+        XCTAssertEqual(converted(start), "\u{301}vh שלום")
+        let end = FieldWindow(text: "akuo vh\u{FFFD}", location: 0, caret: 4, reachesFieldStart: true,
+                              reachesFieldEnd: false)
+        XCTAssertEqual(converted(end), "שלום vh\u{FFFD}")
+    }
+
+    /// P3-35 QA: the caret inside a long last word that the window's end cut (the ¼ after the caret was too short):
+    /// that word stays, the direction comes from the letters before it, and the caret is kept.
+    func testTheCaretInsideTheCutLastWordKeepsThatWord() {
+        let w = FieldWindow(text: "akuo vhvhvhvh", location: 0, caret: 7, reachesFieldStart: true,
+                            reachesFieldEnd: false)
+        XCTAssertEqual(converted(w), "שלום vhvhvhvh")
+        XCTAssertEqual(edit(w)?.caretAfter, 7)
+    }
+
+    /// P3-35 QA: the owner's direction rule, its known risk: the caret right after one correct Hebrew word in a box
+    /// of wrong English converts the Hebrew (the nearest letter decides). Pinned so a change is deliberate; selecting
+    /// the English first converts only it.
+    func testTheNearestLetterDecidesEvenInAMostlyOtherLanguageBox() {
+        XCTAssertEqual(converted(box("akuo vh nv שלום")), "akuo vh nv akuo")
+    }
 }

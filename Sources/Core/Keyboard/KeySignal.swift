@@ -13,4 +13,7 @@ enum KeySignal: Sendable, Equatable {
     case bufferInvalidated
     /// P4: Backspace right after a fix. Not emitted yet: undo records arrive with auto-fix in P4.
     case undoCandidate(gen: UInt64)
+    /// P3-35 QA (owner): the first key, click or tap reset after a finished convert. The convert's undo record (it holds
+    /// the replaced text) is dropped then, not after a timer. Ids only, no text; sent at most once per convert.
+    case undoTouched
 }

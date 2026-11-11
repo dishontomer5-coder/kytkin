@@ -67,6 +67,9 @@ struct KeyStreamProcessor: Sendable {
     /// keyDown (user or replay), a click, a reset, a buffer invalidation and the start of the next replacement.
     /// Snapshots carry it as `untouchedSinceConvert`.
     private(set) var lastConvertGen: UInt64?
+    /// P3-35 QA (owner): a convert finished (aborted or not) and no user key, click or tap reset has come since, so
+    /// the convert controller may still hold an undo record. The next such event sends `.undoTouched` and clears it.
+    private(set) var undoMayBeHeld = false
 
     private var detector: DoubleShiftDetector
     private var queue: HoldBackQueue
@@ -117,6 +120,19 @@ struct KeyStreamProcessor: Sendable {
     // MARK: - Per event (tap thread)
 
     mutating func handle(_ e: KeyEvent) -> (TapVerdict, KeySignal?) {
+        let (verdict, signal) = handleEvent(e)
+        // P3-35 QA (owner): the first user key, click or tap reset after a convert finished tells main to drop the
+        // undo record (it holds the replaced text): no timer any more. One Bool test per event; at most one signal per
+        // convert. If this event already signals (a word boundary, a buffer invalidation), main treats that signal as
+        // the touch too (AppController.keySignal).
+        if undoMayBeHeld, e.origin != .ours, e.kind == .keyDown || e.kind == .pointerDown || e.kind == .tapReset {
+            undoMayBeHeld = false
+            return (verdict, signal ?? .undoTouched)
+        }
+        return (verdict, signal)
+    }
+
+    private mutating func handleEvent(_ e: KeyEvent) -> (TapVerdict, KeySignal?) {
         // P2-12: marker check first (design.md). Our own posted text must never reach the buffer or detector,
         // or auto-fix could loop on itself (R4 §5).
         if e.origin == .ours { return (.pass, nil) }
@@ -230,6 +246,9 @@ struct KeyStreamProcessor: Sendable {
         if r.kind == .convert, !r.aborted, !held.contains(where: { $0.event.kind == .keyDown }) {
             lastConvertGen = gen
         }
+        // P3-35 QA (owner): any convert may have left an undo record, even an aborted one or one with held keys
+        // (their replay, or the next key, sends `.undoTouched`).
+        if r.kind == .convert { undoMayBeHeld = true }
         return held
     }
 

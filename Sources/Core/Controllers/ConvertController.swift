@@ -44,14 +44,15 @@
 // exactly (`Akuo` → `שלום` → `akuo`; correct Hebrew next to the converted letters would flip too), so an exact undo
 // needs the original. The next double-Shift uses it only while the snapshot says nothing touched the field since
 // that convert (`untouchedSinceConvert == record.gen`) AND it re-verifies: same bundle ID, pid and focused element
-// (`CFEqual`), record younger than `lastRunMaxAgeNanos`, and the field still holds exactly what was written at the
-// recorded range (fingerprint). It then writes the original back and puts the caret where it was before the convert.
-// Otherwise the record is dropped and the normal convert runs. Every request takes the record out first, so a record
-// serves at most the very next double-Shift, and an expiry task drops it (and its text) once it is too old.
+// (`CFEqual`), and the field still holds exactly what was written at the recorded range (fingerprint). It then
+// writes the original back and puts the caret where it was before the convert. Otherwise the record is dropped and
+// the normal convert runs. Every request takes the record out first, so a record serves at most the very next
+// double-Shift. P3-35 QA (owner): no age limit; `forgetUndoRecord` drops it (and its text) on the first key or click
+// after the convert, a focus/app change, Pause or Secure Input.
 //
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns). P3-35: the
-// `LastRun` record holds the replaced text in memory, for the undo window only (≤ `lastRunMaxAgeNanos`, then
-// dropped; never stored or logged); the outcome holds steps only. Nothing here logs.
+// `LastRun` record holds the replaced text in memory, for the undo only (until the next key, click or focus change,
+// then dropped; never stored or logged); the outcome holds steps only. Nothing here logs.
 
 import CryptoKit
 import Foundation
@@ -62,12 +63,12 @@ import Foundation
     /// Returns true when `target` is (now) selected.
     typealias SwitchLanguage = @Sendable (_ target: InputSourceID, _ keepsBuffer: Bool) async -> Bool
 
-    /// P2-59c (X6): the undo record's maximum age. Undo is "double-Shift again right away": the user sees the result
-    /// and presses again within a second or two. Changes the tap can't see (dictation, an app's own autocorrect, a
-    /// sync from elsewhere) can still land in the field without a key or a click, so the window in which such a
-    /// change could be mistaken for our text is kept short; 5 s is generous for a deliberate undo. Past it, the
-    /// normal scan runs, which is always safe (it just converts the run it finds).
-    static let lastRunMaxAgeNanos: UInt64 = 5_000_000_000
+    // P3-35 QA (owner, 2026-11-11): no age limit on the undo record any more (was 5 s, `lastRunMaxAgeNanos`). Owner:
+    // "5 seconds is limiting. number one priority is functionality and user experience." It stays usable until the
+    // user types a key or clicks (`untouchedSinceConvert`), focus, the field or the app changes, Kytkin pauses or
+    // Secure Input starts (`forgetUndoRecord`, from AppController), or the field no longer holds exactly what was
+    // written (fingerprint). The 5 s guarded against changes the tap can't see (dictation, autocorrect, a sync) being
+    // taken for our text; since P3-35 the fingerprint already refuses any such change inside the written range.
 
     /// P2-59c (X6): the last AX convert. P3-35 (X11): ids, ranges, a fingerprint, and the replaced text (`original`,
     /// the only text field; checked by a Mirror test), held for the undo window only.
@@ -83,16 +84,14 @@ import Foundation
         let length: Int
         /// P3-35: SHA-256 of the written text (`fingerprint(of:)`), to recognise it in the field without keeping it.
         let fingerprint: [UInt8]
-        /// P3-35: the text the convert replaced, written back by an undo. In memory only, for at most
-        /// `lastRunMaxAgeNanos`; never stored or logged.
+        /// P3-35: the text the convert replaced, written back by an undo. In memory only, until the next key,
+        /// click or focus change (P3-35 QA, owner); never stored or logged.
         let original: String
         /// P3-35: the caret before the convert (absolute UTF-16), where an undo puts it back.
         let originalCaret: Int
         /// The side the written text is on now (the convert's target), and the side it came from.
         let from: PairSide
         let to: PairSide
-        /// `clock.nowNanos` when written.
-        let madeAtNanos: UInt64
     }
 
     private let keyWatcher: any KeyWatching
@@ -205,7 +204,6 @@ import Foundation
             return .noop(reason)
         case let .replaced(target, step, keptBuffer, isRun, newRecord):
             lastRun = newRecord
-            if newRecord != nil { scheduleRecordExpiry() }
             // X5: keep every word (re-rendered) or forget them all; never new strokes for one word.
             finish.bufferAfter = keptBuffer ? nil : []
             var switched = false
@@ -288,10 +286,9 @@ import Foundation
 
         // X6: the record is a candidate only while nothing touched the field since that convert, in the same app,
         // process and element, and while it is fresh. The text check follows in `locate`.
-        let now = clock.nowNanos
         let usable = record.flatMap { rec -> LastRun? in
+            // P3-35 QA (owner): no age check any more (see `LastRun`).
             guard snap.untouchedSinceConvert == rec.gen, rec.bundleID == r.bundleID,
-                  now >= rec.madeAtNanos, now - rec.madeAtNanos <= Self.lastRunMaxAgeNanos,
                   let element, element.processID == rec.processID, element.isSameElement(as: rec.element)
             else { return nil }
             return rec
@@ -375,7 +372,7 @@ import Foundation
                 newRecord = LastRun(gen: r.gen, bundleID: r.bundleID, processID: pid, element: element,
                                     location: located.location, length: written.utf16.count,
                                     fingerprint: Self.fingerprint(of: written), original: replaced,
-                                    originalCaret: located.caret, from: toSide, to: toSide.other, madeAtNanos: now)
+                                    originalCaret: located.caret, from: toSide, to: toSide.other)
             }
             return .replaced(target: target, step: step, keptBuffer: fromBuffer, isRun: true, record: newRecord)
         case .notConvertible, .refused(.bufferStale):
@@ -453,21 +450,11 @@ import Foundation
         return Array(SHA256.hash(data: bytes))
     }
 
-    /// P3-35: the record holds text, so it must not outlive the undo window even if no double-Shift follows: a task
-    /// drops it once it is older than `lastRunMaxAgeNanos` (a newer record is left to its own task).
-    private func scheduleRecordExpiry() {
-        let delay = Self.lastRunMaxAgeNanos + 100_000_000
-        Task { @TextActor [weak self] in
-            try? await Task.sleep(nanoseconds: delay)
-            self?.dropExpiredRecord()
-        }
-    }
-
-    /// P3-35: drops the undo record (and the text it holds) once it is too old to be used.
-    func dropExpiredRecord() {
-        guard let rec = lastRun else { return }
-        let now = clock.nowNanos
-        if now < rec.madeAtNanos || now - rec.madeAtNanos > Self.lastRunMaxAgeNanos { lastRun = nil }
+    /// P3-35 QA (owner): drops the undo record and the replaced text it holds. AppController calls it (through
+    /// `ConvertDispatcher.forgetUndo`, after any convert still queued) on the first key or click after a convert, a
+    /// focus, window or app change, Pause and Secure Input. Replaces the P3-35 5 s expiry task.
+    func forgetUndoRecord() {
+        lastRun = nil
     }
 
     private static func isRead(_ step: ReplacementStep) -> Bool {
