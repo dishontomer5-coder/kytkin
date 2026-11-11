@@ -1,11 +1,14 @@
 // P2-59: Finds the run typed in the wrong layout before the caret (001 §12.3 X1, X2, X3). Pure; replaces the
-// P2-18 `WordBeforeCaret` (whitespace-only scan). The window is the ≤ 256 UTF-16 units read through AX; the run
-// stops where text in the other language starts, at a line break, or at a word it can't attribute.
+// P2-18 `WordBeforeCaret` (whitespace-only scan). The window is the ≤ 4,096 UTF-16 units read through AX (P3-33;
+// was 256); the run stops where text in the other language starts, at a foreign letter, at a hard stop (a tab or
+// other non-line-break control character), or at a word it can't attribute.
+// P3-33 (owner 2026-11-11): the run crosses line breaks. A `lineBreak` grapheme separates tokens exactly like a space
+// (so `akuo\nvh|` is one run, and a Hebrew line above still stops it at its last Hebrew letter); it converts to itself.
 //
-// Tokens are maximal runs of non-`space` graphemes. A token is S if it has a `strong(S)` grapheme, weak if it has
+// Tokens are maximal runs of non-separator (`space` / `lineBreak`) graphemes. A token is S if it has a `strong(S)` grapheme, weak if it has
 // no strong grapheme and no foreign letter (`shared`/`foreignOther` only). The rules, in order (X1):
-//   1. Line: only the text after the last hard stop counts. Its start is known if a hard stop was found or the
-//      window reaches the field start; otherwise the window's first token may be cut.
+//   1. Hard stop: only the text after the last hard stop counts. Its start is known if a hard stop was found or the
+//      window reaches the field start; otherwise the window's first token may be cut. (P3-33: no longer a line.)
 //   2. Direction: from the caret back, the first token with a strong grapheme or a foreign letter decides: S = the
 //      side of its last such grapheme (a foreign letter → nothing). A weak token holding a letter, or no token at
 //      all → nothing. Weak tokens without letters (digits, punctuation, emoji) are crossed.
@@ -82,9 +85,9 @@ enum RunBeforeCaret {
         var tokens: [Token] = []
         var i = lineStart
         while i < g.count {
-            if g[i].cls == .space { i += 1; continue }
+            if isSeparator(g[i].cls) { i += 1; continue }
             var j = i
-            while j < g.count, g[j].cls != .space { j += 1 }
+            while j < g.count, !isSeparator(g[j].cls) { j += 1 }
             tokens.append(Token(start: i, end: j))
             i = j
         }
@@ -123,6 +126,11 @@ enum RunBeforeCaret {
     }
 
     // MARK: - Private
+
+    /// P3-33: spaces and line breaks both separate tokens; the run crosses both.
+    private static func isSeparator(_ cls: RunCharClass) -> Bool {
+        cls == .space || cls == .lineBreak
+    }
 
     /// Step 2.
     private static func direction(_ tokens: [Token], _ g: [Grapheme]) -> PairSide? {

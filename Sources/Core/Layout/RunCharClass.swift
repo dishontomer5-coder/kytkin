@@ -11,9 +11,13 @@ enum PairSide: Sendable, Equatable {
 }
 
 enum RunCharClass: Sendable, Equatable {
-    /// Any scalar is Cc, Zl or Zp (newline, CR, CRLF, tab, U+2028/2029): `ReplacementPlanner.containsUnsafeCharacter`.
-    /// The run never crosses one (X3).
+    /// A control character other than a line break (tab, ESC…): `ReplacementPlanner.containsHardStop`. The run never
+    /// crosses one (X3). P3-33: line breaks are `lineBreak` now.
     case hardStop
+    /// P3-33 (owner 2026-11-11): a grapheme made only of line-break scalars (LF, CR, CRLF, VT, FF, NEL, U+2028,
+    /// U+2029). The AX run crosses it like a space; it converts to itself. Never typed (the key path's buffer never
+    /// holds one, and `KeyStrokeComposer` refuses it).
+    case lineBreak
     /// `Character.isWhitespace` and not a hard stop (space, no-break space).
     case space
     /// Only that side's layout types it. P2-60 QA: on Apple Hebrew / ABC that includes non-letters (ASCII `'` `"` vs

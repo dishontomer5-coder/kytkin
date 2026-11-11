@@ -16,7 +16,15 @@ import Foundation
 
 enum ReplacementPlanner {
     /// P2-59 (001 §12.3 X2): the run read looks back at most this many UTF-16 units; the run is at most this window.
-    static let maxRunReadChars = 256
+    /// P3-33 (owner 2026-11-11): 256 → 4,096 and the run now crosses line breaks, so "the whole wrong-language run"
+    /// is converted in practice (a long email paragraph or several chat lines). Still a cap, for speed and to bound
+    /// one double-Shift on an all-one-language field: one AX read, a scan of ≤ 4,096 graphemes (a few ms) and one AX
+    /// write. At the cap the run is cut at a word boundary (X1 step 6), as before.
+    static let maxRunReadChars = 4096
+    /// P3-33: if the first window read fails or comes back with the wrong length (WebKit/Chromium can count far
+    /// text, e.g. attachments or block breaks, differently), the read is retried once per smaller window, nearest
+    /// the caret first, so a convert still turns the tail that can be read instead of falling back to the buffer.
+    static let runReadRetryChars = [1024, 256]
 
     /// - Parameters:
     ///   - focus: nil when AX couldn't read the focused element (no permission, timeout).
@@ -87,6 +95,23 @@ enum ReplacementPlanner {
             case .control, .lineSeparator, .paragraphSeparator: return true
             default: return false
             }
+        }
+    }
+
+    /// P3-33: a line-break scalar: LF, VT, FF, CR, NEL, U+2028, U+2029. A run read through AX may cross these (the
+    /// AX write puts them back unchanged); they are still never typed (`containsUnsafeCharacter`).
+    static func isLineBreak(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0A...0x0D, 0x85, 0x2028, 0x2029: return true
+        default: return false
+        }
+    }
+
+    /// P3-33: true if the text holds a control character other than a line break (tab, ESC, NUL…): a run never
+    /// crosses one (a tab often separates fields; other controls are never plain prose).
+    static func containsHardStop(_ text: String) -> Bool {
+        text.unicodeScalars.contains {
+            !isLineBreak($0) && containsUnsafeCharacter(String($0))
         }
     }
 

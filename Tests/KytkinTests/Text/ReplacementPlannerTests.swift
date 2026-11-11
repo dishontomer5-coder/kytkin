@@ -225,8 +225,18 @@ final class ReplacementPlannerTests: XCTestCase {
                             renderedIn: InputSourceID("com.apple.keylayout.ABC"), isValid: !trailing)
     }
 
-    func testMaxRunReadIs256Units() {
-        XCTAssertEqual(ReplacementPlanner.maxRunReadChars, 256)
+    /// P3-33: was 256 units; now 4,096, with smaller retries nearest the caret.
+    func testMaxRunReadIs4096Units() {
+        XCTAssertEqual(ReplacementPlanner.maxRunReadChars, 4096)
+        XCTAssertEqual(ReplacementPlanner.runReadRetryChars, [1024, 256])
+    }
+
+    /// P3-33: line breaks are crossed by the AX run, but every other control character is still a hard stop.
+    func testLineBreaksAreNotHardStops() {
+        XCTAssertFalse(ReplacementPlanner.containsHardStop("akuo\nvh\r\nx\u{2028}y\u{2029}z\u{85}"))
+        XCTAssertTrue(ReplacementPlanner.containsHardStop("akuo\tvh"))
+        XCTAssertTrue(ReplacementPlanner.containsHardStop("a\u{1B}"))
+        XCTAssertTrue(ReplacementPlanner.containsUnsafeCharacter("akuo\nvh"), "a line break is still never typed")
     }
 
     func testReadableFieldReadsTheRunFirstThenAXThenTheBufferKeys() {

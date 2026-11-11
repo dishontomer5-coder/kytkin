@@ -20,7 +20,7 @@ import Observation
     static let explanation = [
         "Typed something in the wrong layout? Press Shift twice.",
         "With nothing selected, Kytkin converts the text typed in the wrong layout just before the cursor, "
-            + "back to where the other language starts, on the current line.",
+            + "back to where the other language starts, even over several lines.",   // P3-33 QA: was "on the current line"
         "With text selected, it converts only the selection.",
         "Press Shift twice again right away to undo.",
         "Where Kytkin can't read the text, it converts what it remembers you typing, "
