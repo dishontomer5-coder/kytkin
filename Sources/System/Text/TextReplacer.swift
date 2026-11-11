@@ -39,4 +39,8 @@ import Foundation
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? {   // P3-37
         executor.currentFocusedElement(timeout: timeout)
     }
+
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome {   // P3-41
+        executor.postTerminalKeys(count: count, new: new)
+    }
 }

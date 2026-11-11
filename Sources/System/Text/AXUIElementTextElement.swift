@@ -68,7 +68,7 @@ final class AXUIElementTextElement: AXTextElement {
         return error == .success ? .success(()) : .failure(AXAccessError(error))
     }
 
-    // MARK: Identity (P2-59c, the undo record's same-element check)
+    // MARK: Identity (P2-59c; same-element checks)
 
     var processID: Int32? {
         var pid: pid_t = 0

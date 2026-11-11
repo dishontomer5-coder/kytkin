@@ -2,5 +2,5 @@
 
 import Foundation
 
-/// P2-59c: also an identity (`FocusedElementIdentity`), for the undo record's same-element check.
+/// P2-59c: also an identity (`FocusedElementIdentity`), for same-element checks.
 protocol AXTextElement: AXElementReading, AXElementWriting, FocusedElementIdentity {}

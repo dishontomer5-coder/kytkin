@@ -40,7 +40,7 @@ import Foundation
     /// P3-35: the last read's range ends at the caret (a key fallback could delete exactly it).
     private(set) var readRangeEndsAtCaret = true
 
-    /// P2-59c: the element `focusInfo` read as safe, for the undo record's same-element check (identity only).
+    /// P2-59c: the element `focusInfo` read as safe, for same-element checks (identity only).
     var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element?.inner : nil }
 
     init(focusProvider: any FocusedElementProviding, poster: any KeyEventPosting) {
@@ -237,6 +237,8 @@ import Foundation
         guard target.length == old.utf16.count, case .success(old) = el.string(.selectedText) else {
             return .unavailable
         }
+        // P3-40 (b): a user's selection (no pending range): the field's own text there must agree with AXSelectedText.
+        if pending == nil, !fieldTextAgrees(el, old: old, at: target) { return .unavailable }
         guard case .success = el.setString(new, for: .selectedText) else {
             return StepOutcome(verdict: .unavailable, fieldUntouched: isIntact(el, old: old, at: target))
         }
@@ -299,9 +301,28 @@ import Foundation
     /// R5 §B: typing replaces the selection. Never types over a selection holding a control character (§12 T2).
     private func typeOverSelection(old: String, new: String) -> StepOutcome {
         guard !old.isEmpty, !ReplacementPlanner.containsUnsafeCharacter(old),
-              let events = KeyStrokeComposer.typing(new), focusIsUnchanged(), selectionStillSpans(old)
+              let events = KeyStrokeComposer.typing(new), focusIsUnchanged(), selectionStillSpans(old),
+              selectedFieldTextAgrees(old)
         else { return .unavailable }
         return post(events)
+    }
+
+    /// P3-40 (b): Chromium/Electron's `AXSelectedText` can leave out the line breaks between paragraphs (Slack: a
+    /// selection over two lines converted into one line). Where the field also answers `AXStringForRange` for the
+    /// selected range, that text must read as `old` (the read-back tolerance: same length, spaces and line-break
+    /// units interchangeable); a break AX's selected text dropped makes it longer, and the type-over or AX write is
+    /// refused. A range or a read the app won't give can't be checked (true: the P2-49 checks above still hold).
+    private func selectedFieldTextAgrees(_ old: String) -> Bool {
+        guard let el = element else { return false }
+        guard case .success(let r) = el.range(.selectedTextRange), r.location >= 0, r.length > 0 else { return true }
+        return fieldTextAgrees(el, old: old, at: r)
+    }
+
+    private func fieldTextAgrees(_ el: any AXTextElement, old: String, at r: TextRange) -> Bool {
+        switch el.string(in: r) {
+        case .success(let s): return Self.readsBackAs(s, old)
+        case .failure(let e): return !e.abortsFocusRead
+        }
     }
 
     /// P2-49 item 2: re-read the selected range right before typing over it. If it became a caret (an earlier
@@ -349,6 +370,13 @@ import Foundation
         if !old.isEmpty && old.count != count { return .unavailable }
         guard let deletes = KeyStrokeComposer.backspaces(count),
               let typing = KeyStrokeComposer.typing(new), focusIsUnchanged() else { return .unavailable }
+        return post(deletes + typing)
+    }
+
+    /// P3-41: see `TextReplacing.postTerminalKeys`. Composed and checked exactly like `backspaceAndType`'s events.
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome {
+        guard count > 0, let deletes = KeyStrokeComposer.backspaces(count), let typing = KeyStrokeComposer.typing(new)
+        else { return .unavailable }
         return post(deletes + typing)
     }
 

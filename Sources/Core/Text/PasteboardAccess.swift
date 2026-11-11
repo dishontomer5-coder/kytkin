@@ -4,8 +4,8 @@
 // test ever touches the real clipboard (CLAUDE.md live-machine rule).
 //
 // Privacy: a snapshot holds the user's clipboard in memory only, for one convert, until it is written back; the copied
-// box text lives only inside that convert (and, for the undo, the text it replaced until the next key, click or focus
-// change). Nothing here is ever logged or stored (B12).
+// box text lives only inside that convert (P3-40: nothing is kept for an undo any more). Nothing here is ever logged
+// or stored (B12).
 
 import Foundation
 

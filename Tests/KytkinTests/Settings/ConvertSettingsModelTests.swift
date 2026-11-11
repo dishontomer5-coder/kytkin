@@ -103,8 +103,10 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertFalse(text.contains("before the cursor"))
         XCTAssertFalse(text.contains("current line"))
         XCTAssertTrue(text.contains("converts only the selection"))
-        XCTAssertTrue(text.contains("again"))
-        XCTAssertTrue(text.contains("undo"))
+        // P3-40: again = convert to the other language; undo is the app's ⌘Z.
+        XCTAssertTrue(text.contains("twice again to convert the whole text to the other language"))
+        XCTAssertTrue(text.contains("⌘Z"))
+        XCTAssertFalse(text.contains("right away to undo"))
         XCTAssertTrue(ConvertSettingsModel.autoFixNote.contains("later version"))
     }
 

@@ -62,28 +62,22 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(monitor.overrideHostsCalls.last, [])
     }
 
-    // MARK: - P3-35 QA (owner): the undo record is dropped on a touch, not after a timer
+    // MARK: - P3-40 (owner): no undo record, so nothing is dropped on a touch (replaces the P3-35 QA forgetUndo test)
 
-    func testATouchFocusChangePauseOrSecureInputDropsTheUndoRecord() {
+    func testATouchFocusChangePauseOrSecureInputSendNothingToTheConvertController() {
         make(withConvert: true)
         let c = try! XCTUnwrap(convert)
-        let base = c.forgetUndoCount
-        sut.keySignal(.undoTouched)
-        XCTAssertEqual(c.forgetUndoCount, base + 1, "the first key or click after a convert")
+        let requests = c.requests.count
         sut.keySignal(.bufferInvalidated)
-        XCTAssertEqual(c.forgetUndoCount, base + 2, "a click / navigation key that also cleared the buffer")
         sut.keySignal(.wordBoundary)
-        XCTAssertEqual(c.forgetUndoCount, base + 3, "a Space that ended a word")
         sut.contextDidChange(Context(bundleID: "com.apple.TextEdit", pid: 11, generation: 7))
-        XCTAssertEqual(c.forgetUndoCount, base + 4, "another app")
         sut.setPaused(true)
-        XCTAssertEqual(c.forgetUndoCount, base + 5, "Pause")
         sut.setPaused(false)
-        XCTAssertEqual(c.forgetUndoCount, base + 5, "Resume drops nothing more")
         var status = KeyWatcherStatus()
         status.secureInputOn = true
         sut.keyWatcherStatusDidChange(status)
-        XCTAssertEqual(c.forgetUndoCount, base + 6, "Secure Input")
+        XCTAssertEqual(c.requests.count, requests, "no convert request from any of these")
+        XCTAssertEqual(c.anchors, [])
     }
 
     // MARK: - Start / stop
@@ -332,7 +326,7 @@ final class AppControllerTests: XCTestCase {
         monitor.activate(notes, pid: 10)
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
-                                                          useClipboard: true)])   // P3-37: on by default
+                                                          useClipboard: true, processID: 10)])   // P3-37, P3-41
         XCTAssertTrue(watcher.finishes.isEmpty, "the convert controller finishes it")
 
         make(accessibility: .denied, inputMonitoring: .granted, withConvert: true)
@@ -426,13 +420,12 @@ final class AppControllerTests: XCTestCase {
     }
 
     /// P3-37 (b): the first key of a terminal buffer asks the convert controller to note the focused element.
-    func testATerminalBufferStartIsAnchoredAndCountsAsAKey() {
+    /// (P3-40: it no longer also drops an undo record.)
+    func testATerminalBufferStartIsAnchored() {
         make(withConvert: true)
         monitor.activate("com.apple.Terminal", pid: 77)
-        let before = convert?.forgetUndoCount ?? 0
         sut.keySignal(.terminalBufferStarted(epoch: 3))
         XCTAssertEqual(convert?.anchors, [3])
-        XCTAssertEqual(convert?.forgetUndoCount, before + 1)
     }
 
     func testTheClipboardSettingReachesTheRequest() {
@@ -579,7 +572,8 @@ final class AppControllerTests: XCTestCase {
         sut.keySignal(.doubleShift(snapshot, gen: 1))
         XCTAssertEqual(convert?.requests, [ConvertRequest(snapshot: snapshot, gen: 1, bundleID: notes, mode: .convert,
                                                           pair: p.languagePair, currentSource: IDs.russian,
-                                                          switchAfterConvert: false, useClipboard: true)])
+                                                          switchAfterConvert: false, useClipboard: true,
+                                                          processID: 10)])
     }
 
     func testConvertOffForTheAppLeavesDoubleShiftAsAToggle() {

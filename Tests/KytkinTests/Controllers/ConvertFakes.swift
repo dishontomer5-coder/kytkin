@@ -156,6 +156,17 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         focusChecks += 1
         return nowFocusedIsUnset ? focusedElement : nowFocused
     }
+    /// P3-41: what `postTerminalKeys` answers; every call is logged as a `.backspaceAndType` perform and a write.
+    var terminalKeysResult = StepOutcome.done
+    private(set) var terminalKeyPosts = 0
+    func postTerminalKeys(count: Int, new: String) -> StepOutcome {
+        let step = ReplacementStep.backspaceAndType(count: count)
+        log.add(.perform(step))
+        terminalKeyPosts += 1
+        writes.append((step, "", new))
+        return terminalKeysResult
+    }
+
     func setNowFocused(_ e: (any FocusedElementIdentity)?) {
         nowFocused = e
         nowFocusedIsUnset = false

@@ -770,7 +770,7 @@ final class ReplacementExecutorTests: XCTestCase {
         let f = FakeTextField("hello akuo", selection: sel(6, 4))
         let x = makeExecutor(f)
         _ = x.focusInfo(timeout: 0.25)
-        XCTAssertTrue((x.focusedElement as? FakeTextField) === f, "LastRun compares the raw element, not the latch")
+        XCTAssertTrue((x.focusedElement as? FakeTextField) === f, "same-element checks compare the raw element, not the latch")
         XCTAssertTrue(f.isSameElement(as: x.focusedElement!))
         x.endReplacement()
         XCTAssertNil(x.focusedElement)

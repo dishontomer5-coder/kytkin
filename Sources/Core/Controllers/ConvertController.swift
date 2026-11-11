@@ -9,8 +9,7 @@
 //      the instance `guessSource` and retype it on the other one (AX write + read-back → type over).
 //   3. No selection → `.convertRun`. P3-35 (owner 2026-11-11, 001 §12.3 X11): in a readable field, the whole text box:
 //      one AX read of the field (≤ 16,384 UTF-16 units, else a window around the caret), `BoxConversion.plan` turns
-//      every letter of the caret-side language anywhere in it into the other language (or the `LastRun` record
-//      restores the previous convert, X6/X11), one AX write of the range from the first to the last changed
+//      every letter of the caret-side language anywhere in it into the other language, one AX write of the range from the first to the last changed
 //      character with read-back, the caret put back where it was, and a key fallback only when that range ends at
 //      the caret and is exactly the buffer's text. (P2-59/P3-33: was the run before the caret.) Unreadable / keysOnly /
 //      terminal apps: the whole word buffer by keys (backspace × its graphemes, type its re-rendering); P3-33: that
@@ -33,22 +32,17 @@
 //   - the whole buffer was converted by its strokes (keys, or an AX run equal to the buffer's text):
 //       switched     → `newRendering: target, bufferAfter: nil` (keep every word, now in `target`), keepsBuffer
 //       not switched → `bufferRenderedIn: target, bufferAfter: nil` (switch off, or the switch failed)
-//     so a second double-Shift converts the same strokes straight back.
-//   - an AX write that differs from the buffer (the whole box, an undo), a selection, or a halted chain →
+//     so a second double-Shift converts the same strokes to the other language (P3-40: what a fresh convert of that
+//     text would give, the strokes keep capitals exact).
+//   - an AX write that differs from the buffer (the whole box), a selection, or a halted chain →
 //     `bufferAfter: []` (forget it all).
 //   - nothing written → `nil, nil`.
 //   Never a non-empty `bufferAfter` with `bufferRenderedIn` (asserted here and in the processor).
 //
-// Undo (X6, P3-35 X11): after an AX convert the controller keeps one `LastRun` record: ids, the written range, a
-// SHA-256 fingerprint of the written text, and the text it replaced. A per-character convert doesn't round-trip
-// exactly (`Akuo` → `שלום` → `akuo`; correct Hebrew next to the converted letters would flip too), so an exact undo
-// needs the original. The next double-Shift uses it only while the snapshot says nothing touched the field since
-// that convert (`untouchedSinceConvert == record.gen`) AND it re-verifies: same bundle ID, pid and focused element
-// (`CFEqual`), and the field still holds exactly what was written at the recorded range (fingerprint). It then
-// writes the original back and puts the caret where it was before the convert. Otherwise the record is dropped and
-// the normal convert runs. Every request takes the record out first, so a record serves at most the very next
-// double-Shift. P3-35 QA (owner): no age limit; `forgetUndoRecord` drops it (and its text) on the first key or click
-// after the convert, a focus/app change, Pause or Secure Input.
+// P3-40 (owner 2026-11-11, plan.md P3-40; 001 §12.3 X13): **no undo**. A second double-Shift is a fresh convert of
+// the whole box (or the clipboard copy, or the kept buffer) to the other language: `1 2 1` → `2 2 2` → `1 1 1`. Undo is
+// the app's own ⌘Z. The P2-59c/P3-35/P3-37 undo records (`LastRun`, `ClipUndo`: the replaced text, a fingerprint, the
+// `untouchedSinceConvert` / `.undoTouched` / `forgetUndo` plumbing) are gone, so no text outlives a request.
 //
 // P3-37 (owner 2026-11-11, 001 §12.3 X12):
 //   (a) Nothing remembered (empty buffer) and nothing written → double-Shift just switches the language, whatever the
@@ -62,15 +56,14 @@
 //       terminals, not secure, not composing, not "Keys only" by the user, with the setting on and a pair whose ⌘A/⌘C/⌘V
 //       keys are safe: ⌘A ⌘C, convert the box with `BoxConversion` (direction: the remembered buffer's language, else
 //       the box's last letter, as if the caret were at its end), paste it with ⌘V, put the clipboard back after the
-//       finish. A known selection that can't be typed over (a line break) is pasted over. Empty box / no copy →
-//       the remembered buffer by keys, else just switch. Undo: double-Shift again right away pastes the original back
-//       (`ClipUndo`, held until the next key, click or focus change, like P3-35's).
+//       finish. Empty box / no copy →
+//       the remembered buffer by keys, else just switch. P3-40: double-Shift again converts the box again (no undo).
+//   P3-40 (b): a selection AX reports in such an app is copied with ⌘C (no ⌘A) and pasted over, not typed over:
+//       Chromium's `AXSelectedText` can drop the line breaks between paragraphs, so typing it over joined the lines.
 //
-// Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns). P3-35: the
-// `LastRun` record holds the replaced text in memory, for the undo only (until the next key, click or focus change,
-// then dropped; never stored or logged); the outcome holds steps only. Nothing here logs.
+// Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
+// only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs.
 
-import CryptoKit
 import Foundation
 
 @TextActor final class ConvertController {
@@ -79,51 +72,6 @@ import Foundation
     /// Returns true when `target` is (now) selected.
     typealias SwitchLanguage = @Sendable (_ target: InputSourceID, _ keepsBuffer: Bool) async -> Bool
 
-    // P3-35 QA (owner, 2026-11-11): no age limit on the undo record any more (was 5 s, `lastRunMaxAgeNanos`). Owner:
-    // "5 seconds is limiting. number one priority is functionality and user experience." It stays usable until the
-    // user types a key or clicks (`untouchedSinceConvert`), focus, the field or the app changes, Kytkin pauses or
-    // Secure Input starts (`forgetUndoRecord`, from AppController), or the field no longer holds exactly what was
-    // written (fingerprint). The 5 s guarded against changes the tap can't see (dictation, autocorrect, a sync) being
-    // taken for our text; since P3-35 the fingerprint already refuses any such change inside the written range.
-
-    /// P2-59c (X6): the last AX convert. P3-35 (X11): ids, ranges, a fingerprint, and the replaced text (`original`,
-    /// the only text field; checked by a Mirror test), held for the undo window only.
-    struct LastRun {
-        /// The convert's generation; usable only while the snapshot's `untouchedSinceConvert` equals it.
-        let gen: UInt64
-        let bundleID: String
-        let processID: Int32
-        /// The focused element written to (identity only, compared with `CFEqual`).
-        let element: any FocusedElementIdentity
-        /// Absolute UTF-16 offset and length of the text written (the range as it is now).
-        let location: Int
-        let length: Int
-        /// P3-35: SHA-256 of the written text (`fingerprint(of:)`), to recognise it in the field without keeping it.
-        let fingerprint: [UInt8]
-        /// P3-35: the text the convert replaced, written back by an undo. In memory only, until the next key,
-        /// click or focus change (P3-35 QA, owner); never stored or logged.
-        let original: String
-        /// P3-35: the caret before the convert (absolute UTF-16), where an undo puts it back.
-        let originalCaret: Int
-        /// The side the written text is on now (the convert's target), and the side it came from.
-        let from: PairSide
-        let to: PairSide
-    }
-
-    /// P3-37 (c): the last clipboard convert of a whole box, for the undo (double-Shift again right away). Ids, a
-    /// fingerprint of what was pasted, and the box it replaced (`original`, the only text; in memory until the next key,
-    /// click or focus change; never stored or logged).
-    struct ClipUndo {
-        let gen: UInt64
-        let bundleID: String
-        let processID: Int32
-        let fingerprint: [UInt8]
-        let original: String
-        /// The side the pasted text is on (the convert's target), and the side the original is on.
-        let from: PairSide
-        let to: PairSide
-    }
-
     /// P3-37 (c): one clipboard convert, decided synchronously in `decide` and run (with its bounded waits) in `run`.
     private struct ClipJob {
         let source: ClipboardConvert.Source
@@ -131,7 +79,8 @@ import Foundation
         let element: any FocusedElementIdentity
         /// The remembered buffer's side (the box's direction), nil = the box's last letter.
         let direction: PairSide?
-        let undo: ClipUndo?
+        /// P3-40 (b): the selection as AX reported it (`.copiedSelection` only), to check the ⌘C copy against.
+        let axSelection: String?
         /// P3-37 QA: the text may hold line breaks (and other control characters). True only in an app seeded as
         /// keys-only (Slack, Chrome…); an unseeded app could be a terminal Kytkin doesn't know (an Electron one whose
         /// xterm.js box reads as an AXTextArea), where a pasted line break without bracketed paste runs a command.
@@ -148,12 +97,11 @@ import Foundation
 
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
-    /// P3-37 (c): the undo record of the last clipboard convert, for the next double-Shift only.
-    private(set) var lastClip: ClipUndo?
     /// P3-37 (c): the user's clipboard, to put back after this request's finish (bounded).
     private var pendingRestore: ClipboardConvert.PendingRestore?
     /// P3-37 (b): the focused element a terminal's buffer started in.
-    private var terminalAnchor: (epoch: UInt64, element: any FocusedElementIdentity)?
+    /// P3-41: `element` nil = AX named no focused element when the buffer started (Ghostty-based terminals may not).
+    private var terminalAnchor: (epoch: UInt64, element: (any FocusedElementIdentity)?)?
     /// P3-37: the generation whose B3 claim this controller holds (the clipboard and a key fallback share one claim).
     private var claimedGen: UInt64?
     /// Session verdicts + the user's per-app overrides (§12 T5). Never persisted (§12 T6).
@@ -164,8 +112,6 @@ import Foundation
     private(set) var lastGeneration: UInt64?
     /// For tests and diagnostics: holds no text.
     private(set) var lastOutcome: ConvertOutcome?
-    /// P2-59c (X6): the undo record of the last AX run convert, for the next double-Shift only.
-    private(set) var lastRun: LastRun?
 
     nonisolated init(keyWatcher: any KeyWatching, clock: any Clock = SystemClock(),
                      capabilities: ReplacementCapabilities = ReplacementCapabilities(),
@@ -239,8 +185,8 @@ import Foundation
 
     private enum Decision {
         /// `keptBuffer`: the whole buffer was converted by its strokes, so it now shows in `target` (X5).
-        /// `isRun`: a run convert (not a selection). `record`: the X6 undo record of an AX run write.
-        case replaced(target: InputSourceID, step: ReplacementStep, keptBuffer: Bool, isRun: Bool, record: LastRun?)
+        /// `isRun`: a run convert (not a selection).
+        case replaced(target: InputSourceID, step: ReplacementStep, keptBuffer: Bool, isRun: Bool)
         case nothingToConvert
         /// P2-54(a): focus unknown and nothing remembered.
         case fieldUnreadable
@@ -253,11 +199,6 @@ import Foundation
         -> ConvertOutcome {
         try Task.checkCancellation()
         claimedGen = nil
-        // X6: a record serves only the very next double-Shift; this one takes it out whatever it does.
-        let record = lastRun
-        lastRun = nil
-        let clip = lastClip   // P3-37 (c): the same for the clipboard undo
-        lastClip = nil
         var r = request
         if r.mode == .toggleOnly { return await toggle(r, because: .toggleMode) }
         // P3-37 (b): a terminal buffer kept across a click or an app switch, in another window / tab / split now (or
@@ -272,7 +213,7 @@ import Foundation
             beep()
             return .noop(.layoutsUnavailable)
         }
-        let decision = decide(r, layouts: layouts, record: record, clip: clip, allowClipboard: r.useClipboard)
+        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard)
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
 
@@ -289,15 +230,14 @@ import Foundation
             if textMayHaveChanged { finish.bufferAfter = [] }
             if beeps { beep() }
             return .noop(reason)
-        case let .replaced(target, step, keptBuffer, isRun, newRecord):
-            lastRun = newRecord
+        case let .replaced(target, step, keptBuffer, isRun):
             // X5: keep every word (re-rendered) or forget them all; never new strokes for one word.
             finish.bufferAfter = keptBuffer ? nil : []
             var switched = false
             if r.switchAfterConvert, !Task.isCancelled {
                 // P2-59c: a run convert's finish states the buffer itself (kept, or `[]`), so the change notification
-                // must not reset the processor: that reset would also clear `untouchedSinceConvert` and kill the X6
-                // undo whenever "switch after converting" is on. A selection keeps the P2-21 behaviour.
+                // need not reset the processor (P3-40: there is no undo to keep any more; the flag stays so this
+                // switch's notification never resets mid-request). A selection keeps the P2-21 behaviour.
                 switched = await switchLanguage(target, keptBuffer || isRun)
             }
             if keptBuffer {
@@ -323,8 +263,7 @@ import Foundation
 
     /// Everything that touches the field, synchronously (no suspension), so no other request can reuse the replacer
     /// in between, and nothing read through AX outlives this call.
-    private func decide(_ r: ConvertRequest, layouts: LayoutSnapshot, record: LastRun?, clip: ClipUndo?,
-                        allowClipboard: Bool) -> Decision {
+    private func decide(_ r: ConvertRequest, layouts: LayoutSnapshot, allowClipboard: Bool) -> Decision {
         let replacer = currentReplacer()
         defer { replacer.endReplacement() }
         let focus = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout)
@@ -335,6 +274,15 @@ import Foundation
         // switch; now it is ignored: the remembered line converts by keys, or double-Shift just switches.
         let terminalSelection = capabilities.method(for: r.bundleID) == .terminal
         if let selection = focus?.selection, !selection.isEmpty, !terminalSelection {
+            // P3-40 (b): in an app whose box AX can't read (Slack, Chrome…), AX's selected text may have lost the line
+            // breaks (Chromium can drop them between paragraphs), so typing it over joined the lines. Copy the selection
+            // itself with ⌘C (no ⌘A), check it against the AX text, convert, paste over it.
+            if allowClipboard, let f = focus,
+               !ReplacementPlanner.writesSelection(bundleID: r.bundleID, caps: capabilities, focus: f),
+               let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .copiedSelection,
+                                 direction: nil, axSelection: selection) {
+                return .clipboard(job)
+            }
             let request = ReplacementRequest(kind: .convertSelection, bundleID: r.bundleID, snapshot: r.snapshot,
                                              selectionLength: selection.count)
             var target: InputSourceID?
@@ -344,26 +292,22 @@ import Foundation
                 target = c.target
                 return c.text
             }
-            // P3-37 (c): a known selection Kytkin can't type over (a line break in it, in an unreadable app): paste it.
-            if case .refused(let why) = outcome.result, why == .unsafeSelection || why == .noMethod, allowClipboard,
-               let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .selection(selection),
-                                 direction: nil, undo: nil) {
-                return .clipboard(job)
-            }
+            // P3-40 (b): the P3-37 (c) paste of AX's selected text (a line break in it) is gone: the ⌘C copy above
+            // replaced it, since AX's text is what lost the line breaks.
             guard case .replaced(let step) = outcome.result else { return Self.failure(outcome) }
             guard let target else {   // can't happen: a write only runs after `convert` answered
                 return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: true)
             }
-            return .replaced(target: target, step: step, keptBuffer: false, isRun: false, record: nil)
+            return .replaced(target: target, step: step, keptBuffer: false, isRun: false)
         }
-        return decideRun(r, layouts: layouts, focus: focus, element: element, record: record, clip: clip,
-                         allowClipboard: allowClipboard, replacer: replacer)
+        return decideRun(r, layouts: layouts, focus: focus, element: element, allowClipboard: allowClipboard,
+                         replacer: replacer)
     }
 
     /// P2-59 (001 §12.3 X4–X6): no selection, the run before the caret.
     private func decideRun(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
-                           element: (any FocusedElementIdentity)?, record: LastRun?, clip: ClipUndo?,
-                           allowClipboard: Bool, replacer: any TextReplacing) -> Decision {
+                           element: (any FocusedElementIdentity)?, allowClipboard: Bool,
+                           replacer: any TextReplacing) -> Decision {
         let snap = r.snapshot
 
         // X5: the buffer's run (every word and the spaces between), in the layout it shows in now.
@@ -391,70 +335,32 @@ import Foundation
             let direction = layouts.side(of: source).flatMap { side in
                 old?.contains { $0.isLetter && layouts.runClass(of: $0) == .strong(side) } == true ? side : nil
             }
-            let undo = clip.flatMap { rec -> ClipUndo? in
-                guard snap.untouchedSinceConvert == rec.gen, rec.bundleID == r.bundleID,
-                      element?.processID == rec.processID else { return nil }
-                return rec
-            }
             if let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .box,
-                                 direction: direction, undo: undo) {
+                                 direction: direction, axSelection: nil) {
                 return .clipboard(job)
             }
-        }
-
-        // X6: the record is a candidate only while nothing touched the field since that convert, in the same app,
-        // process and element, and while it is fresh. The text check follows in `locate`.
-        let usable = record.flatMap { rec -> LastRun? in
-            // P3-35 QA (owner): no age check any more (see `LastRun`).
-            guard snap.untouchedSinceConvert == rec.gen, rec.bundleID == r.bundleID,
-                  let element, element.processID == rec.processID, element.isSameElement(as: rec.element)
-            else { return nil }
-            return rec
         }
 
         // Captured from the chain's callbacks; local to this call (the text never leaves it).
         var box: BoxConversion.Result?
         var plan: BoxConversion.Plan?
-        var undo: LastRun?
-        var located: (location: Int, caret: Int)?
         /// P3-35: the buffer's strokes may stand for the range only when it ends at the caret (keys: no read at all).
         var bufferMayApply = true
         var target: InputSourceID?
         var fromBuffer = false
-        var replaced: String?
-        var written: String?
 
-        // P3-35 (X11): the whole text box, or the record's range (undo).
+        // P3-35 (X11): the whole text box. P3-40: every time, also right after a convert (no undo record).
         let locate: (FieldWindow) -> FieldEdit? = { window in
-            if let rec = usable, let edit = Self.recordedUndo(rec, in: window) {
-                undo = rec
-                bufferMayApply = window.location + edit.offset + edit.length == window.caret
-                located = (window.location + edit.offset, window.caret)
-                return edit
-            }
-            // No record, or it no longer matches the field: drop it and convert normally.
             let result = BoxConversion.plan(window, classify: layouts.runClass) { side, grapheme in
                 layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
             }
             box = result
             guard case .convert(let p) = result else { return nil }
             plan = p
-            located = (window.location + p.edit.offset, window.caret)
             bufferMayApply = window.location + p.edit.offset + p.edit.length == window.caret
             return p.edit
         }
         let convert: (String) -> String? = { text in
-            if let rec = undo {
-                guard rec.original != text else { return nil }
-                // A kept, re-rendered buffer (switch off, X5) whose strokes give back exactly the original: the undo
-                // keeps the buffer too, so the ping-pong goes on by strokes.
-                fromBuffer = bufferMayApply && old.map { text.unicodeScalars.elementsEqual($0.unicodeScalars) } == true
-                    && rendered.map { $0.text.unicodeScalars.elementsEqual(rec.original.unicodeScalars) } == true
-                target = layouts.source(of: rec.to)
-                replaced = text
-                written = rec.original
-                return rec.original
-            }
             // P2-60: scalar equality, not String's canonical equivalence: a precomposed vs decomposed run must not
             // count as "exactly the buffer" (the key path backspaces by the buffer's own count).
             if bufferMayApply, let old, let rendered, text.unicodeScalars.elementsEqual(old.unicodeScalars) {
@@ -462,37 +368,29 @@ import Foundation
                 guard rendered.text != old else { return nil }
                 fromBuffer = true
                 target = rendered.target
-                replaced = text
-                written = rendered.text
                 return rendered.text
             }
             // The whole box: the plan's text for the range it named.
             guard let p = plan else { return nil }
             fromBuffer = false
             target = layouts.source(of: p.side.other)
-            replaced = text
-            written = p.text
             return p.text
         }
 
         let outcome = runChain(request, focus: focus, old: old, gen: r.gen, replacer: replacer, locateField: locate,
                                convert: convert)
+        // P3-41 (cmux): a terminal whose AX facts got in the way of the key step converts the buffer by keys anyway, or
+        // at least switches (never a silent nothing or a beep with no switch).
+        if capabilities.method(for: r.bundleID) == .terminal, let decision = terminalFallback(
+            outcome, r, focus: focus, old: old, rendered: rendered, replacer: replacer) {
+            return decision
+        }
         switch outcome.result {
         case .replaced(let step):
-            guard let target, let toSide = layouts.side(of: target) else {   // can't happen (see `convert`)
+            guard let target else {   // can't happen (see `convert`)
                 return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: true)
             }
-            var newRecord: LastRun?
-            // P3-35: an undo keeps no record: a third double-Shift converts the restored box again, which is the
-            // same convert as the first one (same caret, same letters).
-            if case .axWriteSelection = step, undo == nil, let located, let element, let pid = element.processID,
-               let written, !written.isEmpty, let replaced {
-                newRecord = LastRun(gen: r.gen, bundleID: r.bundleID, processID: pid, element: element,
-                                    location: located.location, length: written.utf16.count,
-                                    fingerprint: Self.fingerprint(of: written), original: replaced,
-                                    originalCaret: located.caret, from: toSide, to: toSide.other)
-            }
-            return .replaced(target: target, step: step, keptBuffer: fromBuffer, isRun: true, record: newRecord)
+            return .replaced(target: target, step: step, keptBuffer: fromBuffer, isRun: true)
         case .notConvertible, .refused(.bufferStale):
             return .nothingToConvert
         case .refused(.focusUnknown) where !snap.hasRun:
@@ -516,6 +414,55 @@ import Foundation
             return .fieldUnreadable   // P3-37 (a): an unreadable app's chain that wrote nothing
         default:
             return Self.failure(outcome)
+        }
+    }
+
+    /// P3-41 (owner 2026-11-11, cmux): the terminal key path needs no AX text, but the chain still asks AX three things
+    /// first: is there a focused element (`focusUnknown`), does it look secure or composing (a subrole or marked-range
+    /// read that *fails* counts as both, P2-49 item 6 / R5), and is the focus still the element `focusInfo` read
+    /// (P2-49 item 3, `CFEqual`). A Ghostty-based terminal can fail each of them: no AX focus, error answers, or a fresh
+    /// element on every read. Before P3-37 cmux was unseeded (`.auto`); P3-37 seeded it `.terminal`, and with a buffer
+    /// any of these refusals beeped and did not even switch. In a terminal:
+    ///   - AX said nothing it could vouch for (refused: focus unknown / looks secure / composing; or the chain ran out
+    ///     with nothing posted, e.g. the P2-49 same-element check failed): post the buffer's keys without the AX checks, if the focus AX names (if
+    ///     any) still belongs to the request's process. A real secure prompt is covered by Secure Input (the request is
+    ///     then toggle-only and never gets here); a real `AXSecureTextField` role still refuses.
+    ///   - Anything else that wrote nothing: just switch the language (the buffer's keys were typed in the old layout;
+    ///     the switch forgets them).
+    /// Returns nil to let the normal outcome handling run (converted, partly posted, a role-secure field…).
+    private func terminalFallback(_ outcome: ReplacementOutcome, _ r: ConvertRequest, focus: FocusInfo?, old: String?,
+                                  rendered: (target: InputSourceID, text: String)?,
+                                  replacer: any TextReplacing) -> Decision? {
+        switch outcome.result {
+        case .replaced, .halted, .abandoned: return nil
+        case .refused(let why):
+            if focus?.role == FocusInfo.secureTextFieldRole { return nil }   // a real password field: never keys
+            guard why == .focusUnknown || why == .secureField || why == .composing else {
+                return r.snapshot.hasRun ? .fieldUnreadable : nil
+            }
+        case .exhausted, .timedOut:
+            break   // by definition nothing was written or posted (ReplacementOutcome)
+        case .notConvertible:
+            return nil
+        }
+        guard r.snapshot.hasRun else { return .fieldUnreadable }
+        guard let old, let rendered, rendered.text != old else { return .fieldUnreadable }
+        // The focus AX names now, if any, must be in the terminal the request came from.
+        if let pid = r.processID,
+           let now = replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.processID, now != pid {
+            return .fieldUnreadable
+        }
+        guard claim(r.gen) else { return .failed(.replacement(.abandoned), beeps: false, textMayHaveChanged: false) }
+        let count = old.count
+        let result = replacer.postTerminalKeys(count: count, new: rendered.text)
+        switch result.verdict {
+        case .done:
+            return .replaced(target: rendered.target, step: .backspaceAndType(count: count), keptBuffer: true,
+                             isRun: true)
+        default:
+            return result.fieldUntouched ? .fieldUnreadable
+                : .failed(.replacement(.halted(after: .backspaceAndType(count: count))), beeps: true,
+                          textMayHaveChanged: true)
         }
     }
 
@@ -545,7 +492,7 @@ import Foundation
     /// P3-37 (c): a clipboard job, or nil when the clipboard may not be used here.
     private func clipJob(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
                          element: (any FocusedElementIdentity)?, source: ClipboardConvert.Source,
-                         direction: PairSide?, undo: ClipUndo?) -> ClipJob? {
+                         direction: PairSide?, axSelection: String?) -> ClipJob? {
         guard makeClipboard != nil, !r.inAddressBar, let f = focus, let element, !f.isSecure,
               f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText, layouts.clipboardShortcutsAreSafe,
               // P3-37 QA: ⌘ + key 0 / 8 / 9 is read in the layout in front: one outside the pair is unchecked.
@@ -567,7 +514,7 @@ import Foundation
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
-        return ClipJob(source: source, element: element, direction: direction, undo: undo,
+        return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
                        mayPasteLineBreaks: mayPasteLineBreaks)
     }
 
@@ -584,17 +531,15 @@ import Foundation
                               finish: inout Finish) async -> ConvertOutcome {
         guard let cb = currentClipboard() else { return await fallBack(r, layouts: layouts, finish: &finish) }
         var target: InputSourceID?
-        var undone: ClipUndo?
         let convert: (String) -> ClipboardConvert.Conversion = { text in
+            // P3-40 (b): the copy must be the selection AX reported. Only the visible characters are compared: AX may
+            // have dropped or changed the line breaks and spaces (that is why the copy is used).
+            if case .copiedSelection = job.source, let ax = job.axSelection,
+               !Self.sameVisibleText(text, ax) { return .mismatch }
             // P3-37 QA: in an unseeded app a line break (or any control character) is never pasted (ClipJob).
             if !job.mayPasteLineBreaks, ReplacementPlanner.containsUnsafeCharacter(text) { return .unsafe }
-            if case .box = job.source, let rec = job.undo, Self.clipFingerprint(of: text) == rec.fingerprint {
-                undone = rec
-                target = layouts.source(of: rec.to)
-                return .replace(rec.original)
-            }
             switch job.source {
-            case .selection:
+            case .copiedSelection:
                 guard let c = layouts.convertGuessing(text), c.text != text else { return .nothing }
                 target = c.target
                 return .replace(c.text)
@@ -628,22 +573,18 @@ import Foundation
                                              mayWrite: { self.claim(gen) })
         pendingRestore = pending
         switch result {
-        case let .pasted(original, written):
-            guard let target, let toSide = layouts.side(of: target) else {   // can't happen: pasted after `convert`
+        case .pasted:
+            guard let target else {   // can't happen: pasted after `convert`
                 finish.bufferAfter = []
                 beep()
                 return .noop(.replacement(.halted(after: .pasteboard)))
             }
-            // The caret is at the end of the box now, not where the buffer ended: forget the buffer (X5 table).
+            // The caret is at the end of the box (or of the pasted selection) now, not where the buffer ended: forget
+            // the buffer (X5 table). P3-40: nothing kept for an undo; double-Shift again converts the box again.
             finish.bufferAfter = []
-            if undone == nil, case .box = job.source, let pid = element.processID {
-                lastClip = ClipUndo(gen: r.gen, bundleID: r.bundleID, processID: pid,
-                                    fingerprint: Self.clipFingerprint(of: written), original: original,
-                                    from: toSide, to: toSide.other)
-            }
             var switched = false
             if r.switchAfterConvert, !Task.isCancelled {
-                // keepsBuffer: the finish forgets the buffer itself, so the undo's `untouchedSinceConvert` survives.
+                // keepsBuffer: the finish forgets the buffer itself (as for an AX run convert).
                 switched = await switchLanguage(target, true)
             }
             return .converted(to: target, by: .pasteboard, switched: switched)
@@ -655,6 +596,13 @@ import Foundation
         case .unsafeText:   // P3-37 QA
             beep()
             return .noop(.replacement(.refused(.unsafeSelection)))
+        case .selectionMismatch:   // P3-40 (b): ⌘C copied something else than the selection AX reported
+            beep()
+            return .noop(.replacement(.refused(.selectionUnreadable)))
+        case .boxEmpty where job.source == .copiedSelection:
+            // P3-40 (b): ⌘C copied nothing; only ⌘C was posted, so the selection is still there. Convert it the old way
+            // (AX write / type over the AX text, one line only), all Kytkin can do without a copy.
+            return await fallBack(r, layouts: layouts, finish: &finish)
         case .boxEmpty where r.snapshot.hasRun:
             // P3-37 QA: ⌘A (and the Right arrow that dropped its selection) were posted, so the caret is at the end of
             // the box, or one character further right if ⌘A did nothing: not where the remembered buffer ends. Typing
@@ -680,33 +628,46 @@ import Foundation
 
     /// P3-37 (c): the clipboard found nothing to copy (or couldn't start): the remembered buffer by keys, else switch.
     private func fallBack(_ r: ConvertRequest, layouts: LayoutSnapshot, finish: inout Finish) async -> ConvertOutcome {
-        let decision = decide(r, layouts: layouts, record: nil, clip: nil, allowClipboard: false)
+        let decision = decide(r, layouts: layouts, allowClipboard: false)
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
 
-    /// P3-37 (b): the kept terminal buffer started in the element that has focus now. Unknown either way = no.
+    /// P3-37 (b): the kept terminal buffer started in the element that has focus now.
+    /// P3-41 (cmux): when AX can't name the element (no element at the buffer's first key, or none now), the identity
+    /// check can't run. The buffer is then trusted only if no click happened since its first key, i.e. it crossed only
+    /// an app switch away and back to the same terminal process (the processor already matched the pid). Before P3-41
+    /// an unknown identity always forgot the buffer, so in such a terminal every buffer kept across an app switch was
+    /// lost. Two known elements that differ: another window / tab / split, forgotten as before.
     private func terminalBufferStillFocused(_ snap: WordSnapshot) -> Bool {
-        guard let anchor = terminalAnchor, anchor.epoch == snap.epoch,
-              let now = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout) else {
-            return false
+        let now = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout)
+        if let anchor = terminalAnchor, anchor.epoch == snap.epoch, let then = anchor.element, let now {
+            return now.isSameElement(as: then)
         }
-        return now.isSameElement(as: anchor.element)
+        // P3-41: identity unknown at either end (or no anchor for this buffer: its note may not have run yet).
+        return !snap.clickedSinceStart
     }
 
     /// P3-37 (b): a terminal buffer started (from the tap, through main): note the focused element. Identity only.
     func anchorTerminalBuffer(epoch: UInt64) {
-        terminalAnchor = currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout)
-            .map { (epoch, $0) }
+        // P3-41: kept with a nil element too, so the check above knows the buffer started where AX names nothing.
+        terminalAnchor = (epoch, currentReplacer().currentFocusedElement(timeout: ReplacementExecutor.axTimeout))
     }
 
-    /// P3-37 (c): the undo's fingerprint of a whole box as ⌘C copies it: P3-35's, ignoring trailing line breaks (some
-    /// apps copy a box with one more or one less at the end).
-    nonisolated static func clipFingerprint(of text: String) -> [UInt8] {
-        var scalars = Array(text.unicodeScalars)
-        while let last = scalars.last, ReplacementPlanner.isLineBreak(last) { scalars.removeLast() }
-        var trimmed = ""
-        trimmed.unicodeScalars.append(contentsOf: scalars)
-        return fingerprint(of: trimmed)
+    /// P3-40 (b): the same text once spaces, line breaks and other invisible characters are left out (scalar by
+    /// scalar, both canonically composed). Chromium's `AXSelectedText` can drop or change the breaks between paragraphs,
+    /// so only the visible characters can tell that ⌘C copied the selection AX reported. Linear in the two lengths.
+    nonisolated static func sameVisibleText(_ a: String, _ b: String) -> Bool {
+        func visible(_ s: String) -> [Unicode.Scalar] {
+            s.precomposedStringWithCanonicalMapping.unicodeScalars.filter { u in
+                if CharacterSet.whitespacesAndNewlines.contains(u) { return false }
+                switch u.properties.generalCategory {
+                case .control, .format, .lineSeparator, .paragraphSeparator: return false
+                default: return true
+                }
+            }
+        }
+        let x = visible(a)
+        return !x.isEmpty && x == visible(b)
     }
 
     private static func failure(_ outcome: ReplacementOutcome) -> Decision {
@@ -719,44 +680,6 @@ import Foundation
         let made = makeReplacer()
         replacer = made
         return made
-    }
-
-    /// P3-35 (X6, X11): the record's range, if the window still holds exactly what was written there (fingerprint),
-    /// starting and ending on character boundaries. The undo writes `original` back and restores the caret. nil = the
-    /// record no longer matches (the normal convert runs).
-    static func recordedUndo(_ rec: LastRun, in window: FieldWindow) -> FieldEdit? {
-        let units = Array(window.text.utf16)
-        let offset = rec.location - window.location
-        guard rec.length > 0, offset >= 0, offset + rec.length <= units.count else { return nil }
-        let slice = units[offset..<(offset + rec.length)]
-        let text = String(decoding: slice, as: UTF16.self)
-        guard Array(text.utf16) == Array(slice), fingerprint(of: text) == rec.fingerprint else { return nil }
-        return FieldEdit(offset: offset, length: rec.length, caretAfter: rec.originalCaret)
-    }
-
-    /// P3-35: SHA-256 of `text` as the field may read it back (canonical composition, a no-break space as a space,
-    /// every line-break unit as LF: what `ReplacementExecutor.readsBackAs` accepts), so the undo recognises our own
-    /// write without keeping a copy of it.
-    nonisolated static func fingerprint(of text: String) -> [UInt8] {
-        var bytes: [UInt8] = []
-        for u in text.precomposedStringWithCanonicalMapping.utf16 {
-            let v: UInt16 = switch u {
-            case 0xA0: 0x20
-            case 0x0D, 0x2028, 0x2029: 0x0A
-            default: u
-            }
-            bytes.append(UInt8(v & 0xFF))
-            bytes.append(UInt8(v >> 8))
-        }
-        return Array(SHA256.hash(data: bytes))
-    }
-
-    /// P3-35 QA (owner): drops the undo record and the replaced text it holds. AppController calls it (through
-    /// `ConvertDispatcher.forgetUndo`, after any convert still queued) on the first key or click after a convert, a
-    /// focus, window or app change, Pause and Secure Input. Replaces the P3-35 5 s expiry task.
-    func forgetUndoRecord() {
-        lastRun = nil
-        lastClip = nil   // P3-37 (c)
     }
 
     private static func isAXWrite(_ step: ReplacementStep) -> Bool {

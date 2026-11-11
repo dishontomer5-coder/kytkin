@@ -199,9 +199,6 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
     private(set) var hints: [[String: MethodHint]] = []
     func convert(_ request: ConvertRequest) { requests.append(request) }
     func methodHintsChanged(_ overrides: [String: MethodHint]) { hints.append(overrides) }
-    /// P3-35 QA (owner): how often AppController asked to drop the undo record.
-    private(set) var forgetUndoCount = 0
-    func forgetUndo() { forgetUndoCount += 1 }
     /// P3-37 (b): the terminal buffers AppController asked to anchor.
     private(set) var anchors: [UInt64] = []
     func anchorTerminalBuffer(epoch: UInt64) { anchors.append(epoch) }

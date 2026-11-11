@@ -38,7 +38,7 @@ final class ClipboardConvertTests: XCTestCase {
         var claims = 0
         let (result, pending) = await sut.run(.box, convert: upper, focusIsSame: { true },
                                               mayWrite: { claims += 1; return true })
-        XCTAssertEqual(result, .pasted(original: "akuo\nvh", written: "AKUO\nVH"))
+        XCTAssertEqual(result, .pasted)   // P3-40: no text comes back (no undo)
         XCTAssertEqual(claims, 1)
         XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C", "⌘V"], "no Right arrow after a paste")
         XCTAssertTrue(poster.events.allSatisfy(\.isSafeToPost))
@@ -225,25 +225,43 @@ final class ClipboardConvertTests: XCTestCase {
         XCTAssertEqual(pb.box, "AKUO")
     }
 
-    // MARK: - A known selection
+    // MARK: - P3-40: a copied selection (replaces the P3-37 "known selection pasted without a copy" tests)
 
-    @TextActor func testAKnownSelectionIsPastedOverWithoutSelectAllOrCopy() async {
-        let (sut, pb, poster) = make(box: "")
-        let (result, pending) = await sut.run(.selection("akuo\nvh"), convert: upper, focusIsSame: { true },
-                                              mayWrite: { true })
-        XCTAssertEqual(result, .pasted(original: "akuo\nvh", written: "AKUO\nVH"))
-        XCTAssertEqual(shortcuts(poster), ["⌘V"])
+    @TextActor func testACopiedSelectionPostsOnlyCopyAndPasteAndReplacesTheSelection() async {
+        let (sut, pb, poster) = make(box: "x akuo\nvh y")
+        pb.userSelection = "akuo\nvh"
+        var seen: String?
+        let (result, pending) = await sut.run(.copiedSelection, convert: { seen = $0; return upper($0) },
+                                              focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(result, .pasted)
+        XCTAssertEqual(seen, "akuo\nvh", "the copy, line break and all")
+        XCTAssertEqual(shortcuts(poster), ["⌘C", "⌘V"], "no ⌘A, no Right arrow")
         await sut.finish(pending!)
+        XCTAssertEqual(pb.box, "x AKUO\nVH y", "the paste replaced the selection, structure kept")
         XCTAssertTrue(pb.holdsUserClipboard)
     }
 
-    @TextActor func testAKnownSelectionWithNothingToConvertTouchesNothing() async {
-        let (sut, pb, poster) = make(box: "")
-        let (result, _) = await sut.run(.selection("שלום"), convert: { _ in .nothing }, focusIsSame: { true },
-                                        mayWrite: { true })
-        XCTAssertEqual(result, .nothingToConvert)
-        XCTAssertTrue(poster.events.isEmpty)
-        XCTAssertEqual(pb.restores, 0)
+    @TextActor func testACopiedSelectionThatDoesNotMatchRestoresAndKeepsTheSelection() async {
+        let (sut, pb, poster) = make(box: "x akuo y")
+        pb.userSelection = "akuo"
+        let (result, pending) = await sut.run(.copiedSelection, convert: { _ in .mismatch }, focusIsSame: { true },
+                                              mayWrite: { true })
+        XCTAssertEqual(result, .selectionMismatch)
+        XCTAssertNil(pending)
+        XCTAssertEqual(shortcuts(poster), ["⌘C"], "the selection is not dropped")
+        XCTAssertTrue(pb.holdsUserClipboard)
+        XCTAssertEqual(pb.box, "x akuo y")
+    }
+
+    @TextActor func testACopiedSelectionTheAppWontCopyPostsNoRightArrow() async {
+        let (sut, pb, poster) = make(box: "x akuo y")
+        pb.userSelection = "akuo"
+        pb.copyDelayNanos = nil
+        let (result, pending) = await sut.run(.copiedSelection, convert: upper, focusIsSame: { true },
+                                              mayWrite: { true })
+        XCTAssertEqual(result, .boxEmpty)
+        XCTAssertEqual(shortcuts(poster), ["⌘C"])
+        await sut.finish(pending!)
         XCTAssertTrue(pb.holdsUserClipboard)
     }
 
