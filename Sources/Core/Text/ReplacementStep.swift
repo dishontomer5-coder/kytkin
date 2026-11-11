@@ -19,6 +19,11 @@ enum ReplacementStep: Sendable, Equatable {
     /// through `TextReplacing.readField`, and the next AX write replaces the range it found. Since P3-35 the planner
     /// plans this one, not `axReadRunBeforeCaret`, for a double-Shift with nothing selected.
     case axReadField(maxChars: Int)
+    /// P3-42 (001 §12.3 X15): the Chromium/Electron convert: read the box through `AXValue`, select each changed piece
+    /// with `AXSelectedTextRange`, check it by reading `AXSelectedText` back, type over it with Unicode key events.
+    /// Run by `ChromiumAXConvert`, never planned by `ReplacementPlanner` (`perform` answers `.unavailable`); it names
+    /// the method in `ConvertOutcome.converted`.
+    case axSelectAndType
     /// P3: opt-in pasteboard step (snapshot → ⌘V → restore). Never planned for keys-only apps (terminals).
     case pasteboard
     /// P4: post key codes after switching the input source, for apps that ignore Unicode key events.

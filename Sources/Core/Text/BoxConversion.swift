@@ -30,6 +30,10 @@ enum BoxConversion {
         let text: String
         /// The side converted from (the text written is on `side.other`).
         let side: PairSide
+        /// P3-42: every grapheme that changes inside `edit`'s range, in order (offsets relative to the window, like
+        /// `edit.offset`). The Chromium/Electron path types over only these (`ChromiumAXConvert`), so the unchanged
+        /// text between them (and its formatting: Slack bold, links, mentions) is never touched.
+        var changes: [TextChange] = []
     }
 
     enum Result: Sendable, Equatable {
@@ -140,6 +144,10 @@ enum BoxConversion {
         }
         let offset = g[first].offset
         let end = g[last].offset + g[last].units
+        // P3-42: the changed graphemes one by one.
+        let changes = (first...last).compactMap { k in
+            pieces[k].map { TextChange(offset: g[k].offset, length: g[k].units, text: $0) }
+        }
         let caretAfter: Int?
         if caretRel <= offset {
             caretAfter = w.caret
@@ -149,7 +157,7 @@ enum BoxConversion {
             caretAfter = caretInNew.map { w.location + offset + $0 }
         }
         return .convert(Plan(edit: FieldEdit(offset: offset, length: end - offset, caretAfter: caretAfter),
-                             text: text, side: side))
+                             text: text, side: side, changes: changes))
     }
 
     /// Steps 4–5 for one word `r` (no separators inside).

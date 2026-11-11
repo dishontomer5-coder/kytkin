@@ -55,6 +55,14 @@ final class AXUIElementTextElement: AXTextElement {
         return .success(list.contains(kAXStringForRangeParameterizedAttribute))
     }
 
+    /// P3-42: attribute names only (no values), to tell web content from a native field.
+    func attributeNames() -> Result<[String], AXAccessError> {
+        var names: CFArray?
+        let error = AXUIElementCopyAttributeNames(element, &names)
+        guard error == .success else { return .failure(AXAccessError(error)) }
+        return .success((names as? [String]) ?? [])
+    }
+
     // MARK: Writing
 
     func setString(_ value: String, for attribute: AXTextAttribute) -> Result<Void, AXAccessError> {
