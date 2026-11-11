@@ -35,10 +35,15 @@ struct ConvertRequest: Sendable, Equatable {
     /// P3-41: the frontmost app's process (the context's pid), nil = unknown. A terminal whose AX can't name its focused
     /// element still converts by keys while the focus (if AX names one at all) belongs to this process.
     let processID: Int32?
+    /// P3-42: the Chromium/Electron AX convert may run for this request: false on a whole-document web app (Google Docs,
+    /// Sheets…; the sites the clipboard is blocked on), in a focused address bar or browser field. Off by default so a
+    /// request built without it never uses the path.
+    let allowsChromiumAX: Bool
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
          currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
-         useClipboard: Bool = false, inAddressBar: Bool = false, processID: Int32? = nil) {
+         useClipboard: Bool = false, inAddressBar: Bool = false, processID: Int32? = nil,
+         allowsChromiumAX: Bool = false) {
         self.snapshot = snapshot
         self.gen = gen
         self.bundleID = bundleID
@@ -49,6 +54,7 @@ struct ConvertRequest: Sendable, Equatable {
         self.useClipboard = useClipboard
         self.inAddressBar = inAddressBar
         self.processID = processID
+        self.allowsChromiumAX = allowsChromiumAX
     }
 
     /// The same request with other values for the fields that change on the way (the dispatcher's resolved pair; the
@@ -56,7 +62,8 @@ struct ConvertRequest: Sendable, Equatable {
     func with(snapshot: WordSnapshot? = nil, pair: LanguagePair? = nil) -> ConvertRequest {
         ConvertRequest(snapshot: snapshot ?? self.snapshot, gen: gen, bundleID: bundleID, mode: mode,
                        pair: pair ?? self.pair, currentSource: currentSource, switchAfterConvert: switchAfterConvert,
-                       useClipboard: useClipboard, inAddressBar: inAddressBar, processID: processID)
+                       useClipboard: useClipboard, inAddressBar: inAddressBar, processID: processID,
+                       allowsChromiumAX: allowsChromiumAX)
     }
 }
 

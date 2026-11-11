@@ -78,7 +78,15 @@ import AppKit
             makeClipboard: { [clock] in
                 ClipboardConvert(pasteboard: SystemPasteboard(), poster: CGEventKeyPoster(), clock: clock,
                                  sleep: { nanos in try? await Task.sleep(nanoseconds: nanos) })
-            })
+            },
+            // P3-42: the Chromium/Electron AX convert's live seams (AX focus + CGEvent posting), made on @TextActor on
+            // first use. Kill switch: the code constant, or `defaults write <bundle id> KytkinDisableChromiumAX -bool YES`.
+            makeChromiumAX: { [clock] in
+                ChromiumAXConvert(focusProvider: AXFocusedElementProvider(), poster: CGEventKeyPoster(), clock: clock,
+                                  sleep: { nanos in try? await Task.sleep(nanoseconds: nanos) })
+            },
+            chromiumAXEnabled: ChromiumAXConvert.isEnabled
+                && !UserDefaults.standard.bool(forKey: ChromiumAXConvert.killSwitchDefaultsKey))
         convert = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
 
         controller = AppController(switcher: switcher, context: contextMonitor, store: store,

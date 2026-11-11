@@ -173,6 +173,7 @@ import Foundation
         // P2-59: the run read needs a locator, so it only runs through `readRunBeforeCaret`.
         case .axReadRunBeforeCaret, .axReadField: return .unavailable
         case .pasteboard, .keyCodesAfterSwitch: return .unavailable   // P3 / P4: not in the MVP
+        case .axSelectAndType: return .unavailable   // P3-42: only `ChromiumAXConvert` runs it
         }
     }
 

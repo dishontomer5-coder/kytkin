@@ -510,7 +510,11 @@ import Observation
                                            && !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
                                                                                        host: c.host),
                                        inAddressBar: c.pageState == .editingAddress,
-                                       processID: c.pid))   // P3-41
+                                       processID: c.pid,   // P3-41
+                                       // P3-42: never on whole-document web apps, the address bar or a browser field
+                                       allowsChromiumAX: !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
+                                                                                                  host: c.host)
+                                           && c.pageState != .editingAddress && c.pageState != .editingBrowserField))
     }
 
     /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.

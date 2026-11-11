@@ -61,6 +61,14 @@
 //   P3-40 (b): a selection AX reports in such an app is copied with ⌘C (no ⌘A) and pasted over, not typed over:
 //       Chromium's `AXSelectedText` can drop the line breaks between paragraphs, so typing it over joined the lines.
 //
+// P3-42 (001 §12.3 X15): in a Chromium/Electron app (`FieldFamily.chromiumAX`: Chrome, Edge, Brave, Arc, Vivaldi, Opera,
+//   Slack, Discord, Teams; not VS Code, not terminals, not the user's own method choice, not whole-document web apps, not
+//   a focused address bar), a double-Shift first tries `ChromiumAXConvert`: read the box (or the selection) through
+//   `AXValue`, convert it, select each changed piece with `AXSelectedTextRange`, read it back, type over it, verify.
+//   Only changed letters are retyped, so Slack bold, links and mentions around them stay. Anything it can't vouch for
+//   before typing (`.unavailable`) → the P3-37 / P3-40 path exactly as before (clipboard, else keys). Kill switch:
+//   `ChromiumAXConvert.isEnabled` and the `KytkinDisableChromiumAX` user default (`chromiumAXEnabled`).
+//
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
 // only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs.
 
@@ -87,6 +95,13 @@ import Foundation
         let mayPasteLineBreaks: Bool
     }
 
+    /// P3-42: one Chromium/Electron AX convert, decided synchronously in `decide` and run (it waits) in `run`.
+    private struct ChromiumJob {
+        let source: ChromiumAXConvert.Source
+        /// The focused element at the start: every piece is written only while it still has focus.
+        let element: any FocusedElementIdentity
+    }
+
     private let keyWatcher: any KeyWatching
     private let clock: any Clock
     private let beep: @Sendable () -> Void
@@ -94,9 +109,14 @@ import Foundation
     private let switchLanguage: SwitchLanguage
     /// P3-37 (c): the clipboard convert's seams (live: NSPasteboard + CGEvent); nil = never use the clipboard.
     private let makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)?
+    /// P3-42: the Chromium/Electron AX convert's seams (live: AX + CGEvent); nil = never used.
+    private let makeChromiumAX: (@TextActor @Sendable () -> ChromiumAXConvert?)?
+    /// P3-42: the kill switch (`ChromiumAXConvert.isEnabled` and the hidden user default, read by the composition root).
+    private let chromiumAXEnabled: Bool
 
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
+    private var chromiumAX: ChromiumAXConvert?
     /// P3-37 (c): the user's clipboard, to put back after this request's finish (bounded).
     private var pendingRestore: ClipboardConvert.PendingRestore?
     /// P3-37 (b): the focused element a terminal's buffer started in.
@@ -118,7 +138,9 @@ import Foundation
                      beep: @escaping @Sendable () -> Void,
                      makeReplacer: @escaping @TextActor @Sendable () -> any TextReplacing,
                      switchLanguage: @escaping SwitchLanguage,
-                     makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)? = nil) {
+                     makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)? = nil,
+                     makeChromiumAX: (@TextActor @Sendable () -> ChromiumAXConvert?)? = nil,
+                     chromiumAXEnabled: Bool = ChromiumAXConvert.isEnabled) {
         self.keyWatcher = keyWatcher
         self.clock = clock
         self.capabilities = capabilities
@@ -126,6 +148,8 @@ import Foundation
         self.makeReplacer = makeReplacer
         self.switchLanguage = switchLanguage
         self.makeClipboard = makeClipboard
+        self.makeChromiumAX = makeChromiumAX
+        self.chromiumAXEnabled = chromiumAXEnabled
     }
 
     // MARK: - Entry points
@@ -193,6 +217,8 @@ import Foundation
         case failed(ConvertOutcome.NoopReason, beeps: Bool, textMayHaveChanged: Bool)
         /// P3-37 (c): run the clipboard convert (it waits, so it runs in `run`, not in `decide`).
         case clipboard(ClipJob)
+        /// P3-42: run the Chromium/Electron AX convert (it waits too).
+        case chromiumAX(ChromiumJob)
     }
 
     private func run(_ request: ConvertRequest, layouts: LayoutSnapshot?, finish: inout Finish) async throws
@@ -213,7 +239,7 @@ import Foundation
             beep()
             return .noop(.layoutsUnavailable)
         }
-        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard)
+        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
 
@@ -222,6 +248,8 @@ import Foundation
         switch decision {
         case .clipboard(let job):
             return await runClipboard(job, r, layouts: layouts, finish: &finish)
+        case .chromiumAX(let job):
+            return await runChromiumAX(job, r, layouts: layouts, finish: &finish)
         case .nothingToConvert:
             return await toggle(r, because: .nothingToConvert)
         case .fieldUnreadable:
@@ -263,7 +291,8 @@ import Foundation
 
     /// Everything that touches the field, synchronously (no suspension), so no other request can reuse the replacer
     /// in between, and nothing read through AX outlives this call.
-    private func decide(_ r: ConvertRequest, layouts: LayoutSnapshot, allowClipboard: Bool) -> Decision {
+    private func decide(_ r: ConvertRequest, layouts: LayoutSnapshot, allowClipboard: Bool,
+                        allowChromiumAX: Bool) -> Decision {
         let replacer = currentReplacer()
         defer { replacer.endReplacement() }
         let focus = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout)
@@ -274,6 +303,10 @@ import Foundation
         // switch; now it is ignored: the remembered line converts by keys, or double-Shift just switches.
         let terminalSelection = capabilities.method(for: r.bundleID) == .terminal
         if let selection = focus?.selection, !selection.isEmpty, !terminalSelection {
+            // P3-42: a Chromium/Electron web box: select and type over only the changed pieces of the selection.
+            if allowChromiumAX, let job = chromiumJob(r, focus: focus, element: element, source: .selection) {
+                return .chromiumAX(job)
+            }
             // P3-40 (b): in an app whose box AX can't read (Slack, Chrome…), AX's selected text may have lost the line
             // breaks (Chromium can drop them between paragraphs), so typing it over joined the lines. Copy the selection
             // itself with ⌘C (no ⌘A), check it against the AX text, convert, paste over it.
@@ -301,14 +334,21 @@ import Foundation
             return .replaced(target: target, step: step, keptBuffer: false, isRun: false)
         }
         return decideRun(r, layouts: layouts, focus: focus, element: element, allowClipboard: allowClipboard,
-                         replacer: replacer)
+                         allowChromiumAX: allowChromiumAX, replacer: replacer)
     }
 
     /// P2-59 (001 §12.3 X4–X6): no selection, the run before the caret.
     private func decideRun(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
-                           element: (any FocusedElementIdentity)?, allowClipboard: Bool,
+                           element: (any FocusedElementIdentity)?, allowClipboard: Bool, allowChromiumAX: Bool,
                            replacer: any TextReplacing) -> Decision {
         let snap = r.snapshot
+
+        // P3-42: a Chromium/Electron web box AX can read but not write: the whole box through `ChromiumAXConvert`
+        // first (before the clipboard; the clipboard switch is not needed for it).
+        if allowChromiumAX, let f = focus, !ReplacementPlanner.readsField(bundleID: r.bundleID, caps: capabilities, focus: f),
+           let job = chromiumJob(r, focus: focus, element: element, source: .box) {
+            return .chromiumAX(job)
+        }
 
         // X5: the buffer's run (every word and the spaces between), in the layout it shows in now.
         var old: String?
@@ -640,7 +680,121 @@ import Foundation
 
     /// P3-37 (c): the clipboard found nothing to copy (or couldn't start): the remembered buffer by keys, else switch.
     private func fallBack(_ r: ConvertRequest, layouts: LayoutSnapshot, finish: inout Finish) async -> ConvertOutcome {
-        let decision = decide(r, layouts: layouts, allowClipboard: false)
+        let decision = decide(r, layouts: layouts, allowClipboard: false, allowChromiumAX: false)
+        return await apply(decision, r, layouts: layouts, finish: &finish)
+    }
+
+    // MARK: - P3-42
+
+    /// P3-42: a Chromium/Electron AX job, or nil when the path may not be used here.
+    private func chromiumJob(_ r: ConvertRequest, focus: FocusInfo?, element: (any FocusedElementIdentity)?,
+                             source: ChromiumAXConvert.Source) -> ChromiumJob? {
+        guard chromiumAXEnabled, makeChromiumAX != nil, r.allowsChromiumAX, !r.inAddressBar,
+              capabilities.family(for: r.bundleID) == .chromiumAX,
+              let f = focus, let element, !f.isSecure, f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText,
+              f.selRangeSettable, let role = f.role, Self.clipboardTextRoles.contains(role)
+        else { return nil }
+        return ChromiumJob(source: source, element: element)
+    }
+
+    private func currentChromiumAX() -> ChromiumAXConvert? {
+        if let chromiumAX { return chromiumAX }
+        chromiumAX = makeChromiumAX?()
+        return chromiumAX
+    }
+
+    /// P3-42: runs the job; `.unavailable` (nothing typed, the selection put back) → the P3-37 / P3-40 path as before.
+    private func runChromiumAX(_ job: ChromiumJob, _ r: ConvertRequest, layouts: LayoutSnapshot,
+                               finish: inout Finish) async -> ConvertOutcome {
+        guard let ax = currentChromiumAX() else { return await fallBackFromChromium(r, layouts: layouts, finish: &finish) }
+        var target: InputSourceID?
+        let plan: (ChromiumAXConvert.Read) -> ChromiumAXConvert.Planned = { read in
+            switch job.source {
+            case .selection:
+                let units = Array(read.text.utf16)
+                let sel = read.selection
+                let text = String(decoding: units[sel.location..<sel.end], as: UTF16.self)
+                guard let whole = layouts.convertGuessing(text) else { return .nothing }
+                guard let converter = layouts.converter(from: whole.source) else { return .unavailable }
+                // Grapheme by grapheme, so only the changed ones are typed over; it must add up to the whole convert.
+                var changes: [TextChange] = []
+                var rebuilt = ""
+                var offset = sel.location
+                for ch in text {
+                    let original = String(ch)
+                    let out = converter.convert(original).text
+                    rebuilt += out
+                    let n = original.utf16.count
+                    if !out.isEmpty, !out.unicodeScalars.elementsEqual(original.unicodeScalars) {
+                        changes.append(TextChange(offset: offset, length: n, text: out))
+                    }
+                    offset += n
+                }
+                guard rebuilt.unicodeScalars.elementsEqual(whole.text.unicodeScalars) else { return .unavailable }
+                target = whole.target
+                return changes.isEmpty ? .nothing : .changes(changes)
+            case .box:
+                let window = FieldWindow(text: read.text, location: 0, caret: read.selection.location,
+                                         reachesFieldStart: true, reachesFieldEnd: true)
+                let result = BoxConversion.plan(window, classify: layouts.runClass) { side, grapheme in
+                    layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
+                }
+                switch result {
+                case .nothing: return .nothing
+                case .tooLong: return .tooLong
+                case .convert(let p):
+                    target = layouts.source(of: p.side.other)
+                    return .changes(p.changes)
+                }
+            }
+        }
+        let gen = r.gen
+        let result = await ax.run(job.source, expected: job.element, plan: plan, mayWrite: { self.claim(gen) })
+        switch result {
+        case .converted:
+            // The caret moved by the length changes, not where the buffer ended: forget the buffer (X5 table).
+            finish.bufferAfter = []
+            guard let target else {   // can't happen: written after `plan` answered
+                beep()
+                return .noop(.replacement(.halted(after: .axSelectAndType)))
+            }
+            var switched = false
+            if r.switchAfterConvert, !Task.isCancelled {
+                // A selection keeps the P2-21 behaviour; a box convert's finish states the buffer itself.
+                switched = await switchLanguage(target, job.source == .box)
+            }
+            return .converted(to: target, by: .axSelectAndType, switched: switched)
+        case .nothingToConvert:
+            return await toggle(r, because: .nothingToConvert)
+        case .tooLong:
+            beep()
+            return .noop(.runTooLong)
+        case .abandoned:
+            return .noop(.replacement(.abandoned))
+        case .unavailable(.focusChanged):
+            // Not the field the double-Shift was for: no other path either (it would read the new field).
+            if !r.snapshot.hasRun { return await toggle(r, because: .fieldUnreadable) }
+            beep()
+            return .noop(.replacement(.exhausted))
+        case .unavailable(.timedOut):
+            // P3-42 QA: the budget is spent and the B3 claim is taken: the hold-back flush (deadline + hard cap) is
+            // near, so a second path (⌘A / ⌘C / ⌘V or keys) could run while the user's held keys replay. Nothing was
+            // typed; beep instead.
+            beep()
+            return .noop(.replacement(.timedOut))
+        case .unavailable:
+            return await fallBackFromChromium(r, layouts: layouts, finish: &finish)
+        case .partial, .failed:
+            finish.bufferAfter = []
+            beep()
+            return .noop(.replacement(.halted(after: .axSelectAndType)))
+        }
+    }
+
+    /// P3-42: nothing was typed: the clipboard (when allowed) or the remembered buffer, exactly as without this path.
+    private func fallBackFromChromium(_ r: ConvertRequest, layouts: LayoutSnapshot,
+                                      finish: inout Finish) async -> ConvertOutcome {
+        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: false)
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
 
