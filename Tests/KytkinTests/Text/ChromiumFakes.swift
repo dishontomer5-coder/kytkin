@@ -23,6 +23,10 @@ final class FakeChromiumField: AXTextElement {
     var pill: Range<Int>?
     /// P3-46: `AXStringForRange` gives U+FFFC for the pill instead of its text.
     var pillAsObjectCharacter = false
+    /// P3-51 (owner Slack traces `ax9/value9/common3`, `ax10/value10/common3`): an emoji (units of `doc`) that `AXValue`
+    /// shows as one U+FFFC and the selected range reads and writes count as one unit, while `AXStringForRange` works in
+    /// the page's own units (the emoji's two) and returns the emoji itself, as does `AXSelectedText`.
+    var emojiObject: Range<Int>?
     /// Setting `AXSelectedTextRange` takes the AX offsets as DOM offsets (they drift after `hidden`).
     var setRangeDrifts = false
     /// P3-42 QA: after a range write, `AXSelectedTextRange` reads back exactly the range written (until typing moves the
@@ -148,11 +152,17 @@ final class FakeChromiumField: AXTextElement {
         // The hidden emoji moves with a length change before it.
         if let h = hidden, lo < h.lowerBound { hidden = (h.lowerBound + delta)..<(h.upperBound + delta) }
         if let p = pill, lo < p.lowerBound { pill = (p.lowerBound + delta)..<(p.upperBound + delta) }
+        if let e = emojiObject, lo < e.lowerBound { emojiObject = (e.lowerBound + delta)..<(e.upperBound + delta) }
     }
 
     // MARK: - AX offsets
 
     private var axUnits: [UInt16] {
+        if let e = emojiObject {
+            var u = doc
+            u.replaceSubrange(e, with: [0xFFFC])
+            return u
+        }
         guard let h = hidden else { return doc }
         var u = doc
         u.removeSubrange(h)
@@ -167,12 +177,12 @@ final class FakeChromiumField: AXTextElement {
 
     /// P3-46: a `doc` offset in pill-compressed units, and back.
     private func toObject(_ dom: Int) -> Int {
-        guard let p = pill, dom > p.lowerBound else { return dom }
+        guard let p = pill ?? emojiObject, dom > p.lowerBound else { return dom }
         return dom >= p.upperBound ? dom - p.count + 1 : p.lowerBound
     }
 
     private func fromObject(_ obj: Int) -> Int {
-        guard let p = pill, obj > p.lowerBound else { return obj }
+        guard let p = pill ?? emojiObject, obj > p.lowerBound else { return obj }
         return obj + p.count - 1
     }
 
@@ -228,7 +238,7 @@ final class FakeChromiumField: AXTextElement {
             }
             if rangeReadEchoesWrite, let echoedRange { return .success(echoedRange) }
             if readsInPageUnits { return .success(TextRange(location: sel.lowerBound, length: sel.count)) }
-            if pill != nil {
+            if pill != nil || emojiObject != nil {
                 let lo = toObject(sel.lowerBound), hi = toObject(sel.upperBound)
                 return .success(TextRange(location: lo, length: hi - lo))
             }
@@ -250,6 +260,10 @@ final class FakeChromiumField: AXTextElement {
         if stringForRangeFails { return .failure(.failed) }
         if stringForRangeFailsAtEnd, r.end == u.count { return .failure(.failed) }
         if let stringForRangeOverride { return .success(stringForRangeOverride) }
+        if emojiObject != nil {   // P3-51: the page's own units
+            guard r.end <= doc.count else { return .failure(.failed) }
+            return .success(String(decoding: doc[r.location..<r.end], as: UTF16.self))
+        }
         if let p = pill {
             let lo = fromObject(r.location), hi = fromObject(r.end)
             guard hi <= doc.count else { return .failure(.failed) }
@@ -288,7 +302,7 @@ final class FakeChromiumField: AXTextElement {
         guard a == .selectedTextRange, value.location >= 0, value.length >= 0 else { return .failure(.failed) }
         var lo = toDOM(value.location, isEnd: false)
         var hi = value.isCaret ? lo : toDOM(value.end, isEnd: true)
-        if pill != nil { lo = fromObject(value.location); hi = fromObject(value.end) }
+        if pill != nil || emojiObject != nil { lo = fromObject(value.location); hi = fromObject(value.end) }
         guard lo <= hi, hi <= doc.count else { return .failure(.failed) }
         rangeWrites.append(value)
         previousSelection = domSelection

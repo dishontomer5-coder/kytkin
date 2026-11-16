@@ -68,6 +68,18 @@
 // before. The DEBUG trace gets counts only: the prefix mismatch (lengths, common prefix / suffix), whether the caret
 // was mapped, and the atoms' AX role names.
 //
+// P3-51 (owner Slack traces: `vh 😄 vh vh` → `prefixMismatch=ax9/value9/common3` and `ax10/value10/common3`, a second
+// line → `ax35/value35/common28`, a selection → `readCheck=selectionText`): equal lengths that part right at the emoji fit
+// one shape only: `AXValue` holds the emoji as one U+FFFC, the caret and the selected range count it as one unit (so
+// both agree with `AXValue`), while `AXStringForRange` takes its range in the page's own units and returns the emoji's
+// two UTF-16 units, so its text for (0, caret) ends one unit *before* the caret. (With the emoji simply missing from
+// `AXValue`, the P3-46 walk already mapped it; with U+FFFC in both, nothing would disagree.) So the walk now pairs
+// U+FFFC with an emoji grapheme and skips an object on either side; the caret is the later of the walk's end and the
+// app's caret (wider prefix text → the caret stays; a pill counted as one unit → the walk's end); a selection keeps its
+// range when the prefix is the wider one; `AXSelectedText` and window read-backs may show the emoji where `AXValue` has
+// U+FFFC (selection: the rest must agree; window: grapheme by grapheme, in place). Pieces never hold an object, and each
+// is still typed only after an exact read-back. The trace adds `prefixObjects=` (U+FFFC / emoji counts per side).
+//
 // Privacy: the box text, the pieces and the converted text live only in `run` for this one convert, never logged or
 // stored (B12, CLAUDE.md). `AXValue` is read to convert and to verify Kytkin's own write, piece by piece.
 
@@ -215,6 +227,8 @@ import Foundation
         var prefixMismatch: PrefixMismatch?
         /// P3-46: the AX role of each inline atom found (role names only, e.g. `AXStaticText`, `AXLink`).
         var atomRoles: [String] = []
+        /// P3-51: U+FFFC / emoji counts in the disagreeing prefix, AX side and value side (counts only).
+        var prefixObjects: String?
     }
 
     /// P3-46: how `AXStringForRange(0, caret)` differed from `AXValue`'s prefix (UTF-16 counts only).
@@ -471,33 +485,67 @@ import Foundation
     /// modifiers) that `value` leaves out. nil = something else differs (the offsets can't be trusted). Linear, bounded
     /// by the two lengths and the atoms.
     nonisolated static func valueOffset(matching prefix: String, in value: [UInt16], atoms: [String]) -> Int? {
-        let p = Array(prefix.unicodeScalars)
-        let valueString = String(decoding: value, as: UTF16.self)
-        let v = Array(valueString.unicodeScalars)
-        let atomScalars = atoms.filter { $0.count >= 2 }.map { Array($0.unicodeScalars) }
-        func same(_ a: Unicode.Scalar, _ b: Unicode.Scalar) -> Bool {
+        // P3-51 (owner Slack traces `prefixMismatch=ax9/value9/common3`, `ax10/value10`): an emoji can be *nothing* in
+        // one text and U+FFFC or its own scalars in the other, on either side. So the walk is per grapheme: equal
+        // graphemes; an object on both sides (U+FFFC ↔ an emoji, two emoji images); an object on one side only
+        // (skipped there); U+FFFC or nothing standing for an atom's text in `value`.
+        let p = Array(prefix)
+        let v = Array(String(decoding: value, as: UTF16.self))
+        let atomChars = atoms.filter { $0.count >= 2 }.map(Array.init)
+        func same(_ a: Character, _ b: Character) -> Bool {
             if a == b { return true }
-            let spaces: Set<UInt32> = [0x20, 0xA0]
-            if spaces.contains(a.value), spaces.contains(b.value) { return true }
-            let breaks: Set<UInt32> = [0x0A, 0x0D, 0x2028, 0x2029]
-            return breaks.contains(a.value) && breaks.contains(b.value)
+            if (a == " " || a == "\u{00A0}"), (b == " " || b == "\u{00A0}") { return true }
+            return a.isNewline && b.isNewline
         }
         func atomLength(at j: Int) -> Int? {
-            atomScalars.first { a in j + a.count <= v.count && Array(v[j..<(j + a.count)]) == a }?.count
-        }
-        func isHiddenLike(_ u: Unicode.Scalar) -> Bool {
-            u.value == 0xFFFC || u.value == 0xFE0F || u.value == 0x200D || u.value == 0x20E3
-                || (u.value >= 0x2100 && u.properties.isEmoji)
+            atomChars.first { a in j + a.count <= v.count && Array(v[j..<(j + a.count)]) == a }?.count
         }
         var i = 0, j = 0
         while i < p.count {   // bounded: i or j moves forward every pass
             if j < v.count, same(p[i], v[j]) { i += 1; j += 1; continue }
-            if p[i].value == 0xFFFC, let n = atomLength(at: j) { i += 1; j += n; continue }   // a pill as one object
-            if isHiddenLike(p[i]) { i += 1; continue }                                         // an emoji AXValue drops
-            if let n = atomLength(at: j) { j += n; continue }                                 // a pill left out
+            if j < v.count, isObject(p[i]), isObject(v[j]) { i += 1; j += 1; continue }        // ￼ ↔ emoji
+            if p[i] == "\u{FFFC}", let n = atomLength(at: j) { i += 1; j += n; continue }       // a pill as one object
+            if isObject(p[i]) { i += 1; continue }                                              // an emoji AXValue drops
+            if j < v.count, isObject(v[j]) { j += 1; continue }                                 // one the AX text drops
+            if let n = atomLength(at: j) { j += n; continue }                                   // a pill left out
             return nil
         }
-        return String(String.UnicodeScalarView(v[..<j])).utf16.count
+        return String(v[..<j]).utf16.count
+    }
+
+    /// P3-51: an embedded object or an emoji grapheme (U+FFFC, an emoji, or a sequence with VS16 / ZWJ / keycap).
+    nonisolated static func isObject(_ c: Character) -> Bool {
+        if c == "\u{FFFC}" { return true }
+        let scalars = c.unicodeScalars
+        if scalars.contains(where: { $0.value == 0xFE0F || $0.value == 0x200D || $0.value == 0x20E3 }) { return true }
+        guard let first = scalars.first else { return false }
+        return first.properties.isEmojiPresentation || (first.value >= 0x2100 && first.properties.isEmoji)
+    }
+
+    /// P3-51: the same visible text once objects (U+FFFC, emoji) are left out on both sides (they may be nothing, one
+    /// U+FFFC or the emoji's own units, depending on the read), spaces and line breaks too. Never true for two texts
+    /// with no visible character left.
+    nonisolated static func sameIgnoringObjects(_ a: String, _ b: String) -> Bool {
+        func strip(_ s: String) -> String { String(s.filter { !isObject($0) }) }
+        return ConvertController.sameVisibleText(strip(a), strip(b))
+    }
+
+    /// P3-51: equal grapheme by grapheme, where U+FFFC on one side may stand for an object (an emoji) on the other.
+    /// Positional, so a window that reads back this way still sits at its own place.
+    nonisolated static func sameWithObjectsInPlace(_ selected: String, _ original: String) -> Bool {
+        let a = Array(selected), b = Array(original)
+        guard a.count == b.count, b.contains(where: isObject) || a.contains(where: isObject) else { return false }
+        for (x, y) in zip(a, b) where x != y {
+            guard (x == "\u{FFFC}" && isObject(y)) || (y == "\u{FFFC}" && isObject(x)) else { return false }
+        }
+        return true
+    }
+
+    /// P3-51: U+FFFC and other object graphemes in a text (counts only, for the DEBUG trace).
+    nonisolated static func objectCounts(_ s: String) -> (fffc: Int, emoji: Int) {
+        var f = 0, e = 0
+        for c in s where isObject(c) { if c == "\u{FFFC}" { f += 1 } else { e += 1 } }
+        return (f, e)
     }
 
     // MARK: - Step 1
@@ -540,7 +588,11 @@ import Foundation
         } else if !selected.unicodeScalars.elementsEqual(sliceText.unicodeScalars) {
             // P3-40: Chromium's AXSelectedText can drop the line breaks between paragraphs. Then the visible characters
             // must agree and the value's text (which keeps its LF) is used; every piece is checked again below.
-            guard sliceText.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, sliceText) else {
+            // P3-51 (owner: selecting text after an emoji in Slack only switched, `readCheck=selectionText`): the
+            // selected text may show an emoji where `AXValue` has U+FFFC or nothing; the rest must agree.
+            let lineBreaksOnly = sliceText.contains(where: \.isNewline)
+                && ConvertController.sameVisibleText(selected, sliceText)
+            guard lineBreaksOnly || Self.sameIgnoringObjects(selected, sliceText) else {
                 return fail(.selectionText, .inconsistent)
             }
         }
@@ -568,8 +620,22 @@ import Foundation
                 if prefix.isEmpty, source == .box, !atoms.isEmpty { return fail(.prefix, .inconsistent) }
                 if !prefix.isEmpty, !ReplacementExecutor.readsBackAs(prefix, expected) {
                     lastDiagnostic.prefixMismatch = Self.mismatch(Array(prefix.utf16), Array(expected.utf16))
-                    guard source == .box, let c = Self.valueOffset(matching: prefix, in: units, atoms: atoms),
-                          c <= n else { return fail(.prefix, .inconsistent) }
+                    let ax = Self.objectCounts(prefix), val = Self.objectCounts(expected)
+                    lastDiagnostic.prefixObjects = "ax\(ax.fffc)fffc+\(ax.emoji)emoji/value\(val.fffc)fffc+\(val.emoji)emoji"
+                    guard let aligned = Self.valueOffset(matching: prefix, in: units, atoms: atoms),
+                          aligned <= n else { return fail(.prefix, .inconsistent) }
+                    // P3-51: a selection keeps its reported range only when the prefix read is the wider one (its
+                    // range then needs no mapping); a narrower one (pills counted as one unit) still stops it.
+                    if source == .selection {
+                        guard aligned <= sel.end else { return fail(.prefix, .inconsistent) }
+                        lastDiagnostic.caretMapped = true
+                        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
+                    }
+                    // P3-51: the app's text for the range up to its caret may be in other units than the caret: wider
+                    // (an emoji's two units where `AXValue` and the caret count one U+FFFC, or none) → it ends *before*
+                    // the caret, which stays; narrower (a pill counted as one unit, P3-46) → it ends after, and the caret
+                    // is taken there. So: the later of the two. Every piece is still read back before typing.
+                    let c = max(aligned, sel.end)
                     let mapped = Array(String(decoding: units[..<c], as: UTF16.self).utf16)
                     guard mapped == Array(units[..<c]) else { return fail(.prefix, .inconsistent) }   // scalar boundary
                     sel = TextRange(location: c, length: 0)
@@ -657,6 +723,8 @@ import Foundation
                 if original.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, original) {
                     return .matched
                 }
+                // P3-51: a window holding U+FFFC in `AXValue` reads back with the emoji there (same place, same count).
+                if Self.sameWithObjectsInPlace(selected, original) { return .matched }
                 return .otherText(selected)
             }
             if timedOut { return .notShown }
