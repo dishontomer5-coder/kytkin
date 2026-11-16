@@ -62,7 +62,8 @@ import Foundation
 
     /// P3-50: the category of the page holding the focused element (`PageCategory`): its outermost `AXWebArea`'s
     /// address, reduced to a category inside the call and dropped. Reads no text box content.
-    func focusedPageCategory(timeout: Double) -> PageCategory
+    /// P3-53: `budgetNanos`: the most wall-clock time the walk may take (out of time → `.unknown`).
+    func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory
 }
 
 extension TextReplacing {
@@ -76,7 +77,7 @@ extension TextReplacing {
     func focusedApplicationPID(timeout: Double) -> Int32? { nil }
 
     /// P3-50: unknown by default (the caller keeps refusing a whole-box copy on an unknown site).
-    func focusedPageCategory(timeout: Double) -> PageCategory { .unknown }
+    func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory { .unknown }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }

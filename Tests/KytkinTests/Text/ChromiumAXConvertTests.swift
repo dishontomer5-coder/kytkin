@@ -761,4 +761,78 @@ final class ChromiumAXConvertTests: XCTestCase {
         if case .converted = result { XCTAssertEqual(f.text, "❤️ הי 😄 הי") }
         else { XCTAssertTrue(["❤️ vh 😄 vh", "❤️ vh 😄 הי"].contains(f.text), "\(result): \(f.text)") }
     }
+
+    // MARK: - P3-53: the read and its atom walks fit the B5 budget
+
+    @TextActor func testTheAtomWalkGetsWhatIsLeftOfTheReadBudget() async {
+        let f = field("akuo")
+        let started = clock.nowNanos
+        clock.advance(byMilliseconds: 150)
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, startedAt: started, plan: { self.boxPlan($0) }, mayWrite: { true })
+        XCTAssertEqual(result, .converted(pieces: 1))
+        XCTAssertEqual(f.atomBudgets, [50_000_000], "200 ms read budget − 150 ms already spent")
+    }
+
+    @TextActor func testASlowAtomWalkStopsBeforeAnythingIsWritten() async {
+        let f = field("akuo")
+        let clock = self.clock!
+        f.onInlineAtoms = { clock.advance(byMilliseconds: 250) }   // one AX call that took its whole timeout
+        var claims = 0
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, plan: { self.boxPlan($0) }, mayWrite: { claims += 1; return true })
+        XCTAssertEqual(result, .unavailable(.timedOut))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .atomRead)
+        XCTAssertTrue(f.rangeWrites.isEmpty, "no selection moved")
+        XCTAssertTrue(poster.events.isEmpty, "nothing typed")
+        XCTAssertEqual(claims, 0, "the hold-back claim is never taken")
+    }
+
+    @TextActor func testAConvertThatStartsPastTheReadBudgetAsksTheAppNothing() async {
+        let f = field("akuo")
+        let started = clock.nowNanos
+        clock.advance(byMilliseconds: 300)
+        let provider = SwitchableFocusProvider(f)
+        let ax = sut(provider)
+        let result = await ax.run(.box, expected: f, startedAt: started, plan: { self.boxPlan($0) }, mayWrite: { true })
+        XCTAssertEqual(result, .unavailable(.timedOut))
+        XCTAssertEqual(provider.reads, 0)
+        XCTAssertEqual(f.valueReads, 0)
+    }
+
+    // MARK: - P3-53 QA
+
+    @TextActor func testASlowPrefixReadAfterTheWalksStillStopsBeforeTheClaim() async {
+        // The walks fit (150 ms), then the prefix read takes 100 ms more: the read ended past its 200 ms.
+        let f = field("akuo")
+        let clock = self.clock!
+        f.onInlineAtoms = { clock.advance(byMilliseconds: 150) }
+        f.onStringForRange = { clock.advance(byMilliseconds: 100) }
+        var claims = 0
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, plan: { self.boxPlan($0) }, mayWrite: { claims += 1; return true })
+        XCTAssertEqual(result, .unavailable(.timedOut))
+        XCTAssertEqual(claims, 0, "no claim after the read budget")
+        XCTAssertTrue(f.rangeWrites.isEmpty)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testAQuoteSearchCutShortStopsOnlyWhereItMustComplete() async {
+        for mustComplete in [true, false] {
+            clock = FakeClock(nowNanos: 1_000_000_000)
+            poster = RecordingPoster()
+            let f = field("akuo")
+            f.quoteSearchCutShort = true
+            let ax = sut(SwitchableFocusProvider(f))
+            let result = await ax.run(.box, expected: f, quoteSearchMustComplete: mustComplete,
+                                      plan: { self.boxPlan($0) }, mayWrite: { true })
+            if mustComplete {
+                XCTAssertEqual(result, .unavailable(.readFailed), "a webmail whole box: nothing typed")
+                XCTAssertTrue(poster.events.isEmpty)
+                XCTAssertEqual(f.text, "akuo")
+            } else {
+                XCTAssertEqual(result, .converted(pieces: 1), "Slack: not an error")
+            }
+        }
+    }
 }

@@ -174,8 +174,11 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     /// P3-50: what the convert's own page check finds (default: can't tell).
     var pageCategory: PageCategory = .unknown
     private(set) var pageChecks = 0
-    func focusedPageCategory(timeout: Double) -> PageCategory {
+    /// P3-53: the budget each page check was given.
+    private(set) var pageCheckBudgets: [UInt64] = []
+    func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory {
         pageChecks += 1
+        pageCheckBudgets.append(budgetNanos)
         return pageCategory
     }
 

@@ -446,6 +446,63 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(pastes(rig.poster), 0)
     }
 
+    // MARK: - P3-53 QA (Coordinator 2026-11-16): a cut-short quote search blocks a webmail whole box only
+
+    @TextActor func testAGmailWholeBoxWithACutShortQuoteSearchTypesNothing() async {
+        let rig = rig("akuo vh")
+        rig.field.quoteSearchCutShort = true
+        var r = request(empty(), app: chrome)
+        r.webmailPage = true
+        _ = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(rig.field.text, "akuo vh", "the AX path never typed over the box (or a quote it couldn't see)")
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [true])
+        // It falls back as for any incomplete read: the clipboard path (its HTML paste skips Gmail's quote itself).
+        XCTAssertEqual(sink.traces.first?.steps.first?.path, .chromiumAX)
+        XCTAssertTrue(sink.traces.first?.steps.first?.reason.hasPrefix("unavailable") == true)
+    }
+
+    @TextActor func testAGmailSelectionDoesNotNeedTheQuoteSearch() async {
+        let rig = rig("ok akuo ok", selection: 3..<7)
+        rig.field.quoteSearchCutShort = true
+        var r = request(empty(), app: chrome)
+        r.webmailPage = true
+        _ = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks.first, false, "a selection is the user's choice")
+    }
+
+    @TextActor func testSlackWithACutShortQuoteSearchStillConverts() async {
+        let rig = rig("akuo vh")
+        rig.field.quoteSearchCutShort = true
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [false])
+    }
+
+    @TextActor func testAnUnknownSiteFoundToBeWebmailNeedsTheQuoteSearchToo() async {
+        let rig = rig("akuo vh")
+        rig.field.quoteSearchCutShort = true
+        rig.replacer?.pageCategory = .webmail
+        _ = await rig.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(rig.field.text, "akuo vh")
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [true])
+    }
+
+    @TextActor func testKeysAfterASlowChromiumTryAreNeverPostedPastTheBudget() async {
+        // P3-53 QA: the AX path spends the budget (each selection try waits; the app never shows it), then falls back
+        // to the remembered buffer's keys: those run inside what is left of the same 400 ms, so here not at all.
+        let rig = rig("akuo vh")
+        axNeverSelects(rig)
+        let clock = self.clock!
+        rig.field.onSetRange = { _ in clock.advance(byMilliseconds: 250) }
+        let r = ConvertRequest(snapshot: buffer("vh"), gen: 1, bundleID: chrome, mode: .convert,
+                               pair: ConvertFixtures.pair, currentSource: IDs.abc, switchAfterConvert: true,
+                               useClipboard: false, allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 2), switched: true))
+        XCTAssertEqual(backspaces(rig.poster), 0, "no Backspace after the budget")
+        XCTAssertTrue(rig.poster.events.allSatisfy { $0.keyCode != KeyCode.delete }, "no key after the budget")
+    }
+
     private func clipboardKeysWithoutSelectAll(_ poster: RecordingPoster) -> Bool {
         let downs = poster.events.filter { $0.isKeyDown && $0.modifierFlags != 0 }.map(\.keyCode)
         return downs == [ClipboardShortcut.copy.keyCode, ClipboardShortcut.paste.keyCode]
@@ -600,5 +657,42 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.pasteboard.box, "ok\nמה מצב")
+    }
+
+    // MARK: - P3-53: the Chromium path on a browser page whose host is unknown (Google Docs right after load)
+
+    @TextActor func testAWholeDocumentPageNeverGetsTheChromiumPath() async {
+        let rig = rig("akuo vh")
+        rig.replacer?.pageCategory = .wholeDocument
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty, "no AX selection in the document")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "wholeDocumentPage")
+        XCTAssertEqual(rig.replacer?.pageChecks, 1, "asked once per request")
+    }
+
+    @TextActor func testAnUnknownPageGetsTheChromiumPathForASelectionOnly() async {
+        let box = rig("akuo vh")
+        box.replacer?.pageCategory = .unknown
+        _ = await box.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertTrue(box.field.rangeWrites.isEmpty, "the whole box: never")
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "siteUnknownBox")
+
+        sink = TraceSink()
+        let sel = rig("ok akuo ok", selection: 3..<7)
+        sel.replacer?.pageCategory = .unknown
+        let out = await sel.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(sel.field.text, "ok שלום ok")
+    }
+
+    @TextActor func testAnOrdinaryPageGetsTheChromiumPathAndThePageIsAskedOnce() async {
+        let rig = rig("akuo vh")
+        rig.replacer?.pageCategory = .ordinary
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.replacer?.pageChecks, 1)
+        XCTAssertEqual(rig.replacer?.pageCheckBudgets, [ConvertController.pageCheckBudgetNanos])
     }
 }

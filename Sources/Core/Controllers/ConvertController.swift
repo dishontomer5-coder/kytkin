@@ -70,10 +70,18 @@
 //   `ChromiumAXConvert.isEnabled` and the `KytkinDisableChromiumAX` user default (`chromiumAXEnabled`).
 //
 // P3-44 (owner tests 2026-11-16, Slack bold + @mention + emoji, Gmail bold: flattened by the clipboard paste):
-//   - the clipboard path never pastes over rich content (`ClipboardConvert.Result.richContent`): with a remembered
-//     buffer whose text the copied box *ends with* (the ⌘A selection was dropped with Right arrow, so the caret is right
-//     after it), only that run converts by Backspace + typing; otherwise double-Shift just switches the language
-//     (the buffer is forgotten: the caret moved). A rich *selection* is never pasted over either: just switch.
+//   - the clipboard path never pastes plain text over rich content (`ClipboardConvert.Result.richContent`); since
+//     P3-47 a formatting-only HTML copy (outside chat apps) is converted inside the HTML and pasted as HTML (X16 C3).
+//     Otherwise, with a remembered buffer whose text the copied box *ends with* (the ⌘A selection was dropped with
+//     Right arrow, so the caret is right after it), only that run converts by Backspace + typing; else double-Shift
+//     just switches the language (the buffer is forgotten: the caret moved). A rich selection that can't take the HTML
+//     paste: just switch.
+//
+// P3-53 (001 §7 B5): one clock per request (`requestStart`, taken when the request arrives) is shared by every path:
+//   the Chromium read and its atom walks (`ChromiumAXConvert.Timing.readBudgetNanos`), the page check
+//   (`pageCheckBudgetNanos`, only what is left), and the clipboard's ⌘A ⌘C start (`copyStartBudgetNanos`); each stops
+//   before writing anything when its share is spent. P3-53: on a browser page whose host is unknown the Chromium path
+//   follows the page check too: `wholeDocument` → never; `unknown` → a selection only (the user chose it).
 //   - whole-box conversion keeps @mentions, `:shortcodes:` and mention pills the Chromium AX tree shows whole
 //     (`BoxConversion` atomic tokens; `ChromiumAXConvert.Read.atoms`).
 //   - `diagnose` (DEBUG builds only, wired by the composition root): one `ConvertTrace` per double-Shift with the paths
@@ -130,6 +138,12 @@ import Foundation
     private let diagnose: (@Sendable (ConvertTrace) -> Void)?
     /// P3-44: the trace of the request being handled (enum names and counts only).
     private var trace: ConvertTrace?
+    /// P3-53: when the request being handled arrived (the shared budget clock, B5).
+    private var requestStart: UInt64 = 0
+    /// P3-53: the page check's answer for the request being handled (asked at most once per request).
+    private var requestPage: (gen: UInt64, category: PageCategory)?
+    /// P3-53: the page check gets at most this much, and never more than what is left of the B5 budget.
+    static let pageCheckBudgetNanos: UInt64 = 100_000_000
 
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
@@ -187,6 +201,7 @@ import Foundation
 
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
+        requestStart = clock.nowNanos   // P3-53
         // P3-49: for browsers, whether the page's host was known for this request.
         if BrowserCatalog.known[request.bundleID] != nil {
             trace?.siteKnown = !request.browserSiteUnknown
@@ -559,10 +574,20 @@ import Foundation
                           convert: (String) -> String?) -> ReplacementOutcome {
         let plan = ReplacementPlanner.plan(request, caps: capabilities, focus: focus)
         var caps = capabilities
-        let outcome = ReplacementChain.run(
-            plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateField: locateField,
-            capabilities: &caps, clock: clock,
-            mayWrite: { claim(gen) })   // B3 (§12 W8): before the first write
+        // P3-53 QA: the chain (AX writes, keys) runs inside what is left of the request's B5 budget, not a fresh one:
+        // after a Chromium read or a clipboard try its keys must still land before the hold-back flush.
+        let elapsed = clock.nowNanos &- requestStart
+        let left = ReplacementChain.defaultBudgetNanos > elapsed ? ReplacementChain.defaultBudgetNanos - elapsed : 0
+        let outcome: ReplacementOutcome
+        if left == 0 {
+            replacer.endReplacement()   // as the chain would (nothing it read is kept)
+            outcome = ReplacementOutcome(result: .timedOut, attempts: [])
+        } else {
+            outcome = ReplacementChain.run(
+                plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateField: locateField,
+                capabilities: &caps, clock: clock, budgetNanos: left,
+                mayWrite: { claim(gen) })   // B3 (§12 W8): before the first write
+        }
         capabilities = caps
         // P3-44: the trace names the chain by what it tried last (keys or AX).
         let keys = outcome.attempts.contains { a in
@@ -616,10 +641,9 @@ import Foundation
         // area's address, reduced to a category inside that one call): an ordinary page counts as known.
         var siteUnknown = r.browserSiteUnknown
         if siteUnknown {
-            let page = currentReplacer().focusedPageCategory(timeout: ReplacementExecutor.axTimeout)
-            trace?.pageCheck = page.rawValue
+            let page = pageCategory(for: r)
             if page == .wholeDocument { return nil }
-            if page == .ordinary { siteUnknown = false }
+            if page.isOrdinary { siteUnknown = false }
         }
         if siteUnknown {
             // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): the
@@ -632,6 +656,20 @@ import Foundation
         }
         return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
                        mayPasteLineBreaks: lineBreaks, typedTail: typedTail)
+    }
+
+    /// P3-50 / P3-53: the focused box's page category, asked at most once per request, inside what is left of the
+    /// B5 budget (none left → `.unknown`, nothing asked).
+    private func pageCategory(for r: ConvertRequest) -> PageCategory {
+        if let cached = requestPage, cached.gen == r.gen { return cached.category }
+        let elapsed = clock.nowNanos &- requestStart
+        let left = ReplacementChain.defaultBudgetNanos > elapsed ? ReplacementChain.defaultBudgetNanos - elapsed : 0
+        let page: PageCategory = left == 0 ? .unknown
+            : currentReplacer().focusedPageCategory(timeout: ReplacementExecutor.axTimeout,
+                                                    budgetNanos: min(Self.pageCheckBudgetNanos, left))
+        requestPage = (r.gen, page)
+        trace?.pageCheck = page.rawValue
+        return page
     }
 
     /// P3-37 (c): the AX roles of a text box, for apps not seeded as keys-only.
@@ -729,7 +767,8 @@ import Foundation
         }
         let gen = r.gen
         let (result, pending) = await cb.run(job.source, typedTail: job.typedTail,
-                                             app: CopiedContent.appKind(bundleID: r.bundleID), convert: convert,
+                                             app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
+                                             convert: convert,
                                              htmlPlanner: htmlPlanner,
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
@@ -822,6 +861,19 @@ import Foundation
               let f = focus, let element, !f.isSecure, f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText,
               f.selRangeSettable, let role = f.role, Self.clipboardTextRoles.contains(role)
         else { return nil }
+        // P3-53: Google Docs in Chrome right after load has no host yet: the same page check as the clipboard. A
+        // whole-document page never gets this path; an unknown one only for a selection (the user chose it).
+        if r.browserSiteUnknown {
+            switch pageCategory(for: r) {
+            case .wholeDocument:
+                trace?.chromiumSkipped = "wholeDocumentPage"
+                return nil
+            case .unknown where source == .box:
+                trace?.chromiumSkipped = "siteUnknownBox"
+                return nil
+            default: break
+            }
+        }
         return ChromiumJob(source: source, element: element)
     }
 
@@ -895,7 +947,12 @@ import Foundation
             }
         }
         let gen = r.gen
-        let result = await ax.run(job.source, expected: job.element, plan: plan, mayWrite: { self.claim(gen) })
+        // P3-53 QA (Coordinator 2026-11-16): on a webmail page a whole-box convert needs the quote search complete (a
+        // search cut short by the tighter clock could miss the quoted thread and convert it); elsewhere (Slack) not.
+        let webmail = r.webmailPage || (requestPage.map { $0.gen == r.gen && $0.category == .webmail } ?? false)
+        let result = await ax.run(job.source, expected: job.element, startedAt: requestStart,
+                                  quoteSearchMustComplete: job.source == .box && webmail, plan: plan,
+                                  mayWrite: { self.claim(gen) })
         note(.chromiumAX, "\(result)")
         trace?.chromium = ax.lastDiagnostic
         switch result {

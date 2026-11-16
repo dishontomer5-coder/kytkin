@@ -519,6 +519,7 @@ import Observation
                                        browserSiteUnknown: BrowserCatalog.known[c.bundleID] != nil
                                            && (c.host ?? "").isEmpty)
         request.pageState = c.pageState   // P3-49: for the DEBUG trace only
+        request.webmailPage = PageCategory.isWebmail(host: c.host)   // P3-53 QA: a category only
         // P3-50: for the DEBUG trace only: is this browser watched (site reads), or why not.
         if BrowserCatalog.known[c.bundleID] != nil {
             request.siteWatch = sitePolicy.map { $0.whyNotWatched(c.bundleID) ?? "watched" } ?? "noPolicy"

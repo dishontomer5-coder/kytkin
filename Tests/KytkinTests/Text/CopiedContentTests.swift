@@ -5,15 +5,20 @@
 import XCTest
 
 final class CopiedContentTests: XCTestCase {
+    /// P3-53: the verdict for a non-chat app with token-free text (the old `isRich` is gone).
+    private func isRich(_ items: [[PasteboardEntry]]) -> Bool {
+        CopiedContent.verdict(items, text: "x", app: .other).isRich
+    }
+
     private let plain = PasteboardEntry(type: "public.utf8-plain-text", data: Data("x".utf8))
 
     private func rich(_ html: String) -> Bool {
-        CopiedContent.isRich([[plain, .html(html)]])
+        isRich([[plain, .html(html)]])
     }
 
     func testPlainTextOnlyIsNotRich() {
-        XCTAssertFalse(CopiedContent.isRich([[plain]]))
-        XCTAssertFalse(CopiedContent.isRich([]))
+        XCTAssertFalse(isRich([[plain]]))
+        XCTAssertFalse(isRich([]))
     }
 
     func testChromiumPlainContentEditableCopyIsNotRich() {
@@ -57,15 +62,15 @@ final class CopiedContentTests: XCTestCase {
     }
 
     func testRichTypesAndItems() {
-        XCTAssertTrue(CopiedContent.isRich([[plain, PasteboardEntry(type: "public.png", data: Data([1]))]]))
-        XCTAssertTrue(CopiedContent.isRich([[plain], [plain]]), "two items")
-        XCTAssertTrue(CopiedContent.isRich([[plain, PasteboardEntry(type: "public.html", data: Data([0xFF, 0xFE]))]]),
+        XCTAssertTrue(isRich([[plain, PasteboardEntry(type: "public.png", data: Data([1]))]]))
+        XCTAssertTrue(isRich([[plain], [plain]]), "two items")
+        XCTAssertTrue(isRich([[plain, PasteboardEntry(type: "public.html", data: Data([0xFF, 0xFE]))]]),
                       "HTML that isn't UTF-8")
     }
 
     func testRTF() {
         func rtf(_ s: String) -> Bool {
-            CopiedContent.isRich([[plain, PasteboardEntry(type: "public.rtf", data: Data(s.utf8))]])
+            isRich([[plain, PasteboardEntry(type: "public.rtf", data: Data(s.utf8))]])
         }
         XCTAssertFalse(rtf("{\\rtf1\\ansi\\ansicpg1252\\cocoartf2761 {\\fonttbl\\f0\\fswiss Helvetica;}"
                            + "\\pard\\pardirnatural\\partightenfactor0 \\f0\\fs24 \\cf0 akuo vh}"))

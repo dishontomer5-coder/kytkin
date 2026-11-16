@@ -17,13 +17,28 @@ enum PageCategory: String, Sendable, Equatable {
     case wholeDocument
     /// No page, no address, another scheme, or it couldn't be read: the caller keeps refusing the whole box.
     case unknown
+    /// P3-53 QA (Coordinator 2026-11-16): an ordinary page of a webmail app (Gmail, Outlook on the web), where a reply
+    /// holds a quoted thread: a whole-box Chromium convert needs its quote search complete (`webmailHosts`).
+    case webmail
+
+    /// P3-53 QA: an ordinary page for the clipboard and the Chromium path (a webmail page is one).
+    var isOrdinary: Bool { self == .ordinary || self == .webmail }
+
+    /// P3-53 QA: webmail hosts (the host itself or a subdomain of it). Host category only; the host is dropped.
+    static let webmailHosts = ["mail.google.com", "outlook.live.com", "outlook.office.com", "outlook.office365.com"]
+
+    static func isWebmail(host: String?) -> Bool {
+        guard let h = host?.lowercased(), !h.isEmpty else { return false }
+        return webmailHosts.contains { h == $0 || h.hasSuffix("." + $0) }
+    }
 
     /// The category of one page address. The address and its host are dropped on return.
     static func of(url: String) -> PageCategory {
         guard let components = URLComponents(string: url),
               let scheme = components.scheme?.lowercased(), scheme == "https" || scheme == "http",
               let host = components.host?.lowercased(), !host.isEmpty else { return .unknown }
-        return ReplacementCapabilities.blocksClipboard(bundleID: "", host: host) ? .wholeDocument : .ordinary
+        if ReplacementCapabilities.blocksClipboard(bundleID: "", host: host) { return .wholeDocument }
+        return isWebmail(host: host) ? .webmail : .ordinary
     }
 
     /// P3-50 QA: the category of the focused box's page from every `AXWebArea` on the way up (innermost first): each
@@ -35,16 +50,18 @@ enum PageCategory: String, Sendable, Equatable {
     ///     browser's own `chrome://` UI) say nothing. None → `.unknown`.
     /// The addresses are dropped on return.
     static func of(webAreaURLs urls: [String?], reachedTop: Bool) -> PageCategory {
-        var outermostWeb: PageCategory?
+        var sawWeb = false
+        var sawWebmail = false   // P3-53 QA: any webmail area makes the page one (it only asks for more care)
         for url in urls {
             guard let url else { return .unknown }
             switch of(url: url) {
             case .wholeDocument: return .wholeDocument
-            case .ordinary: outermostWeb = .ordinary
+            case .ordinary: sawWeb = true
+            case .webmail: sawWeb = true; sawWebmail = true
             case .unknown: continue
             }
         }
-        guard reachedTop else { return .unknown }
-        return outermostWeb ?? .unknown
+        guard reachedTop, sawWeb else { return .unknown }
+        return sawWebmail ? .webmail : .ordinary
     }
 }

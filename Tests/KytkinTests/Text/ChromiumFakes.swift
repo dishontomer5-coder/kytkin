@@ -253,7 +253,11 @@ final class FakeChromiumField: AXTextElement {
         .success(a == .selectedText || a == .selectedTextRange || a == .value)
     }
 
+    /// P3-53 QA: runs on every `AXStringForRange` read (to move the clock).
+    var onStringForRange: (() -> Void)?
+
     func string(in r: TextRange) -> Result<String, AXAccessError> {
+        onStringForRange?()
         sync()
         let u = axUnits
         guard r.location >= 0, r.length >= 0, r.end <= u.count else { return .failure(.failed) }
@@ -285,8 +289,21 @@ final class FakeChromiumField: AXTextElement {
 
     func supportsStringForRange() -> Result<Bool, AXAccessError> { .success(true) }
 
-    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
-        inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) }) }
+    /// P3-53: the budget the last atom walk was given, and a hook (to move the fake clock: a slow walk).
+    private(set) var atomBudgets: [UInt64] = []
+    var onInlineAtoms: (() -> Void)?
+    /// P3-53 QA: the quote-container search runs out of time (or elements) before it has looked everywhere.
+    var quoteSearchCutShort = false
+    /// P3-53 QA: what each walk was asked (`quoteSearchMustComplete`).
+    private(set) var quoteSearchMustCompleteAsks: [Bool] = []
+
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+        -> Result<[InlineAtom], AXAccessError> {
+        atomBudgets.append(budgetNanos)
+        quoteSearchMustCompleteAsks.append(quoteSearchMustComplete)
+        if quoteSearchCutShort, quoteSearchMustComplete { return .failure(.timeout) }
+        onInlineAtoms?()
+        return inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) }) }
             ?? .failure(.unsupported)
     }
 
