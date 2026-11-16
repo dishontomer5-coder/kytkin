@@ -73,7 +73,9 @@ enum HTMLTextConvert {
     static let skippedClassWords = ["gmail_quote", "gmail_signature", "gmail_extra"]
     /// P3-48: never allowed, even inside a skipped region.
     static let forbiddenInSkipped: Set<String> = ["script", "style", "iframe", "frame", "object", "embed", "svg", "video",
-                                                  "audio", "canvas", "input", "button", "textarea", "select", "form"]
+                                                  "audio", "canvas", "input", "button", "textarea", "select", "form",
+                                                  // P3-48 QA: page-level and inert-script containers too
+                                                  "base", "link", "template", "noscript", "math", "applet", "frameset"]
     /// P3-48: elements with no end tag (they never open a region or nest).
     static let voidTags: Set<String> = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                                         "param", "source", "track", "wbr"]
@@ -123,7 +125,27 @@ enum HTMLTextConvert {
         case .success(let p): parsed = p
         }
         guard ConvertController.sameVisibleText(parsed.t, plain) else { return .failure(.textMismatch) }
-        let atoms = (parsed.linkTexts + parsed.skippedTexts).filter { $0.count >= 2 }
+        // P3-48 QA: atoms protect every occurrence of their text, so a quote text that also occurs in the user's own part
+        // (outside every skipped region) would keep the user's words from converting. Such a text is not an atom; a
+        // change landing in the quote's copy of it then refuses the paste (`.quoteChanged`), never converts it.
+        var skippedUnit = [Bool](repeating: false, count: parsed.tUnits)
+        for node in parsed.nodes where node.skipped {
+            for g in node.graphemes { for k in g.offset..<min(g.offset + g.text.utf16.count, skippedUnit.count) { skippedUnit[k] = true } }
+        }
+        let tNS = parsed.t as NSString
+        func onlyInSkipped(_ atom: String) -> Bool {
+            var from = 0
+            while from < tNS.length {   // bounded: each match moves `from` forward
+                let r = tNS.range(of: atom, options: [.literal], range: NSRange(location: from, length: tNS.length - from))
+                guard r.location != NSNotFound, r.length > 0 else { return true }
+                if (r.location..<(r.location + r.length)).contains(where: { $0 >= skippedUnit.count || !skippedUnit[$0] }) {
+                    return false
+                }
+                from = r.location + r.length
+            }
+            return true
+        }
+        let atoms = (parsed.linkTexts + parsed.skippedTexts.filter(onlyInSkipped)).filter { $0.count >= 2 }
         // P3-49: the plain text first, so a planner that fixes the direction on its first call uses the plain text's.
         guard let pChanges = planner(plain, atoms), let tChanges = planner(parsed.t, atoms) else {
             return .failure(.nothingToConvert)
@@ -252,6 +274,10 @@ enum HTMLTextConvert {
             // P3-48: inside a skipped region: anything but active / embedded content, nested exactly.
             if !skipStack.isEmpty {
                 guard !forbiddenInSkipped.contains(name) else { return .failure(.unsupportedTag) }
+                // P3-48 QA: no event handlers or script addresses, even in the user's own quoted bytes.
+                if !closing, !attributesAreInert(String(body.dropFirst(name.count))) {
+                    return .failure(.unsafeAttribute)
+                }
                 if closing {
                     guard let at = skipStack.lastIndex(of: name) else {
                         if voidTags.contains(name) { continue }   // a stray </br>
@@ -285,6 +311,16 @@ enum HTMLTextConvert {
         if let r = flushText(upTo: u.count) { return .failure(r) }
         guard linkDepth == 0, skipStack.isEmpty else { return .failure(.parse) }
         return .success(p)
+    }
+
+    /// P3-48 QA: no `on…` event handler, and no `javascript:` / `vbscript:` / `data:text/html` address.
+    private static func attributesAreInert(_ attributeText: String) -> Bool {
+        attributes(attributeText).allSatisfy { name, value in
+            let n = name.lowercased()
+            let v = value.lowercased().filter { !$0.isWhitespace }
+            return !n.hasPrefix("on") && !v.hasPrefix("javascript:") && !v.hasPrefix("vbscript:")
+                && !v.hasPrefix("data:text/html")
+        }
     }
 
     /// P3-48: a `<blockquote>`, or an element whose class names Gmail's quote / signature / extra.

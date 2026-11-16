@@ -74,10 +74,12 @@ final class AXUIElementTextElement: AXTextElement {
     /// (the role names may go to the DEBUG trace).
     /// P3-48: plus every text of a Gmail quoted thread / signature / extra or a blockquote (`quoteAtoms`).
     func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
+        // P3-48 QA: one wall clock for both walks (the pill walk caps itself at 300 ms; together ≤ 500 ms).
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ 500_000_000
         switch pillAtoms(maxNodes: maxNodes) {
         case .failure(let e): return .failure(e)
         case .success(let pills):
-            return quoteAtoms().map { pills + $0 }
+            return quoteAtoms(deadline: deadline).map { pills + $0 }
         }
     }
 
@@ -89,9 +91,8 @@ final class AXUIElementTextElement: AXTextElement {
     /// container found but not walked to its end (budget, the shared 400 ms wall clock) → `.timeout`: the Chromium
     /// convert stops before typing (the caller falls back), rather than convert a part of the quote it couldn't see.
     /// Not finding a container within the search budget is not an error (an ordinary long box). Never logs.
-    private func quoteAtoms() -> Result<[InlineAtom], AXAccessError> {
+    private func quoteAtoms(deadline: UInt64) -> Result<[InlineAtom], AXAccessError> {
         let timeout: Float = 0.25
-        let deadline = DispatchTime.now().uptimeNanoseconds &+ 400_000_000
         func children(_ e: AXUIElement) -> (list: [AXUIElement], timedOut: Bool) {
             var value: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &value)
@@ -128,7 +129,9 @@ final class AXUIElementTextElement: AXTextElement {
         var queue: [(AXUIElement, Int)] = top.list.prefix(300).map { ($0, 1) }
         var i = 0
         while i < queue.count, i < 300 {   // bounded
-            if DispatchTime.now().uptimeNanoseconds > deadline { return .failure(.timeout) }
+            // P3-48 QA: out of time while *searching* = nothing found further (as the doc says: not an error; stopping
+            // every convert of a long box would be a regression). A container found is still walked completely.
+            if DispatchTime.now().uptimeNanoseconds > deadline { break }
             let (e, depth) = queue[i]
             i += 1
             let (role, roleTimedOut) = string(e, kAXRoleAttribute)

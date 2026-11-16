@@ -197,4 +197,35 @@ final class HTMLTextConvertTests: XCTestCase {
         XCTAssertNil(b("akuo vh\nnv nmc"))
         XCTAssertNil(b("on the way, I wrote: x"), "an ordinary sentence")
     }
+
+    // MARK: - P3-48 QA
+
+    func testAQuoteTextNeverProtectsTheSameWordsInTheUsersPart() {
+        // The quote's text node "vh" also occurs in what the user wrote. As an atom it would keep the user's "vh" from
+        // converting (atoms protect every occurrence): it is not one, and the quote's own "vh" changing refuses the paste.
+        XCTAssertEqual(box("<div>akuo vh</div><blockquote>vh</blockquote>", "akuo vh\nvh"), .failure(.quoteChanged))
+        // A quote text found only in the quote stays an atom: the user's words convert, the quote is untouched.
+        XCTAssertEqual(box("<div>akuo vh</div><blockquote>nv nmc</blockquote>", "akuo vh\nnv nmc"),
+                       .success(.init(html: "<div>שלום הי</div><blockquote>nv nmc</blockquote>",
+                                      plain: "שלום הי\nnv nmc")))
+    }
+
+    func testInsideAQuoteEventHandlersAndScriptAddressesAreRefused() {
+        XCTAssertEqual(box("<div>akuo</div><blockquote><div onclick=\"x()\">nv</div></blockquote>", "akuo\nnv"),
+                       .failure(.unsafeAttribute))
+        XCTAssertEqual(box("<div>akuo</div><blockquote><a href=\" javascript:x()\">nv</a></blockquote>", "akuo\nnv"),
+                       .failure(.unsafeAttribute))
+        XCTAssertEqual(box("<div>akuo</div><blockquote><base href=\"https://x\">nv</blockquote>", "akuo\nnv"),
+                       .failure(.unsupportedTag))
+        XCTAssertEqual(box("<div>akuo</div><blockquote><a href=\"mailto:x@y.com\">nv nmc</a></blockquote>",
+                           "akuo\nnv nmc"),
+                       .success(.init(html: "<div>שלום</div><blockquote><a href=\"mailto:x@y.com\">nv nmc</a></blockquote>",
+                                      plain: "שלום\nnv nmc")), "a mail link in a signature stays")
+    }
+
+    func testAtomRolesAreCountedPerRole() {
+        XCTAssertEqual(ConvertTrace.roleCounts([]), "-")
+        XCTAssertEqual(ConvertTrace.roleCounts(["AXStaticText", "AXQuoteText", "AXQuoteText", "AXLink", "AXQuoteText"]),
+                       "AXStaticText:1,AXQuoteText:3,AXLink:1")
+    }
 }
