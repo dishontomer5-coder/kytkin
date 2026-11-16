@@ -92,6 +92,8 @@ enum BrowserCatalog {
         KnownBrowser("org.mozilla.firefoxdeveloperedition", .gecko),
         KnownBrowser("org.mozilla.nightly", .gecko),
         KnownBrowser("org.mozilla.librewolf", .gecko),
+        // P3-47: LibreWolf's other published bundle ID (community builds), unverified.
+        KnownBrowser("io.gitlab.librewolf-community", .gecko),
         KnownBrowser("net.waterfox.waterfox", .gecko),
         KnownBrowser("one.ablaze.floorp", .gecko),
         KnownBrowser("org.torproject.torbrowser", .gecko, alwaysPrivate: true),

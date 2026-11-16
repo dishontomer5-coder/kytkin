@@ -331,6 +331,19 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 
+    @TextActor func testZenTwoLineGmailBoxIsPastedAsConvertedHTML() async {
+        // P3-47: Zen is a seeded browser now, so a box with a line break may be pasted (P3-37 rules for known browsers).
+        let rig = rig("שלום akuo\nnv vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><div><b>שלום</b> akuo</div><div>nv vh</div></div>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'><div dir=\"ltr\"><div><b>שלום</b> שלום</div><div>מה הי</div></div>")
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום\nמה הי")
+        XCTAssertEqual(log.beeps, 0, "no line-break refusal")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
     @TextActor func testChatAppsNeverGetAnHTMLPaste() async {
         let rig = rig("שלום akuo vh", bold: 0..<4)
         axNeverSelects(rig)

@@ -37,6 +37,25 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         }
     }
 
+    func testGeckoBrowserSeeds() {
+        // P3-47: Gecko browsers are known browsers for convert (keys + the clipboard with line breaks), never chromiumAX.
+        let c = ReplacementCapabilities()
+        for id in ["app.zen-browser.zen", "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition",
+                   "org.mozilla.nightly", "org.mozilla.librewolf", "io.gitlab.librewolf-community",
+                   "net.waterfox.waterfox", "one.ablaze.floorp"] {
+            XCTAssertEqual(c.method(for: id), .keysOnly, id)
+            XCTAssertNil(c.family(for: id), "no Chromium AX path: \(id)")
+            XCTAssertFalse(ReplacementCapabilities.isEditor(id), id)
+        }
+        // Every seeded Gecko browser is one the site reader knows (so whole-document sites are told by their host).
+        for id in ReplacementCapabilities.geckoBrowserBundleIDs {
+            XCTAssertEqual(BrowserCatalog.known[id]?.engine, .gecko, id)
+        }
+        // Whole-document sites stay excluded in Gecko too (the host Kytkin reads for the page).
+        XCTAssertTrue(ReplacementCapabilities.blocksClipboard(bundleID: "app.zen-browser.zen", host: "docs.google.com"))
+        XCTAssertFalse(ReplacementCapabilities.blocksClipboard(bundleID: "app.zen-browser.zen", host: "mail.google.com"))
+    }
+
     func testBundleIDsAreCaseInsensitive() {
         let c = ReplacementCapabilities()
         XCTAssertEqual(c.method(for: "COM.APPLE.TERMINAL"), .terminal)
