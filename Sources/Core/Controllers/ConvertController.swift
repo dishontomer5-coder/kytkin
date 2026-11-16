@@ -595,13 +595,21 @@ import Foundation
         case .keysOnly:   // Chromium / Electron: AX may be off, so the role says nothing; the seed vouches for it
             mayPasteLineBreaks = true
         case .auto, .preferPaste:
-            mayPasteLineBreaks = false   // P3-37 QA
+            // P3-37 QA; P3-47: a known Gecko browser is not an unknown terminal (AX first there, `.auto`).
+            mayPasteLineBreaks = ReplacementCapabilities.isGeckoBrowser(r.bundleID)
             // Any other app: only a real text box. ⌘A in a list, table or file browser selects items, and ⌘V could
             // paste over all of them (Numbers, Finder).
             guard let role = f.role, Self.clipboardTextRoles.contains(role) else { return nil }
         case .terminal, .noUnicode, .disabled: return nil
         }
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
+        // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): never the
+        // whole box, and a selection only without line breaks.
+        if r.browserSiteUnknown {
+            if source == .box { return nil }
+            return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
+                           mayPasteLineBreaks: false, typedTail: typedTail)
+        }
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
         return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
@@ -660,9 +668,35 @@ import Foundation
         let focusIsSame = {
             replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.isSameElement(as: element) ?? false
         }
+        // P3-47: the formatting-preserving paste's planner: the same box rule (direction: the remembered buffer's
+        // language, else the last letter) or, for a selection, the guessed layout, keeping `atoms` (link texts) whole.
+        // Used on the HTML's text and on the copied plain text alike, so the two conversions agree.
+        let htmlPlanner: HTMLTextConvert.Planner = { text, atoms in
+            let direction: PairSide?
+            switch job.source {
+            case .box: direction = job.direction
+            case .copiedSelection:
+                guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else { return [] }
+                direction = side
+            }
+            let w = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                                reachesFieldEnd: true)
+            switch BoxConversion.plan(w, classify: layouts.runClass, direction: direction, atomicTexts: atoms,
+                                      convert: { side, grapheme in
+                                          layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text
+                                              ?? grapheme
+                                      }) {
+            case .nothing: return []
+            case .tooLong: return nil
+            case .convert(let p):
+                target = layouts.source(of: p.side.other)
+                return p.changes
+            }
+        }
         let gen = r.gen
         let (result, pending) = await cb.run(job.source, typedTail: job.typedTail,
                                              app: CopiedContent.appKind(bundleID: r.bundleID), convert: convert,
+                                             htmlPlanner: htmlPlanner,
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
         note(.clipboard, "\(result)")

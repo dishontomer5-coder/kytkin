@@ -27,6 +27,10 @@ import Foundation
     /// `org.nspasteboard.ConcealedType` (nspasteboard.org) so clipboard managers skip it. False if the write failed.
     func writeTransient(_ text: String) -> Bool
 
+    /// P3-47: the same, with an HTML flavour (`public.html`) next to the plain text, for a formatting-preserving paste.
+    /// False if the write failed.
+    func writeTransient(_ text: String, html: String) -> Bool
+
     /// How many times another app has asked for the text `writeTransient` put there (the live adapter writes it
     /// lazily, through a data provider). Grows when the target app reads it for the paste, so the original can be put
     /// back right after. An adapter that can't tell keeps it at 0 (the restore then waits its full bound).

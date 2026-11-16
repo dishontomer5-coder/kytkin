@@ -38,12 +38,12 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     @TextActor private func rig(_ text: String, bold: Range<Int>? = nil, selection: Range<Int>? = nil,
-                                chromium: Bool = true) -> Rig {
+                                chromium: Bool = true, axWritesSelection: Bool = true) -> Rig {
         let poster = RecordingPoster()
         let field = FakeChromiumField(text, selection: selection, poster: poster, clock: clock, boldUnits: bold)
         let r = ScriptedReplacer(log: log)
         let selText = selection.map { s in String(decoding: Array(text.utf16)[s], as: UTF16.self) }
-        r.focus = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: true,
+        r.focus = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: axWritesSelection,
                             selRangeSettable: true, selection: selText)
         r.element = field
         let pb = FakePasteboard(poster: poster, clock: clock, box: text)
@@ -71,9 +71,11 @@ final class ConvertControllerRichContentTests: XCTestCase {
         WordSnapshot(strokes: ConvertFixtures.strokes(current), previousWords: [], renderedIn: IDs.abc, isValid: true)
     }
 
-    private func request(_ snapshot: WordSnapshot, gen: UInt64 = 1, app: String? = nil) -> ConvertRequest {
+    private func request(_ snapshot: WordSnapshot, gen: UInt64 = 1, app: String? = nil,
+                         siteUnknown: Bool = false) -> ConvertRequest {
         ConvertRequest(snapshot: snapshot, gen: gen, bundleID: app ?? slack, mode: .convert, pair: ConvertFixtures.pair,
-                       currentSource: IDs.abc, switchAfterConvert: true, useClipboard: true, allowsChromiumAX: true)
+                       currentSource: IDs.abc, switchAfterConvert: true, useClipboard: true, allowsChromiumAX: true,
+                       browserSiteUnknown: siteUnknown)
     }
 
     private func pastes(_ poster: RecordingPoster) -> Int {
@@ -116,17 +118,33 @@ final class ConvertControllerRichContentTests: XCTestCase {
 
     // MARK: - Item 1: never paste over rich content
 
-    @TextActor func testGmailBoldCopyIsNotPastedTheTypedRunConvertsByKeys() async {
+    @TextActor func testGmailBoldCopyIsPastedAsConvertedHTML() async {
+        // P3-47: formatting only (bold) in a browser: converted inside the HTML, pasted as HTML + plain text.
         let rig = rig("שלום akuo vh", bold: 0..<4)
         axNeverSelects(rig)
         rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><b>שלום</b> akuo vh</div>")]
         let out = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'><div dir=\"ltr\"><b>שלום</b> שלום הי</div>", "every tag kept")
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום הי")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard, "the user's clipboard is back")
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
+        XCTAssertTrue(sink.traces.first?.line.contains("htmlPaste=ok") == true)
+        XCTAssertEqual(log.beeps, 0)
+    }
+
+    @TextActor func testRichCopyWithAnEmbedIsNotPastedTheTypedRunConvertsByKeys() async {
+        // An image (an emoji, a chip) can't round-trip: P3-44 behaviour.
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = [.html("<div><b>שלום</b> <img src=\"x.png\"> akuo vh</div>")]
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 2), switched: true),
                        "only the remembered run, by keys")
-        XCTAssertEqual(pastes(rig.poster), 0, "no plain-text paste over the bold")
-        XCTAssertEqual(rig.pasteboard.box, "שלום akuo vh", "the app's box was never replaced by a paste")
+        XCTAssertEqual(pastes(rig.poster), 0, "no paste over the image")
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard, "the user's clipboard is back")
-        XCTAssertEqual(log.claims, [1])
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .refused(.unsupportedTag))
         XCTAssertEqual(log.beeps, 0)
     }
 
@@ -147,7 +165,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
     @TextActor func testRichCopyWithNothingRememberedJustSwitches() async {
         let rig = rig("שלום akuo", bold: 0..<4)
         axNeverSelects(rig)
-        rig.pasteboard.copiedExtras = [.html("<b>שלום</b> akuo")]
+        rig.pasteboard.copiedExtras = [.html("<b>שלום</b> <img src=\"x\"> akuo")]
         let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
         XCTAssertEqual(pastes(rig.poster), 0)
@@ -160,7 +178,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         // The caret is at the end of the box after the ⌘A selection is dropped, not after the typed run: no keys.
         let rig = rig("vh שלום", bold: 3..<7)
         axNeverSelects(rig)
-        rig.pasteboard.copiedExtras = [.html("vh <b>שלום</b>")]
+        rig.pasteboard.copiedExtras = [.html("vh <b>שלום</b><span data-chip=\"1\"></span>")]
         let out = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
         XCTAssertEqual(backspaces(rig.poster), 0, "no Backspace at the wrong place")
@@ -193,7 +211,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
     @TextActor func testTheTraceNamesThePathsAndHoldsNoText() async {
         let rig = rig("שלום akuo vh", bold: 0..<4)
         axNeverSelects(rig)
-        rig.pasteboard.copiedExtras = [.html("<b>שלום</b> akuo vh")]
+        rig.pasteboard.copiedExtras = [.html("<b>שלום</b> <img src=\"x\"> akuo vh")]
         _ = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
         XCTAssertEqual(sink.traces.count, 1, "one trace per double-Shift")
         guard let t = sink.traces.first else { return }
@@ -284,5 +302,123 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
         XCTAssertEqual(pastes(rig.poster), 0)
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    // MARK: - P3-47: formatting-preserving paste
+
+    @TextActor func testABoldSelectionInABrowserIsPastedAsConvertedHTML() async {
+        let rig = rig("ok akuo ok", selection: 3..<7, chromium: false)
+        rig.pasteboard.userSelection = "akuo"
+        rig.pasteboard.copiedExtras = [.html("<b>akuo</b>")]
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil, "<meta charset='utf-8'><b>שלום</b>")
+        XCTAssertEqual(rig.pasteboard.box, "ok שלום ok", "the paste replaced the selection only")
+        XCTAssertEqual(clipboardKeysWithoutSelectAll(rig.poster), true, "⌘C and ⌘V, no ⌘A")
+    }
+
+    @TextActor func testZenGmailBoldBoxIsPastedAsConvertedHTML() async {
+        // P3-47 owner case: Zen (Gecko) has no Chromium AX path; the clipboard path keeps the bold now.
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [.html("""
+            <html><body>
+            <!--StartFragment--><div dir="ltr"><b>שלום</b>&nbsp;akuo vh</div><!--EndFragment-->
+            </body>
+            </html>
+            """)]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?
+            .contains("<div dir=\"ltr\"><b>שלום</b>&nbsp;שלום הי</div>") == true)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    @TextActor func testZenTwoLineGmailBoxIsPastedAsConvertedHTML() async {
+        // P3-47: Zen is a seeded browser now, so a box with a line break may be pasted (P3-37 rules for known browsers).
+        let rig = rig("שלום akuo\nnv vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><div><b>שלום</b> akuo</div><div>nv vh</div></div>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'><div dir=\"ltr\"><div><b>שלום</b> שלום</div><div>מה הי</div></div>")
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום\nמה הי")
+        XCTAssertEqual(log.beeps, 0, "no line-break refusal")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    @TextActor func testChatAppsNeverGetAnHTMLPaste() async {
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = [.html("<b>שלום</b> akuo vh")]
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)   // Slack
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertNil(sink.traces.first?.copy?.htmlPaste, "not tried in a chat app")
+    }
+
+    @TextActor func testACustomPageFlavourIsNotEligible() async {
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = [.html("<b>שלום</b> akuo vh"),
+                                       PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .refused(.notEligible))
+        XCTAssertTrue(sink.traces.first?.line.contains("htmlPaste=refused(notEligible)") == true)
+    }
+
+    // MARK: - P3-47 QA: a browser page whose host is unknown (Google Docs can't be ruled out)
+
+    @TextActor func testZenBoxIsNeverCopiedWhileTheSiteIsUnknown() async {
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [.html("<div><b>שלום</b> akuo vh</div>")]
+        let out = await rig.sut.handle(request(buffer("vh"), app: "app.zen-browser.zen", siteUnknown: true),
+                                       layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0, "no whole-box paste")
+        XCTAssertFalse(rig.pasteboard.selectedAll, "no ⌘A")
+        XCTAssertEqual(rig.pasteboard.transientWrites, [])
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+    }
+
+    @TextActor func testChromeBoxIsNeverCopiedWhileTheSiteIsUnknown() async {
+        let rig = rig("akuo vh")
+        axNeverSelects(rig)
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertFalse(rig.pasteboard.selectedAll)
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+    }
+
+    @TextActor func testAMultiLineSelectionIsNotPastedWhileTheSiteIsUnknown() async {
+        // A selection AX can't write (so the clipboard would copy it): with a line break, never pasted on an unknown site.
+        let rig = rig("ok akuo\nvh ok", selection: 3..<10, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo\nvh"
+        rig.pasteboard.copiedExtras = [.html("<div>akuo</div><div>vh</div>")]
+        _ = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0, "a line break is never pasted on an unknown site")
+        XCTAssertEqual(rig.pasteboard.box, "ok akuo\nvh ok")
+    }
+
+    @TextActor func testAOneLineSelectionIsStillPastedWhileTheSiteIsUnknown() async {
+        let rig = rig("ok akuo ok", selection: 3..<7, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo"
+        rig.pasteboard.copiedExtras = [.html("<b>akuo</b>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "ok שלום ok")
+    }
+
+    @TextActor func testZenWritesASelectionThroughAXFirst() async {
+        // P3-47 QA: Gecko stays `.auto`: a selection AX can write is converted through AX, not the clipboard.
+        let rig = rig("ok akuo ok", selection: 3..<7, chromium: false)
+        rig.pasteboard.userSelection = "akuo"
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axWriteSelection(verify: true), switched: true))
+        XCTAssertEqual(pastes(rig.poster), 0)
+    }
+
+    private func clipboardKeysWithoutSelectAll(_ poster: RecordingPoster) -> Bool {
+        let downs = poster.events.filter { $0.isKeyDown && $0.modifierFlags != 0 }.map(\.keyCode)
+        return downs == [ClipboardShortcut.copy.keyCode, ClipboardShortcut.paste.keyCode]
     }
 }

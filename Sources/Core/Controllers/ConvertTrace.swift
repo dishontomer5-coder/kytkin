@@ -58,7 +58,8 @@ struct ConvertTrace: Sendable, Equatable {
         if let richCopy { parts.append("richCopy=\(richCopy)") }
         if let copy {
             parts.append("copiedTypes{\(copy.types.map { "\($0)" } ?? "unreadable")} "
-                         + "copyVerdict=\(copy.reason?.rawValue ?? "-")")
+                         + "copyVerdict=\(copy.reason?.rawValue ?? "-")"
+                         + (copy.htmlPaste.map { " htmlPaste=\($0)" } ?? ""))
         }
         parts.append("outcome=\(outcome)")
         return parts.joined(separator: " ")

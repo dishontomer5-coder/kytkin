@@ -40,6 +40,19 @@ extension ReplacementCapabilities {
             + noUnicode.map { Seed(match: .exact($0), hint: .noUnicode) }
     }()
 
+    /// P3-47 (Coordinator 2026-11-16; Zen is the owner's main browser, plan.md §Phase 3): the Gecko browsers, known
+    /// browsers for the clipboard convert: a box may be pasted with line breaks (unseeded apps refuse them: the P3-37
+    /// unknown-terminal guard), so a two-line Gmail box in Zen converts. P3-47 QA: *not* seeded `.keysOnly` (that dropped
+    /// the AX read / write Gecko gives plain `<input>` / `<textarea>` fields): they stay `.auto`, AX first, the clipboard
+    /// only where AX can't read the box. Not `chromiumAX` (Gecko has no such path). Whole-document sites stay excluded
+    /// by `blocksClipboard(bundleID:host:)`, and a box is never copied while the page's host is unknown
+    /// (`ConvertRequest.browserSiteUnknown`). IDs as in `BrowserCatalog` (Zen verified from its Info.plist; the others
+    /// from their vendors' published bundles, unverified here).
+    static let geckoBrowserBundleIDs = [
+        "app.zen-browser.zen", "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly",
+        "org.mozilla.librewolf", "net.waterfox.waterfox", "one.ablaze.floorp",
+    ]
+
     /// P3-37 (c): code editors and IDEs, where ⌘A selects the whole file (a whole-box convert would turn every English
     /// identifier into Hebrew) and the same window hosts a terminal (a pasted box with line breaks could run commands at
     /// its prompt). The clipboard never converts a whole box there; the remembered buffer does, as before.
@@ -73,6 +86,12 @@ extension ReplacementCapabilities {
     }
 
     /// P3-37 (c): `bundleID` is a code editor or IDE (`editorBundleIDs`, or JetBrains).
+    /// P3-47: `bundleID` is a known Gecko browser (`geckoBrowserBundleIDs`).
+    static func isGeckoBrowser(_ bundleID: String) -> Bool {
+        let k = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return geckoBrowserBundleIDs.contains { $0.lowercased() == k }
+    }
+
     static func isEditor(_ bundleID: String) -> Bool {
         let k = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return editorBundleIDs.contains(k) || k.hasPrefix("com.jetbrains.")
