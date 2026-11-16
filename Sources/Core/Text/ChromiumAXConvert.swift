@@ -499,21 +499,40 @@ import Foundation
     /// Sets `range` moved by `shift` page units, then polls (bounded) until the app shows the selection (Chromium applies
     /// it in the renderer and updates the AX tree asynchronously, research §5 step 3) and judges `AXSelectedText`: it
     /// must be exactly `original` (P3-42 QA: or, for a window holding a line break, the same visible text: P3-40,
-    /// Chromium can drop line breaks from it). P3-44: "shows" = the range set, or its value-space twin (`range` itself:
-    /// shape A reads in value units), or any range that differs from the one read just before the write (shape A
-    /// reports a selection holding hidden units shorter); it is then judged by the text alone. The first check is
-    /// immediate.
+    /// Chromium can drop line breaks from it). P3-44: "shows" = any range that differs from the one read just before the
+    /// write (shape A reports in value units); it is then judged by the text alone. P3-44 QA: when the selection
+    /// before already reads like the target (or can't be read), it is first moved to a caret, so a stale read of the old
+    /// AX tree can never pass for the new selection. The first check is immediate.
     private func select(_ el: any AXTextElement, _ range: TextRange, shift: Int, _ original: String) async
         -> SelectOutcome {
         let target = TextRange(location: range.location + shift, length: range.length)
-        let before: TextRange? = if case .success(let r) = track(el.range(.selectedTextRange)) { r } else { nil }
+        var before: TextRange? = if case .success(let r) = track(el.range(.selectedTextRange)) { r } else { nil }
         if timedOut { return .notShown }
+        let polls = max(1, Int(timing.selectSettleNanos / max(timing.pollNanos, 1)))
+        // P3-44 QA: a read of the old AX tree (Chromium applies a range write asynchronously; the range *and* the
+        // selected text of the old tree) must never pass for the new selection. When the selection now reads as the
+        // new one would (shape A reports a widened window holding hidden units as the bare piece range), or can't be
+        // read, it is first moved to a caret at the target: a caret read is told apart from any (non-empty) target.
+        if before == nil || before == target || before == range {
+            let caret = TextRange(location: target.location, length: 0)
+            guard case .success = track(el.setRange(caret, for: .selectedTextRange)) else {
+                return timedOut ? .notShown : .otherText("")
+            }
+            before = nil
+            for i in 0...polls {
+                if case .success(let r) = track(el.range(.selectedTextRange)), r.isCaret { before = r; break }
+                if timedOut { return .notShown }
+                if i < polls { await sleep(timing.pollNanos) }
+            }
+            guard before != nil else { return .notShown }
+        }
         guard case .success = track(el.setRange(target, for: .selectedTextRange)) else {
             return timedOut ? .notShown : .otherText("")   // e.g. a shifted range past the page's end
         }
-        let polls = max(1, Int(timing.selectSettleNanos / max(timing.pollNanos, 1)))
         for i in 0...polls {
-            if case .success(let r) = track(el.range(.selectedTextRange)), r == target || r == range || r != before {
+            // Shown = any range other than the one read just before the write (shape A reports the new selection in
+            // value units, which may be neither `target` nor `range`); `before` is never a twin of the target here.
+            if case .success(let r) = track(el.range(.selectedTextRange)), r != before {
                 guard case .success(let selected) = track(el.string(.selectedText)) else { return .notShown }
                 if selected.unicodeScalars.elementsEqual(original.unicodeScalars) { return .matched }
                 if original.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, original) {

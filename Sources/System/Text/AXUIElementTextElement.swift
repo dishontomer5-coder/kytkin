@@ -4,6 +4,7 @@
 // Not compiled into the test target: tests can't reach real apps.
 
 import ApplicationServices
+import Dispatch
 
 final class AXUIElementTextElement: AXTextElement {
     private let element: AXUIElement
@@ -64,7 +65,7 @@ final class AXUIElementTextElement: AXTextElement {
     }
 
     /// P3-44: mention pills and links inside the box (breadth-first over `AXChildren`, ≤ `maxNodes` elements, ≤ 4
-    /// levels; each element gets the same messaging timeout as this one). Kept: an element whose role is `AXLink`, or
+    /// levels; each element gets the same messaging timeout as this one; P3-44 QA: ≤ 300 ms in all, else `.timeout`). Kept: an element whose role is `AXLink`, or
     /// whose own text (`AXValue`, else `AXTitle`, else `AXDescription`) starts with `@` or `#`; 2–64 UTF-16 units, no line
     /// break. Never logs; the texts go straight to the convert's plan.
     func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> {
@@ -91,7 +92,12 @@ final class AXUIElementTextElement: AXTextElement {
         if enqueueChildren(of: element, depth: 1) == .cannotComplete { return .failure(.timeout) }
         var atoms: [String] = []
         var i = 0
+        // P3-44 QA: a wall-clock cap too (each call may take up to the 0.25 s timeout without failing: ≤ 5 calls × 64
+        // elements could hold the AX thread for many seconds). Past it the walk counts as a timeout: the convert stops
+        // rather than run without the pills it may have missed.
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ 300_000_000
         while i < queue.count {   // bounded: the queue never grows past maxNodes
+            if DispatchTime.now().uptimeNanoseconds > deadline { return .failure(.timeout) }
             let (e, depth) = queue[i]
             i += 1
             let (role, roleError) = text(of: e, kAXRoleAttribute)

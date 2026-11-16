@@ -346,6 +346,25 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(f.text, "שלום שלום")
     }
 
+    @TextActor func testStaleTreeAfterAWidenedWindowNeverTypesOverTheEmoji() async {
+        // P3-44 QA: shape A (value-unit reads, drifted writes), the emoji right before the only piece. The widened window
+        // (emoji + "akuo") reads back as the value range (2, 4) = the piece's own range. The next try selects the piece
+        // at shift 0 (DOM: emoji + "ak"); Chromium's AX tree is still the old one for a read, so the range *and* the text
+        // still say (2, 4) / "akuo". Accepting that stale read typed over the emoji. Now the selection is first moved
+        // to a caret, so a stale read can't look like the new selection: the emoji survives and "akuo" converts.
+        let f = field("x 😀akuo")
+        f.hidden = 2..<4
+        f.setRangeDrifts = true
+        f.staleRangeReadsAfterSet = 1
+        f.staleSelectedTextToo = true
+        let result = await sut(SwitchableFocusProvider(f)).run(.box, expected: f, plan: { _ in
+            .changes([TextChange(offset: 2, length: 4, text: "שלום")])
+        }, mayWrite: { true })
+        XCTAssertTrue(f.text.contains("😀"), "the emoji is never typed over")
+        XCTAssertEqual(result, .converted(pieces: 1))
+        XCTAssertEqual(f.text, "x 😀שלום")
+    }
+
     @TextActor func testASelectionThatNeverShowsTypesNothing() async {
         let f = field("akuo")
         f.staleRangeReadsAfterSet = 10_000

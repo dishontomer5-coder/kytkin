@@ -74,4 +74,19 @@ final class CopiedContentTests: XCTestCase {
         XCTAssertTrue(rtf("{\\rtf1 {\\field{\\*\\fldinst HYPERLINK \"x\"}}}"))
         XCTAssertTrue(rtf("{\\rtf1 \\ul x\\ulnone}"))
     }
+
+    func testTypedRunAtEndOfTheCopiedBox() {
+        // P3-44 QA: the typed run converts by Backspace at the end of the box only when the copy ends with it.
+        XCTAssertTrue(ClipboardConvert.typedRunIsAtEnd(of: "שלום @Hillel Banai :joy:\nakuo vh", typedTail: "akuo vh"))
+        XCTAssertTrue(ClipboardConvert.typedRunIsAtEnd(of: "vh akuo vh", typedTail: "vh"), "an earlier copy doesn't matter")
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "akuo vh\n", typedTail: "akuo vh"), "a trailing line break")
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "akuo vh ", typedTail: "akuo vh"), "a trailing space")
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "vh", typedTail: "akuo vh"), "longer than the box")
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "vh", typedTail: ""))
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "vh", typedTail: nil))
+        // Slack turned the typed `:joy:` into one emoji, but the plain copy still reads `:joy:`: 5 Backspaces would
+        // delete the emoji and four characters before it.
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "akuo :joy:", typedTail: ":joy:"))
+        XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "akuo vh :)", typedTail: "vh :)"))
+    }
 }

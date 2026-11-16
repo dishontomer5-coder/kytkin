@@ -186,9 +186,7 @@ import Foundation
         // P3-44: never paste plain text over rich content (an unreadable copy counts as rich).
         let copied = pasteboard.snapshot(maxBytes: Self.maxCopiedBytes)
         if copied.map({ CopiedContent.isRich($0.items) }) ?? true {
-            let atEnd = source == .box && typedTail.map { tail in
-                !tail.isEmpty && Self.endsWith(text.unicodeScalars, tail.unicodeScalars)
-            } == true
+            let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
             return stop(.richContent(typedRunAtEnd: atEnd))
         }
 
@@ -250,6 +248,15 @@ import Foundation
             // The app's copy landed after we gave up: undo it, so the user's clipboard is what it was.
             if pasteboard.changeCount != baseline { pasteboard.restore(pending.snapshot) }
         }
+    }
+
+    /// P3-44: the copied (plain) box text ends with the typed run, so the caret after ⌘A + Right arrow is right after
+    /// it. P3-44 QA: never for a run holding a colon: Slack turns a typed `:joy:` (or `:)`) into one emoji while the
+    /// plain-text copy still reads `:joy:`, so the copy would "end with" the run and the Backspaces (one per typed
+    /// character) would delete the emoji and the text before it.
+    nonisolated static func typedRunIsAtEnd(of text: String, typedTail: String?) -> Bool {
+        guard let tail = typedTail, !tail.isEmpty, !tail.contains(":") else { return false }
+        return endsWith(text.unicodeScalars, tail.unicodeScalars)
     }
 
     /// P3-44: `a` ends with `b`, scalar by scalar (no canonical equivalence: the key path counts the buffer's own text).
