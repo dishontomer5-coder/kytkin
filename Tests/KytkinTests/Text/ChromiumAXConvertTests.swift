@@ -641,4 +641,124 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(ChromiumAXConvert.roleName("@Tomer"), "other", "never text")
         XCTAssertEqual(ChromiumAXConvert.roleName("AX Link"), "other")
     }
+
+    // MARK: - P3-51: Slack's emoji as U+FFFC in AXValue, its own units in AXStringForRange (owner traces)
+
+    @TextActor func testOwnersVhEmojiVhVhWithTheCaretAtTheEnd() async {
+        // `prefixMismatch=ax10/value10/common3+0/span7~7`: the prefix read covers one unit less of the value.
+        let f = field("vh 😄 vh vh")
+        f.emojiObject = 3..<5
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .converted(pieces: 3))
+        XCTAssertEqual(f.text, "הי 😄 הי הי", "every vh once, the emoji kept")
+        XCTAssertEqual(ax.lastDiagnostic.prefixMismatch,
+                       .init(axUnits: 10, valueUnits: 10, commonPrefix: 3, commonSuffix: 0))
+        XCTAssertEqual(ax.lastDiagnostic.prefixObjects, "ax0fffc+1emoji/value1fffc+0emoji")
+        XCTAssertTrue(ax.lastDiagnostic.caretMapped)
+        XCTAssertEqual(f.rangeWrites.last, TextRange(location: 10, length: 0), "caret back at the end (value units)")
+    }
+
+    @TextActor func testOwnersVhEmojiVhVhWithTheCaretBeforeTheLastLetter() async {
+        // `prefixMismatch=ax9/value9/common3+0/span6~6`.
+        let f = field("vh 😄 vh vh", caret: 10)
+        f.emojiObject = 3..<5
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(ax.lastDiagnostic.prefixMismatch,
+                       .init(axUnits: 9, valueUnits: 9, commonPrefix: 3, commonSuffix: 0))
+        XCTAssertEqual(result, .converted(pieces: 4), "the caret splits the last word")
+        XCTAssertEqual(f.text, "הי 😄 הי הי")
+    }
+
+    @TextActor func testOwnersTwoLineMentionBoxWithAnEmojiOnLineTwo() async {
+        // `readCheck=prefix atoms=1 atomRoles=AXStaticText prefixMismatch=ax35/value35/common28+0/span7~7`.
+        let f = field("@Tomer Dishon תומר\nakuo vh n😄 nv vh", bold: 14..<18)
+        f.emojiObject = 28..<30
+        f.inlineAtoms = ["@Tomer Dishon"]
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(ax.lastDiagnostic.prefixMismatch,
+                       .init(axUnits: 35, valueUnits: 35, commonPrefix: 28, commonSuffix: 0))
+        XCTAssertEqual(ax.lastDiagnostic.atomRoles, ["AXStaticText"])
+        XCTAssertEqual(result, .converted(pieces: 5))
+        XCTAssertEqual(f.text, "@Tomer Dishon תומר\nשלום הי מ😄 מה הי", "the pill and the emoji kept")
+        XCTAssertEqual(f.boldText, "תומר")
+    }
+
+    @TextActor func testASelectionHoldingTheEmojiConverts() async {
+        // `readCheck=selectionText`: AXSelectedText shows the emoji where AXValue has U+FFFC.
+        let f = field("vh 😄 vh vh", selection: 0..<11)
+        f.emojiObject = 3..<5
+        let result = await run(f, .selection)
+        XCTAssertEqual(result, .converted(pieces: 3))
+        XCTAssertEqual(f.text, "הי 😄 הי הי")
+    }
+
+    @TextActor func testASelectionAfterTheEmojiConverts() async {
+        let f = field("vh 😄 vh vh", selection: 6..<11)
+        f.emojiObject = 3..<5
+        let result = await run(f, .selection)
+        XCTAssertEqual(result, .converted(pieces: 2))
+        XCTAssertEqual(f.text, "vh 😄 הי הי")
+    }
+
+    func testObjectAwareComparisons() {
+        XCTAssertTrue(ChromiumAXConvert.isObject("\u{FFFC}"))
+        XCTAssertTrue(ChromiumAXConvert.isObject("😄"))
+        XCTAssertTrue(ChromiumAXConvert.isObject("👍🏽"))
+        XCTAssertFalse(ChromiumAXConvert.isObject("1"), "a digit is not an emoji here")
+        XCTAssertFalse(ChromiumAXConvert.isObject("ש"))
+        XCTAssertTrue(ChromiumAXConvert.sameIgnoringObjects("vh 😄 vh", "vh \u{FFFC} vh"))
+        XCTAssertTrue(ChromiumAXConvert.sameIgnoringObjects("vh 😄 vh", "vh  vh"))
+        XCTAssertFalse(ChromiumAXConvert.sameIgnoringObjects("vh 😄 vh", "vh  vx"))
+        XCTAssertTrue(ChromiumAXConvert.sameWithObjectsInPlace("a 😄 b", "a \u{FFFC} b"))
+        XCTAssertFalse(ChromiumAXConvert.sameWithObjectsInPlace("a 😄 b", "a  b"), "not in place")
+        XCTAssertFalse(ChromiumAXConvert.sameWithObjectsInPlace("a b", "a b"), "no object: the exact rule applies")
+        let v = Array("vh \u{FFFC} vh vh".utf16)
+        XCTAssertEqual(ChromiumAXConvert.valueOffset(matching: "vh 😄 vh v", in: v, atoms: []), 9)
+        XCTAssertEqual(ChromiumAXConvert.valueOffset(matching: "vh 😄 vh ", in: Array("vh  vh vh".utf16), atoms: []), 7)
+    }
+
+    // MARK: - P3-51 QA
+
+    func testCaretFromAPrefixNeverMixesPillsAndEmoji() {
+        // The owner's shape: one emoji as U+FFFC in AXValue, its two units in the prefix read: wider by one.
+        let v = Array("vh \u{FFFC} vh vh".utf16)
+        let a = ChromiumAXConvert.prefixAlignment("vh 😄 vh ", in: v, atoms: [])
+        XCTAssertEqual(a?.end, 8)
+        XCTAssertEqual(a?.wider, 1)
+        XCTAssertEqual(a?.narrower, 0)
+        XCTAssertEqual(a.flatMap { ChromiumAXConvert.caret(fromPrefix: $0, appCaret: 9) }, 9, "the app's caret stays")
+        XCTAssertNil(a.flatMap { ChromiumAXConvert.caret(fromPrefix: $0, appCaret: 10) }, "not accounted for")
+        // A pill counted as one unit (P3-46): narrower, the walk's end.
+        let pv = Array("@Tomer Dishon akuo".utf16)
+        let pill = ChromiumAXConvert.prefixAlignment("\u{FFFC} akuo", in: pv, atoms: ["@Tomer Dishon"])
+        XCTAssertEqual(pill?.narrower, 12)
+        XCTAssertEqual(pill.flatMap { ChromiumAXConvert.caret(fromPrefix: $0, appCaret: 6) }, 18)
+        // Both before the caret: a pill (one unit) and an emoji (two units in the read): the caret can't be told.
+        let mixed = Array("@Tomer Dishon \u{FFFC} akuo".utf16)
+        let both = ChromiumAXConvert.prefixAlignment("\u{FFFC} 😂 ak", in: mixed, atoms: ["@Tomer Dishon"])
+        XCTAssertNotNil(both)
+        XCTAssertEqual(both?.wider, 1)
+        XCTAssertEqual(both?.narrower, 12)
+        XCTAssertNil(both.flatMap { ChromiumAXConvert.caret(fromPrefix: $0, appCaret: 7) }, "never typed on a guess")
+    }
+
+    func testAPieceHoldingAnObjectIsNeverValid() {
+        let text = "a\u{FFFC}b"
+        let piece = ChromiumAXConvert.Piece(location: 0, original: "a\u{FFFC}b", replacement: "ש\u{FFFC}נ")
+        XCTAssertFalse(ChromiumAXConvert.isValid([piece], in: text, source: .box, selection: TextRange(location: 3, length: 0)))
+        let ok = ChromiumAXConvert.Piece(location: 0, original: "a", replacement: "ש")
+        XCTAssertTrue(ChromiumAXConvert.isValid([ok], in: text, source: .box, selection: TextRange(location: 3, length: 0)))
+    }
+
+    @TextActor func testALiteralEmojiInTheValueNeverPassesForAnObject() async {
+        // P3-51 QA: AXValue holds one emoji as text (❤️, e.g. in a code span) and one image emoji as U+FFFC. A window
+        // read-back "❤️ vh" must not pass for "￼ vh": with a literal emoji in the value only exact read-backs count.
+        let f = field("❤️ vh 😄 vh")
+        f.emojiObject = 6..<8
+        let (result, _) = await runWithAtoms(f)
+        XCTAssertTrue(f.text.hasPrefix("❤️ "), f.text)
+        XCTAssertTrue(f.text.contains("😄"), f.text)
+        if case .converted = result { XCTAssertEqual(f.text, "❤️ הי 😄 הי") }
+        else { XCTAssertTrue(["❤️ vh 😄 vh", "❤️ vh 😄 הי"].contains(f.text), "\(result): \(f.text)") }
+    }
 }
