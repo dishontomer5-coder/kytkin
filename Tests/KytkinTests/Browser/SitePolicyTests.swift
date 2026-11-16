@@ -32,6 +32,20 @@ final class SitePolicyTests: XCTestCase {
         XCTAssertEqual(p.request(for: "com.apple.Safari")?.engine, .webkit)
     }
 
+    func testWhyNotWatchedNamesTheReason() {
+        // P3-50: for the DEBUG convert trace.
+        XCTAssertNil(policy().whyNotWatched("app.zen-browser.zen"))
+        XCTAssertEqual(policy(siteRulesOn: false).whyNotWatched("app.zen-browser.zen"), "websiteRulesOff")
+        XCTAssertEqual(policy(availability: browserAvailability(siteRules: false)).whyNotWatched("app.zen-browser.zen"),
+                       "siteRulesUnavailable")
+        XCTAssertEqual(policy(suffixListLoaded: false).whyNotWatched("app.zen-browser.zen"), "suffixListMissing")
+        XCTAssertEqual(policy().whyNotWatched("com.apple.TextEdit"), "notABrowser")
+        // It agrees with `request(for:)`.
+        for p in [policy(), policy(siteRulesOn: false), policy(suffixListLoaded: false)] {
+            XCTAssertEqual(p.whyNotWatched("app.zen-browser.zen") == nil, p.request(for: "app.zen-browser.zen") != nil)
+        }
+    }
+
     func testNoAccessibilityOrKytkinOffMeansNoWatching() {
         XCTAssertNil(policy(availability: browserAvailability(siteRules: false)).request(for: "com.google.Chrome"))
         XCTAssertNil(policy(availability: browserAvailability(on: false)).request(for: "com.google.Chrome"))

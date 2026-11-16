@@ -99,4 +99,16 @@ final class HTMLTextConvertTests: XCTestCase {
                     PasteboardEntry(type: "public.html", data: Data("<div>akuo</div>".utf8) + Data([0, 0]))]
         XCTAssertEqual(CopiedContent.htmlForFormattingPaste([item]), "<div>akuo</div>")
     }
+
+    func testPageCategory() {
+        // P3-50: the convert's own page check (the address is reduced to a category and dropped).
+        XCTAssertEqual(PageCategory.of(url: "https://mail.google.com/mail/u/0/#inbox?compose=new"), .ordinary)
+        XCTAssertEqual(PageCategory.of(url: "https://docs.google.com/document/d/x/edit"), .wholeDocument)
+        XCTAssertEqual(PageCategory.of(url: "https://x.sharepoint.com/sites/y"), .wholeDocument)
+        XCTAssertEqual(PageCategory.of(url: "http://example.com"), .ordinary)
+        XCTAssertEqual(PageCategory.of(url: "about:blank"), .unknown)
+        XCTAssertEqual(PageCategory.of(url: "file:///tmp/x.html"), .unknown)
+        XCTAssertEqual(PageCategory.of(url: ""), .unknown)
+    }
+
 }

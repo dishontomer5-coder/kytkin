@@ -59,6 +59,10 @@ import Foundation
     /// P3-41 QA: the pid of the app AX says has focus now, nil = unknown. Identity only. Lets the terminal fallback
     /// refuse when another app is in front even where AX names no focused element.
     func focusedApplicationPID(timeout: Double) -> Int32?
+
+    /// P3-50: the category of the page holding the focused element (`PageCategory`): its outermost `AXWebArea`'s
+    /// address, reduced to a category inside the call and dropped. Reads no text box content.
+    func focusedPageCategory(timeout: Double) -> PageCategory
 }
 
 extension TextReplacing {
@@ -70,6 +74,9 @@ extension TextReplacing {
 
     /// P3-41 QA: unknown by default.
     func focusedApplicationPID(timeout: Double) -> Int32? { nil }
+
+    /// P3-50: unknown by default (the caller keeps refusing a whole-box copy on an unknown site).
+    func focusedPageCategory(timeout: Double) -> PageCategory { .unknown }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }

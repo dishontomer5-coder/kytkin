@@ -45,6 +45,8 @@ struct ConvertRequest: Sendable, Equatable {
     let browserSiteUnknown: Bool
     /// P3-49: the browser page state for this request (nil = not a watched browser), for the DEBUG trace only.
     var pageState: BrowserPageState?
+    /// P3-50: whether Kytkin watches this browser, or why not (an enum-like name), for the DEBUG trace only.
+    var siteWatch: String?
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
          currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
@@ -73,6 +75,7 @@ struct ConvertRequest: Sendable, Equatable {
                                   inAddressBar: inAddressBar, processID: processID, allowsChromiumAX: allowsChromiumAX,
                                   browserSiteUnknown: browserSiteUnknown)
         copy.pageState = pageState
+        copy.siteWatch = siteWatch
         return copy
     }
 }

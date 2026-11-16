@@ -64,6 +64,19 @@ struct SitePolicy: Sendable, Equatable {
         return webLinkHandlers.filter { !$0.isEmpty && (own.isEmpty || !$0.lowercased().hasPrefix(own)) }
     }
 
+    /// P3-50: why `request(for:)` is nil (an enum-like name for the DEBUG convert trace), nil = it isn't.
+    func whyNotWatched(_ bundleID: String) -> String? {
+        if !siteRulesAvailable { return "siteRulesUnavailable" }
+        if !suffixListLoaded { return "suffixListMissing" }
+        if bundleID.isEmpty { return "noApp" }
+        if !ownBundleIDPrefix.isEmpty, bundleID.lowercased().hasPrefix(ownBundleIDPrefix.lowercased()) { return "ownApp" }
+        if !siteRulesOn { return "websiteRulesOff" }
+        if BrowserCatalog.engine(for: bundleID, opensWebLinks: webLinkHandlers.contains(bundleID)) == nil {
+            return "notABrowser"
+        }
+        return nil
+    }
+
     /// nil = don't attach.
     func request(for bundleID: String) -> BrowserWatchRequest? {
         guard siteRulesAvailable, suffixListLoaded, !bundleID.isEmpty else { return nil }

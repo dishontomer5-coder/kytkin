@@ -47,4 +47,8 @@ import Foundation
     func focusedApplicationPID(timeout: Double) -> Int32? {   // P3-41 QA
         executor.focusedApplicationPID(timeout: timeout)
     }
+
+    func focusedPageCategory(timeout: Double) -> PageCategory {   // P3-50
+        AXPageCategoryReader.focusedPageCategory(timeout: timeout)
+    }
 }
