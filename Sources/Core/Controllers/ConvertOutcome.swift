@@ -16,6 +16,9 @@ enum ConvertOutcome: Sendable, Equatable {
         /// P2-54(a): the pair's layout maps aren't available (an input method with no layout data) and the buffer
         /// is empty: the same silent switch. With a buffer it stays `.noop(.layoutsUnavailable)` and beeps.
         case layoutsUnavailable
+        /// P3-44: the clipboard copy was rich (bold, mentions, emoji, links…), so nothing was pasted, and no typed run
+        /// could be converted by keys at the caret: double-Shift just switches the language.
+        case richContent
     }
 
     enum NoopReason: Sendable, Equatable {

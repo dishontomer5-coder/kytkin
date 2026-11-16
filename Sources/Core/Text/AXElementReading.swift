@@ -16,9 +16,15 @@ protocol AXElementReading: AnyObject {
     /// P3-42: the names of the element's attributes (`AXUIElementCopyAttributeNames`), names only, no values. Tells a
     /// Chromium web-content node (it lists `AXDOMIdentifier` / `AXDOMClassList`) from a native one such as the omnibox.
     func attributeNames() -> Result<[String], AXAccessError>
+    /// P3-44: the texts of inline elements inside this text box that must stay whole when the box converts: Slack
+    /// mention pills (`@Hillel Banai`, `#channel`) and links. Bounded walk (≤ `maxNodes` descendants). Text is held for
+    /// one convert only and never logged.
+    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError>
 }
 
 extension AXElementReading {
     /// P3-42: an element that can't list its attributes is never treated as web content (the safe default).
     func attributeNames() -> Result<[String], AXAccessError> { .failure(.unsupported) }
+    /// P3-44: an element that can't list its inline elements has none (`BoxConversion`'s `@word` rule still holds).
+    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> { .failure(.unsupported) }
 }

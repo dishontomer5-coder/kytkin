@@ -132,16 +132,28 @@ final class ConvertControllerChromiumTests: XCTestCase {
 
     // MARK: - Fallbacks (nothing typed)
 
-    @TextActor func testSlackEmojiDriftFallsBackToTheClipboard() async {
+    @TextActor func testSlackEmojiDriftNowConvertsThroughAX() async {
+        // P3-44 (owner test 2026-11-16): the emoji drift no longer sends the box to the clipboard: the shift search
+        // finds the pieces, the box converts through AX, the clipboard is never touched.
         let rig = rig("akuo 😀 akuo")
         rig.field.hidden = 5..<7
         rig.field.setRangeDrifts = true
         let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true), "the P3-37 clipboard path")
-        XCTAssertEqual(rig.field.text, "akuo 😀 akuo", "nothing typed into the box through AX")
-        XCTAssertEqual(rig.pasteboard.box, "שלום 😀 שלום")
-        XCTAssertEqual(log.claims, [1], "one claim shared by both paths")
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "שלום 😀 שלום")
+        XCTAssertEqual(clipboardKeys(rig.poster), 0, "no ⌘A / ⌘C / ⌘V")
+        XCTAssertEqual(log.claims, [1])
         XCTAssertEqual(log.beeps, 0)
+    }
+
+    @TextActor func testASelectionThatNeverShowsFallsBackToTheClipboard() async {
+        let rig = rig("akuo")
+        rig.field.staleRangeReadsAfterSet = 10_000
+        let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true), "the P3-37 clipboard path")
+        XCTAssertEqual(rig.field.text, "akuo", "nothing typed into the box through AX")
+        XCTAssertEqual(rig.pasteboard.box, "שלום")
+        XCTAssertEqual(log.claims, [1], "one claim shared by both paths")
     }
 
     @TextActor func testNotWebContentFallsBack() async {

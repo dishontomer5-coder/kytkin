@@ -43,6 +43,11 @@ final class FakeChromiumField: AXTextElement {
     var staleRangeReadsAfterSet = 0
     private var staleLeft = 0
     private var previousSelection: Range<Int> = 0..<0
+    /// P3-44: the texts the AX tree shows as inline elements (mention pills, links). nil = the call is unsupported.
+    var inlineAtoms: [String]? = []
+    /// P3-44 (shape B): the selected range is read in page (DOM) units, as written, so a caret after a hidden emoji reads
+    /// past the end of `AXValue`.
+    var readsInPageUnits = false
     /// Runs after every `AXSelectedTextRange` write (to move the clock, change focus…).
     var onSetRange: ((TextRange) -> Void)?
 
@@ -194,6 +199,7 @@ final class FakeChromiumField: AXTextElement {
                 sel = previousSelection
             }
             if rangeReadEchoesWrite, let echoedRange { return .success(echoedRange) }
+            if readsInPageUnits { return .success(TextRange(location: sel.lowerBound, length: sel.count)) }
             let lo = toAX(sel.lowerBound), hi = toAX(sel.upperBound)
             return .success(TextRange(location: lo, length: hi - lo))
         case .markedTextRange: return .failure(.noValue)
@@ -215,6 +221,10 @@ final class FakeChromiumField: AXTextElement {
     }
 
     func supportsStringForRange() -> Result<Bool, AXAccessError> { .success(true) }
+
+    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> {
+        inlineAtoms.map { .success(Array($0.prefix(maxNodes))) } ?? .failure(.unsupported)
+    }
 
     func setString(_ value: String, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
         // Chromium web content: `kReplaceSelectedText` is not handled, the call still succeeds (research §2).
