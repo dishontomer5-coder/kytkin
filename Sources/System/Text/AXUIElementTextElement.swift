@@ -65,21 +65,32 @@ final class AXUIElementTextElement: AXTextElement {
     }
 
     /// P3-44: mention pills and links inside the box (breadth-first over `AXChildren`, ≤ `maxNodes` elements, ≤ 4
-    /// levels; each element gets the same messaging timeout as this one; P3-44 QA: ≤ 300 ms in all, else `.timeout`). Kept: an element whose role is `AXLink`, or
-    /// whose own text (`AXValue`, else `AXTitle`, else `AXDescription`) starts with `@` or `#`; 2–64 UTF-16 units, no line
-    /// break. Never logs; the texts go straight to the convert's plan.
-    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> {
+    /// levels; each element gets the same messaging timeout as this one; P3-44 QA: ≤ 300 ms in all, else `.timeout`).
+    /// Kept: an element whose role is `AXLink`, or whose own text (`AXValue`, else `AXTitle`, else `AXDescription`)
+    /// starts with `@` or `#`; 2–64 UTF-16 units, no line break.
+    /// P3-46 (owner retest: `@Tomer Dishon`'s second word converted): an element below the box's paragraphs (depth ≥ 2)
+    /// with no text of its own whose direct `AXStaticText` children (≤ 8) together read `@…` / `#…` is kept as one atom,
+    /// so a pill whose name is split over text runs stays whole. Never logs; the texts go straight to the convert's plan
+    /// (the role names may go to the DEBUG trace).
+    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
         let timeout: Float = 0.25   // ReplacementExecutor.axTimeout, the per-element timeout the provider sets (B5)
-        var queue: [(AXUIElement, Int)] = []
-        func enqueueChildren(of e: AXUIElement, depth: Int) -> AXError {
+        struct Node {
+            let element: AXUIElement
+            let depth: Int
+            let parent: Int?
+            var role: String?
+            var own: String?
+        }
+        var nodes: [Node] = []
+        func enqueueChildren(of e: AXUIElement, depth: Int, parent: Int?) -> AXError {
             var value: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &value)
             guard error == .success, let list = value as? [AXUIElement] else {
                 return error == .cannotComplete ? error : .success
             }
-            for child in list where queue.count < maxNodes {
-                if timeout > 0 { AXUIElementSetMessagingTimeout(child, timeout) }
-                queue.append((child, depth))
+            for child in list where nodes.count < maxNodes {
+                AXUIElementSetMessagingTimeout(child, timeout)
+                nodes.append(Node(element: child, depth: depth, parent: parent))
             }
             return .success
         }
@@ -89,17 +100,19 @@ final class AXUIElementTextElement: AXTextElement {
             guard error == .success, let value, CFGetTypeID(value) == CFStringGetTypeID() else { return (nil, error) }
             return (value as! String, .success)
         }
-        if enqueueChildren(of: element, depth: 1) == .cannotComplete { return .failure(.timeout) }
-        var atoms: [String] = []
+        func isAtomText(_ t: String) -> Bool {
+            (2...64).contains(t.utf16.count) && !t.contains(where: \.isNewline)
+        }
+        if enqueueChildren(of: element, depth: 1, parent: nil) == .cannotComplete { return .failure(.timeout) }
+        var atoms: [InlineAtom] = []
         var i = 0
         // P3-44 QA: a wall-clock cap too (each call may take up to the 0.25 s timeout without failing: ≤ 5 calls × 64
         // elements could hold the AX thread for many seconds). Past it the walk counts as a timeout: the convert stops
         // rather than run without the pills it may have missed.
         let deadline = DispatchTime.now().uptimeNanoseconds &+ 300_000_000
-        while i < queue.count {   // bounded: the queue never grows past maxNodes
+        while i < nodes.count {   // bounded: the list never grows past maxNodes
             if DispatchTime.now().uptimeNanoseconds > deadline { return .failure(.timeout) }
-            let (e, depth) = queue[i]
-            i += 1
+            let e = nodes[i].element
             let (role, roleError) = text(of: e, kAXRoleAttribute)
             if roleError == .cannotComplete { return .failure(.timeout) }
             var own: String?
@@ -108,11 +121,27 @@ final class AXUIElementTextElement: AXTextElement {
                 if error == .cannotComplete { return .failure(.timeout) }
                 if let t, !t.isEmpty { own = t; break }
             }
-            if let own, (2...64).contains(own.utf16.count), !own.contains(where: \.isNewline),
-               role == "AXLink" || own.hasPrefix("@") || own.hasPrefix("#") {
-                atoms.append(own)
+            nodes[i].role = role
+            nodes[i].own = own
+            if let own, isAtomText(own), role == "AXLink" || own.hasPrefix("@") || own.hasPrefix("#") {
+                atoms.append(InlineAtom(text: own, role: role ?? "unknown"))
             }
-            if depth < 4, enqueueChildren(of: e, depth: depth + 1) == .cannotComplete { return .failure(.timeout) }
+            let depth = nodes[i].depth
+            if depth < 4, enqueueChildren(of: e, depth: depth + 1, parent: i) == .cannotComplete {
+                return .failure(.timeout)
+            }
+            i += 1
+        }
+        // P3-46: a pill container (no text of its own, below a paragraph) whose static-text children read `@…` / `#…`.
+        for (index, node) in nodes.enumerated() where node.depth >= 2 && node.own == nil && node.role != "AXStaticText" {
+            let children = nodes.filter { $0.parent == index }
+            guard !children.isEmpty, children.count <= 8,
+                  children.allSatisfy({ $0.role == "AXStaticText" }) else { continue }
+            let joined = children.compactMap(\.own).joined()
+            if isAtomText(joined), joined.hasPrefix("@") || joined.hasPrefix("#"),
+               !atoms.contains(where: { $0.text == joined }) {
+                atoms.append(InlineAtom(text: joined, role: node.role ?? "unknown"))
+            }
         }
         return .success(atoms)
     }

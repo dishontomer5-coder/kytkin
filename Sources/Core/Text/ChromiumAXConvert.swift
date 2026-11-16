@@ -55,6 +55,19 @@
 // P3-44 also passes the texts of mention pills / links the AX tree shows as their own elements (`inlineAtomTexts`) to the
 // plan, so `BoxConversion` keeps them whole, and records a `Diagnostic` (enums and counts, never text) for the DEBUG log.
 //
+// P3-46 (owner retest 2026-11-16, DEBUG trace `readCheck=prefix`: in a Slack box with a mention pill, `AXStringForRange`
+// up to the caret disagreed with `AXValue`'s prefix, so the convert stopped before typing and the clipboard flattened the
+// box). The pill is a separate inline element, and Chromium's range offsets (and the text it returns for them) need not
+// count it the way `AXValue` does (an embedded-object character, the pill's name, or nothing). So a disagreeing prefix
+// no longer stops the convert by itself: `valueOffset(matching:in:atoms:)` maps the returned text onto `AXValue`
+// (equal characters; U+FFFC or an atom's text standing for a pill; an emoji `AXValue` leaves out; NBSP = space) and,
+// when every character is accounted for, the caret is taken at that value offset, with the app's own caret kept as the
+// raw one (so the shift at the caret may be *negative*: a pill counted as one unit). The piece search then tries
+// shifts on both sides (nearest to the last one first, ≤ `maxShiftTries` per piece); every piece is still typed only
+// after an exact read-back of its unique window, so a wrong caret or shift can't be typed over. No mapping → stop as
+// before. The DEBUG trace gets counts only: the prefix mismatch (lengths, common prefix / suffix), whether the caret
+// was mapped, and the atoms' AX role names.
+//
 // Privacy: the box text, the pieces and the converted text live only in `run` for this one convert, never logged or
 // stored (B12, CLAUDE.md). `AXValue` is read to convert and to verify Kytkin's own write, piece by piece.
 
@@ -76,6 +89,10 @@ import Foundation
     /// P3-44: the most units the page may count that `AXValue` leaves out (Slack emoji) before a piece or the caret.
     /// Bounds the shift search (≤ maxHiddenUnits + 1 tries per piece, each also inside the budget).
     nonisolated static let maxHiddenUnits = 16
+    /// P3-46: the most units a shift may go below zero (pills counted as one unit by the app's offsets: one pill name,
+    /// or a few), and the most shifts tried for one piece (each try waits for the app; the budget bounds them too).
+    nonisolated static let maxNegativeShift = 64
+    nonisolated static let maxShiftTries = 12
     /// P3-44: the most inline elements looked at for mention pills (`inlineAtomTexts`).
     nonisolated static let maxAtomNodes = 64
 
@@ -192,6 +209,26 @@ import Foundation
         /// Selection tries that showed another text (a wrong shift).
         var otherTextTries = 0
         var readSpace: ReadSpace = .unknown
+        /// P3-46: the caret was mapped onto `AXValue` through a disagreeing `AXStringForRange` prefix.
+        var caretMapped = false
+        /// P3-46: counts describing a disagreeing prefix (nil = it agreed or wasn't read).
+        var prefixMismatch: PrefixMismatch?
+        /// P3-46: the AX role of each inline atom found (role names only, e.g. `AXStaticText`, `AXLink`).
+        var atomRoles: [String] = []
+    }
+
+    /// P3-46: how `AXStringForRange(0, caret)` differed from `AXValue`'s prefix (UTF-16 counts only).
+    struct PrefixMismatch: Sendable, Equatable, CustomStringConvertible {
+        let axUnits: Int
+        let valueUnits: Int
+        let commonPrefix: Int
+        let commonSuffix: Int
+        /// Units of each side outside the common prefix and suffix (the mismatch's span).
+        var axSpan: Int { max(0, axUnits - commonPrefix - commonSuffix) }
+        var valueSpan: Int { max(0, valueUnits - commonPrefix - commonSuffix) }
+        var description: String {
+            "ax\(axUnits)/value\(valueUnits)/common\(commonPrefix)+\(commonSuffix)/span\(axSpan)~\(valueSpan)"
+        }
     }
     private(set) var lastDiagnostic = Diagnostic()
 
@@ -275,10 +312,9 @@ import Foundation
             return .partial(written: written.count, why)
         }
 
-        // P3-44: the most hidden units before the next piece (pieces go last to first, so it only shrinks), and the
-        // shift to try first (shape B: the caret's own excess).
-        var bound = Self.maxHiddenUnits
-        var hint = min(rawAnchor - anchor, bound)
+        // P3-44: the shift to try first (shape B: the caret's own excess). P3-46: it may be negative (a pill counted as
+        // one unit, the caret mapped through the prefix), so shifts are tried on both sides of it.
+        var hint = max(-Self.maxNegativeShift, min(rawAnchor - anchor, Self.maxHiddenUnits))
         for piece in pieces.reversed() {   // bounded: ≤ maxPieces
             if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
             guard let now = focusedElement(), now.isSameElement(as: el) else { return stop(.focusChanged) }
@@ -292,8 +328,7 @@ import Foundation
             let windowText = String(decoding: current[window.location..<window.end], as: UTF16.self)
             // P3-44: where the window and the piece sit in the page's units (bounded tries; see `locate`).
             let d: Int
-            switch await locate(el, piece: piece, window: window, windowText: windowText, hint: hint, bound: bound,
-                                start: start) {
+            switch await locate(el, piece: piece, window: window, windowText: windowText, hint: hint, start: start) {
             case .found(let shift): d = shift
             case .stop(let why): return stop(why)
             }
@@ -315,12 +350,11 @@ import Foundation
                 lastDiagnostic.readSpace = space
                 return .failed(written: written.count, .notSettled)
             }
-            if d > 0, space == .unknown { space = seen }
+            if d != 0, space == .unknown { space = seen }
             written.append(piece)
             shifts.append(d)
-            lastDiagnostic.maxShift = max(lastDiagnostic.maxShift, d)
+            if abs(d) > abs(lastDiagnostic.maxShift) { lastDiagnostic.maxShift = d }
             hint = d
-            bound = d
         }
 
         // Step 4: the caret to its logical place, then the whole box once more.
@@ -351,9 +385,13 @@ import Foundation
     /// An exact unique text can only sit at its own place, and a piece-length selection whose text is the piece's has
     /// no hidden unit in it, so a wrong place is never typed over. Every try is inside the budget.
     private func locate(_ el: any AXTextElement, piece: Piece, window: TextRange, windowText: String, hint: Int,
-                        bound: Int, start: UInt64) async -> Located {
+                        start: UInt64) async -> Located {
         let windowUnits = Array(windowText.utf16)
-        for d in Self.shiftCandidates(hint: hint, upper: bound) {   // bounded: ≤ bound + 1
+        let bound = Self.maxHiddenUnits
+        // P3-46: both sides of the hint, nearest first; never a range before the box's start.
+        let candidates = Self.shiftCandidates(hint: hint, lower: max(-Self.maxNegativeShift, -window.location),
+                                              upper: bound).prefix(Self.maxShiftTries)
+        for d in candidates {   // bounded: ≤ maxShiftTries
             if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
             var k = 0
             var outcome = await select(el, window, shift: d, windowText)
@@ -408,11 +446,54 @@ import Foundation
         return .stop(.selectionMismatch)
     }
 
-    /// P3-44: the shifts to try for one piece: `hint` first, then smaller ones down to 0, then larger ones up to `upper`.
-    nonisolated static func shiftCandidates(hint: Int, upper: Int) -> [Int] {
-        let u = max(0, upper)
-        let h = max(0, min(hint, u))
-        return [h] + Array(stride(from: h - 1, through: 0, by: -1)) + Array(stride(from: h + 1, through: u, by: 1))
+    /// P3-44 / P3-46: the shifts to try for one piece: `hint` (clamped to `lower…upper`) first, then the others nearest
+    /// to it first, the smaller one before the larger one at the same distance.
+    nonisolated static func shiftCandidates(hint: Int, lower: Int = 0, upper: Int) -> [Int] {
+        let lo = min(lower, upper), hi = upper
+        let h = max(lo, min(hint, hi))
+        var out = [h]
+        var step = 1
+        while h - step >= lo || h + step <= hi {   // bounded: ≤ hi − lo steps
+            if h - step >= lo { out.append(h - step) }
+            if h + step <= hi { out.append(h + step) }
+            step += 1
+        }
+        return out
+    }
+
+    /// P3-46: where `prefix` (what the app returned for the range up to its caret) ends in `value`, in UTF-16 units of
+    /// `value`, when every character of it is accounted for: equal characters (NBSP = space, any line break = any line
+    /// break); U+FFFC or nothing standing for an atom's text in `value` (a pill); U+FFFC or an emoji (with its
+    /// modifiers) that `value` leaves out. nil = something else differs (the offsets can't be trusted). Linear, bounded
+    /// by the two lengths and the atoms.
+    nonisolated static func valueOffset(matching prefix: String, in value: [UInt16], atoms: [String]) -> Int? {
+        let p = Array(prefix.unicodeScalars)
+        let valueString = String(decoding: value, as: UTF16.self)
+        let v = Array(valueString.unicodeScalars)
+        let atomScalars = atoms.filter { $0.count >= 2 }.map { Array($0.unicodeScalars) }
+        func same(_ a: Unicode.Scalar, _ b: Unicode.Scalar) -> Bool {
+            if a == b { return true }
+            let spaces: Set<UInt32> = [0x20, 0xA0]
+            if spaces.contains(a.value), spaces.contains(b.value) { return true }
+            let breaks: Set<UInt32> = [0x0A, 0x0D, 0x2028, 0x2029]
+            return breaks.contains(a.value) && breaks.contains(b.value)
+        }
+        func atomLength(at j: Int) -> Int? {
+            atomScalars.first { a in j + a.count <= v.count && Array(v[j..<(j + a.count)]) == a }?.count
+        }
+        func isHiddenLike(_ u: Unicode.Scalar) -> Bool {
+            u.value == 0xFFFC || u.value == 0xFE0F || u.value == 0x200D || u.value == 0x20E3
+                || (u.value >= 0x2100 && u.properties.isEmoji)
+        }
+        var i = 0, j = 0
+        while i < p.count {   // bounded: i or j moves forward every pass
+            if j < v.count, same(p[i], v[j]) { i += 1; j += 1; continue }
+            if p[i].value == 0xFFFC, let n = atomLength(at: j) { i += 1; j += n; continue }   // a pill as one object
+            if isHiddenLike(p[i]) { i += 1; continue }                                         // an emoji AXValue drops
+            if let n = atomLength(at: j) { j += n; continue }                                 // a pill left out
+            return nil
+        }
+        return String(String.UnicodeScalarView(v[..<j])).utf16.count
     }
 
     // MARK: - Step 1
@@ -459,28 +540,56 @@ import Foundation
                 return fail(.selectionText, .inconsistent)
             }
         }
+        // P3-44: mention pills / links the AX tree shows as their own elements, for the plan to keep whole. Best
+        // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
+        // P3-46: read before the prefix check (it uses them, and the trace counts them even when the check fails).
+        var atoms: [String] = []
+        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes)) {
+        case .success(let a):
+            atoms = a.map(\.text)
+            lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
+        case .failure: if timedOut { return fail(.atomRead, .readFailed) }
+        }
+        lastDiagnostic.atoms = atoms.count
         // The text up to the caret (or the selection's end), where the app answers it (Slack fails it for the whole box,
         // -25212, but answers before the caret). An answer that disagrees means the offsets can't be trusted.
         // P3-44: not with a caret read past the end (shape B: the app's range units are not the value's).
+        // P3-46: a disagreeing answer for a caret (box convert) is mapped onto the value (`valueOffset`): the caret is
+        // then taken there and the app's own caret kept as the raw one; a selection still stops.
         if sel.end > 0, sel == raw {
             switch track(el.string(in: TextRange(location: 0, length: sel.end))) {
             case .success(let prefix):
                 let expected = String(decoding: units[..<sel.end], as: UTF16.self)
                 if !prefix.isEmpty, !ReplacementExecutor.readsBackAs(prefix, expected) {
-                    return fail(.prefix, .inconsistent)
+                    lastDiagnostic.prefixMismatch = Self.mismatch(Array(prefix.utf16), Array(expected.utf16))
+                    guard source == .box, let c = Self.valueOffset(matching: prefix, in: units, atoms: atoms),
+                          c <= n else { return fail(.prefix, .inconsistent) }
+                    let mapped = Array(String(decoding: units[..<c], as: UTF16.self).utf16)
+                    guard mapped == Array(units[..<c]) else { return fail(.prefix, .inconsistent) }   // scalar boundary
+                    sel = TextRange(location: c, length: 0)
+                    lastDiagnostic.caretMapped = true
                 }
             case .failure:
                 if timedOut { return fail(.prefix, .readFailed) }
             }
         }
-        // P3-44: mention pills / links the AX tree shows as their own elements, for the plan to keep whole. Best
-        // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
-        var atoms: [String] = []
-        switch track(el.inlineAtomTexts(maxNodes: Self.maxAtomNodes)) {
-        case .success(let a): atoms = a
-        case .failure: if timedOut { return fail(.atomRead, .readFailed) }
-        }
         return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
+    }
+
+    /// P3-46: an AX role for the DEBUG trace: kept only when it looks like an AX role name (`AX` + letters, ≤ 40),
+    /// else `other`. Never text.
+    nonisolated static func roleName(_ role: String) -> String {
+        guard role.hasPrefix("AX"), role.count <= 40, role.allSatisfy({ $0.isASCII && $0.isLetter }) else { return "other" }
+        return role
+    }
+
+    /// P3-46: counts describing two disagreeing UTF-16 strings (never their text).
+    nonisolated static func mismatch(_ ax: [UInt16], _ value: [UInt16]) -> PrefixMismatch {
+        var cp = 0
+        while cp < ax.count, cp < value.count, ax[cp] == value[cp] { cp += 1 }
+        var cs = 0
+        while cs < ax.count - cp, cs < value.count - cp, ax[ax.count - 1 - cs] == value[value.count - 1 - cs] { cs += 1 }
+        return PrefixMismatch(axUnits: ax.count, valueUnits: value.count, commonPrefix: cp, commonSuffix: cs)
     }
 
     // MARK: - Step 3 helpers

@@ -18,13 +18,20 @@ protocol AXElementReading: AnyObject {
     func attributeNames() -> Result<[String], AXAccessError>
     /// P3-44: the texts of inline elements inside this text box that must stay whole when the box converts: Slack
     /// mention pills (`@Hillel Banai`, `#channel`) and links. Bounded walk (≤ `maxNodes` descendants). Text is held for
-    /// one convert only and never logged.
-    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError>
+    /// one convert only and never logged. P3-46: each with its AX role (for the DEBUG trace, as a role name only).
+    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError>
+}
+
+/// P3-46: one inline element that must stay whole (a mention pill, a channel link, a link). `text` is held for one
+/// convert only and never logged; `role` is the element's AX role name (`AXStaticText`, `AXLink`, `AXGroup`…).
+struct InlineAtom: Sendable, Equatable {
+    let text: String
+    let role: String
 }
 
 extension AXElementReading {
     /// P3-42: an element that can't list its attributes is never treated as web content (the safe default).
     func attributeNames() -> Result<[String], AXAccessError> { .failure(.unsupported) }
     /// P3-44: an element that can't list its inline elements has none (`BoxConversion`'s `@word` rule still holds).
-    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> { .failure(.unsupported) }
+    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> { .failure(.unsupported) }
 }
