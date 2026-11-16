@@ -608,17 +608,20 @@ import Foundation
         case .terminal, .noUnicode, .disabled: return nil
         }
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
-        // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): never the
-        // whole box, and a selection only without line breaks.
-        if r.browserSiteUnknown {
-            if source == .box { return nil }
-            return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
-                           mayPasteLineBreaks: false, typedTail: typedTail)
-        }
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
+        var lineBreaks = mayPasteLineBreaks
+        if r.browserSiteUnknown {
+            // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): the
+            // whole box (⌘A) is never copied there.
+            if source == .box { return nil }
+            // P3-49 (Coordinator 2026-11-16): a selection is the user's own and the paste replaces only it, so it may
+            // hold line breaks (HTML path: kept as structure; plain path: the copy must match the selection AX
+            // reported, P3-40) as in any page of this app. Without AX's selection to check the copy against: none.
+            if axSelection == nil { lineBreaks = false }
+        }
         return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
-                       mayPasteLineBreaks: mayPasteLineBreaks, typedTail: typedTail)
+                       mayPasteLineBreaks: lineBreaks, typedTail: typedTail)
     }
 
     /// P3-37 (c): the AX roles of a text box, for apps not seeded as keys-only.

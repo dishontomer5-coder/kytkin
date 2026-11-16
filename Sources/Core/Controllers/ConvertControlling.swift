@@ -40,7 +40,8 @@ struct ConvertRequest: Sendable, Equatable {
     /// request built without it never uses the path.
     let allowsChromiumAX: Bool
     /// P3-47 QA: the front app is a known browser whose page host Kytkin hasn't read (yet): a whole-document site
-    /// (Google Docs…) can't be ruled out, so the clipboard never copies the whole box, and pastes no line breaks.
+    /// (Google Docs…) can't be ruled out, so the clipboard never copies the whole box. P3-49 (Coordinator 2026-11-16): a
+    /// selection may still be pasted, line breaks included (checked against AX's selection, P3-40).
     let browserSiteUnknown: Bool
     /// P3-49: the browser page state for this request (nil = not a watched browser), for the DEBUG trace only.
     var pageState: BrowserPageState?
