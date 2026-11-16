@@ -38,12 +38,16 @@ final class ReplacementCapabilitiesTests: XCTestCase {
     }
 
     func testGeckoBrowserSeeds() {
-        // P3-47: Gecko browsers are known browsers for convert (keys + the clipboard with line breaks), never chromiumAX.
+        // P3-47: Gecko browsers are known browsers for the clipboard (line breaks allowed), never chromiumAX. P3-47 QA:
+        // still `.auto` (AX first: Gecko reads and writes plain inputs / textareas), not `.keysOnly`.
         let c = ReplacementCapabilities()
         for id in ["app.zen-browser.zen", "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition",
-                   "org.mozilla.nightly", "org.mozilla.librewolf", "io.gitlab.librewolf-community",
-                   "net.waterfox.waterfox", "one.ablaze.floorp"] {
-            XCTAssertEqual(c.method(for: id), .keysOnly, id)
+                   "org.mozilla.nightly", "org.mozilla.librewolf", "net.waterfox.waterfox", "one.ablaze.floorp"] {
+            XCTAssertEqual(c.method(for: id), .auto, id)
+            XCTAssertTrue(ReplacementCapabilities.isGeckoBrowser(id), id)
+            let readable = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: true,
+                                     selRangeSettable: true, selection: nil, canReadBeforeCaret: true)
+            XCTAssertTrue(ReplacementPlanner.readsField(bundleID: id, caps: c, focus: readable), "AX first: \(id)")
             XCTAssertNil(c.family(for: id), "no Chromium AX path: \(id)")
             XCTAssertFalse(ReplacementCapabilities.isEditor(id), id)
         }
@@ -54,6 +58,8 @@ final class ReplacementCapabilitiesTests: XCTestCase {
         // Whole-document sites stay excluded in Gecko too (the host Kytkin reads for the page).
         XCTAssertTrue(ReplacementCapabilities.blocksClipboard(bundleID: "app.zen-browser.zen", host: "docs.google.com"))
         XCTAssertFalse(ReplacementCapabilities.blocksClipboard(bundleID: "app.zen-browser.zen", host: "mail.google.com"))
+        XCTAssertNil(BrowserCatalog.known["io.gitlab.librewolf-community"], "P3-47 QA: unverified ID dropped")
+        XCTAssertFalse(ReplacementCapabilities.isGeckoBrowser("com.google.Chrome"))
     }
 
     func testBundleIDsAreCaseInsensitive() {

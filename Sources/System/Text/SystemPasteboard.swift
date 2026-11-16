@@ -65,7 +65,8 @@ import AppKit
 
     private func write(_ text: String, html: String?) -> Bool {
         let item = NSPasteboardItem()
-        if let html, !item.setString(html, forType: .html) { return false }
+        // P3-47 QA: UTF-8 bytes, as the copy was read (`String(data:encoding: .utf8)`) and as browsers write it.
+        if let html, !item.setData(Data(html.utf8), forType: .html) { return false }
         guard item.setString(text, forType: .string),
               item.setData(Data(), forType: Self.transientType),
               item.setData(Data(), forType: Self.concealedType) else { return false }

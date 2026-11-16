@@ -514,7 +514,10 @@ import Observation
                                        // P3-42: never on whole-document web apps, the address bar or a browser field
                                        allowsChromiumAX: !ReplacementCapabilities.blocksClipboard(bundleID: c.bundleID,
                                                                                                   host: c.host)
-                                           && c.pageState != .editingAddress && c.pageState != .editingBrowserField))
+                                           && c.pageState != .editingAddress && c.pageState != .editingBrowserField,
+                                       // P3-47 QA: a browser page whose host isn't known (yet) may be Google Docs
+                                       browserSiteUnknown: BrowserCatalog.known[c.bundleID] != nil
+                                           && (c.host ?? "").isEmpty))
     }
 
     /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.

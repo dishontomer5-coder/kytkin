@@ -595,13 +595,21 @@ import Foundation
         case .keysOnly:   // Chromium / Electron: AX may be off, so the role says nothing; the seed vouches for it
             mayPasteLineBreaks = true
         case .auto, .preferPaste:
-            mayPasteLineBreaks = false   // P3-37 QA
+            // P3-37 QA; P3-47: a known Gecko browser is not an unknown terminal (AX first there, `.auto`).
+            mayPasteLineBreaks = ReplacementCapabilities.isGeckoBrowser(r.bundleID)
             // Any other app: only a real text box. ⌘A in a list, table or file browser selects items, and ⌘V could
             // paste over all of them (Numbers, Finder).
             guard let role = f.role, Self.clipboardTextRoles.contains(role) else { return nil }
         case .terminal, .noUnicode, .disabled: return nil
         }
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
+        // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): never the
+        // whole box, and a selection only without line breaks.
+        if r.browserSiteUnknown {
+            if source == .box { return nil }
+            return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
+                           mayPasteLineBreaks: false, typedTail: typedTail)
+        }
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
         return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,

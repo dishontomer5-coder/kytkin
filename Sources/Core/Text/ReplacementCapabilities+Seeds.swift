@@ -28,7 +28,7 @@ extension ReplacementCapabilities {
             // P2-36 (001 §12 T7): the other Chromium browsers.
             "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium",
             "com.tinyspeck.slackmacgap", "com.hnc.Discord", "com.microsoft.teams2",
-        ] + geckoBrowserBundleIDs
+        ]
         // Remote desktops and VMs read key codes only and ignore the Unicode string (R4/R5).
         let noUnicode = [
             "com.microsoft.rdc.macos", "com.parallels.desktop.console", "com.vmware.fusion",
@@ -40,17 +40,17 @@ extension ReplacementCapabilities {
             + noUnicode.map { Seed(match: .exact($0), hint: .noUnicode) }
     }()
 
-    /// P3-47 (Coordinator 2026-11-16; Zen is the owner's main browser, plan.md §Phase 3): the Gecko browsers, seeded like
-    /// Chrome for convert (`.keysOnly`: a known browser, so the P3-37 clipboard convert may paste a multi-line box, and
-    /// a selection is copied with ⌘C, P3-40). Unseeded they were `.auto`, where a pasted line break was refused (the
-    /// P3-37 unknown-terminal guard), so a two-line Gmail box in Zen beeped. Not `chromiumAX` (Gecko has no such path).
-    /// Whole-document sites stay excluded by `blocksClipboard(bundleID:host:)` with the host Kytkin reads for Gecko
-    /// (`GeckoReadStrategy`, P3-13); a focused address bar is `inAddressBar` (never copied). IDs as in
-    /// `BrowserCatalog` (Zen verified from its Info.plist; Firefox / Developer Edition / Nightly, Waterfox and Floorp from
-    /// their vendors' published bundles, unverified here). LibreWolf has shipped both IDs listed.
+    /// P3-47 (Coordinator 2026-11-16; Zen is the owner's main browser, plan.md §Phase 3): the Gecko browsers, known
+    /// browsers for the clipboard convert: a box may be pasted with line breaks (unseeded apps refuse them: the P3-37
+    /// unknown-terminal guard), so a two-line Gmail box in Zen converts. P3-47 QA: *not* seeded `.keysOnly` (that dropped
+    /// the AX read / write Gecko gives plain `<input>` / `<textarea>` fields): they stay `.auto`, AX first, the clipboard
+    /// only where AX can't read the box. Not `chromiumAX` (Gecko has no such path). Whole-document sites stay excluded
+    /// by `blocksClipboard(bundleID:host:)`, and a box is never copied while the page's host is unknown
+    /// (`ConvertRequest.browserSiteUnknown`). IDs as in `BrowserCatalog` (Zen verified from its Info.plist; the others
+    /// from their vendors' published bundles, unverified here).
     static let geckoBrowserBundleIDs = [
         "app.zen-browser.zen", "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly",
-        "org.mozilla.librewolf", "io.gitlab.librewolf-community", "net.waterfox.waterfox", "one.ablaze.floorp",
+        "org.mozilla.librewolf", "net.waterfox.waterfox", "one.ablaze.floorp",
     ]
 
     /// P3-37 (c): code editors and IDEs, where ⌘A selects the whole file (a whole-box convert would turn every English
@@ -86,6 +86,12 @@ extension ReplacementCapabilities {
     }
 
     /// P3-37 (c): `bundleID` is a code editor or IDE (`editorBundleIDs`, or JetBrains).
+    /// P3-47: `bundleID` is a known Gecko browser (`geckoBrowserBundleIDs`).
+    static func isGeckoBrowser(_ bundleID: String) -> Bool {
+        let k = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return geckoBrowserBundleIDs.contains { $0.lowercased() == k }
+    }
+
     static func isEditor(_ bundleID: String) -> Bool {
         let k = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return editorBundleIDs.contains(k) || k.hasPrefix("com.jetbrains.")
