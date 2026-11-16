@@ -44,6 +44,11 @@ struct ConvertTrace: Sendable, Equatable {
     var siteKnown: Bool?
     /// P3-49: a browser request: the page state Kytkin had (an enum name: page, editingAddress, unknown…).
     var pageState: String?
+    /// P3-50: a browser request: watched, or why not (`websiteRulesOff`, `siteRulesUnavailable`…).
+    var siteWatch: String?
+    /// P3-50: the convert's own check of the focused page (`ConvertController`): ordinary / wholeDocument / unknown,
+    /// nil = not asked.
+    var pageCheck: String?
     /// The final outcome, as an enum case name.
     var outcome: String = ""
 
@@ -53,6 +58,8 @@ struct ConvertTrace: Sendable, Equatable {
             .joined(separator: " > "))]
         if let siteKnown { parts.append("siteKnown=\(siteKnown)") }
         if let pageState { parts.append("pageState=\(pageState)") }
+        if let siteWatch { parts.append("siteWatch=\(siteWatch)") }
+        if let pageCheck { parts.append("pageCheck=\(pageCheck)") }
         if let chromiumSkipped { parts.append("chromiumSkipped=\(chromiumSkipped)") }
         if let c = chromium {
             parts.append("chromium{readCheck=\(c.readCheck?.rawValue ?? "-") caretPastValue=\(c.caretPastValue) "

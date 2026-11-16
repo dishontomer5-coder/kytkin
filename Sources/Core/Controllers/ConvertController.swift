@@ -191,6 +191,7 @@ import Foundation
         if BrowserCatalog.known[request.bundleID] != nil {
             trace?.siteKnown = !request.browserSiteUnknown
             trace?.pageState = request.pageState.map { "\($0)" } ?? "none"
+            trace?.siteWatch = request.siteWatch
         }
         var finish = Finish()
         defer {
@@ -611,7 +612,16 @@ import Foundation
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
         var lineBreaks = mayPasteLineBreaks
-        if r.browserSiteUnknown {
+        // P3-50: when the watcher has no site, the convert asks AX about the focused box's own page (its outermost web
+        // area's address, reduced to a category inside that one call): an ordinary page counts as known.
+        var siteUnknown = r.browserSiteUnknown
+        if siteUnknown {
+            let page = currentReplacer().focusedPageCategory(timeout: ReplacementExecutor.axTimeout)
+            trace?.pageCheck = page.rawValue
+            if page == .wholeDocument { return nil }
+            if page == .ordinary { siteUnknown = false }
+        }
+        if siteUnknown {
             // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): the
             // whole box (⌘A) is never copied there.
             if source == .box { return nil }

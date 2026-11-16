@@ -35,6 +35,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let field: FakeChromiumField
         let pasteboard: FakePasteboard
         let poster: RecordingPoster
+        var replacer: ScriptedReplacer? = nil
     }
 
     @TextActor private func rig(_ text: String, bold: Range<Int>? = nil, selection: Range<Int>? = nil,
@@ -60,7 +61,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
                                     makeChromiumAX: { @TextActor @Sendable () -> ChromiumAXConvert? in ax },
                                     chromiumAXEnabled: chromium,
                                     diagnose: { trace in sink.traces.append(trace) })
-        return Rig(sut: sut, field: field, pasteboard: pb, poster: poster)
+        return Rig(sut: sut, field: field, pasteboard: pb, poster: poster, replacer: r)
     }
 
     private func empty() -> WordSnapshot {
@@ -510,5 +511,51 @@ final class ConvertControllerRichContentTests: XCTestCase {
         // P3-49 (Coordinator decision 2026-11-16): a multi-line selection is pasted on an unknown site too.
         XCTAssertTrue(line.contains("clipboard:pasted"), line)
         for text in ["akuo", "vh", "שלום", "הי"] { XCTAssertFalse(line.contains(text), text) }
+    }
+
+    // MARK: - P3-50 (owner: in Zen the box never converted; every trace `siteKnown=false pageState=none`)
+
+    @TextActor func testUnknownSiteButAnOrdinaryFocusedPageAllowsTheWholeBox() async {
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        rig.replacer?.pageCategory = .ordinary
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><b>שלום</b> akuo vh</div>")]
+        var r = request(buffer("vh"), app: "app.zen-browser.zen", siteUnknown: true)
+        r.siteWatch = "websiteRulesOff"
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום הי")
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("siteKnown=false"), line)
+        XCTAssertTrue(line.contains("siteWatch=websiteRulesOff"), line)
+        XCTAssertTrue(line.contains("pageCheck=ordinary"), line)
+    }
+
+    @TextActor func testUnknownSiteAndAWholeDocumentPageNeverCopiesAnything() async {
+        let rig = rig("akuo\nvh", selection: 0..<7, chromium: false, axWritesSelection: false)
+        rig.replacer?.pageCategory = .wholeDocument
+        rig.pasteboard.userSelection = "akuo\nvh"
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertFalse(rig.poster.events.contains { $0.modifierFlags != 0 }, "no ⌘C either")
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertTrue(sink.traces.first?.line.contains("pageCheck=wholeDocument") == true)
+    }
+
+    @TextActor func testUnknownSiteAndAnUnreadablePageStillRefusesTheWholeBox() async {
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        rig.replacer?.pageCategory = .unknown
+        let out = await rig.sut.handle(request(buffer("vh"), app: "app.zen-browser.zen", siteUnknown: true),
+                                       layouts: layouts)
+        XCTAssertFalse(rig.pasteboard.selectedAll, "no ⌘A")
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertTrue(sink.traces.first?.line.contains("pageCheck=unknown") == true)
+    }
+
+    @TextActor func testAKnownSiteNeverAsksThePage() async {
+        let rig = rig("akuo vh")
+        rig.replacer?.pageCategory = .wholeDocument   // would refuse if asked
+        let out = await rig.sut.handle(request(buffer("vh"), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.replacer?.pageChecks, 0)
     }
 }

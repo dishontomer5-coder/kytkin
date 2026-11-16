@@ -171,6 +171,14 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     var focusedAppPID: Int32?
     func focusedApplicationPID(timeout: Double) -> Int32? { focusedAppPID }
 
+    /// P3-50: what the convert's own page check finds (default: can't tell).
+    var pageCategory: PageCategory = .unknown
+    private(set) var pageChecks = 0
+    func focusedPageCategory(timeout: Double) -> PageCategory {
+        pageChecks += 1
+        return pageCategory
+    }
+
     func setNowFocused(_ e: (any FocusedElementIdentity)?) {
         nowFocused = e
         nowFocusedIsUnset = false
