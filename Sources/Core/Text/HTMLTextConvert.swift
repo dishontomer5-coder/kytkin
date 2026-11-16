@@ -48,6 +48,8 @@ enum HTMLTextConvert {
         case controlCharacter
         /// P3-48: a change would land in a quoted thread or a signature.
         case quoteChanged
+        /// P3-54: a quote boundary (`QuotedReply`) in the HTML's text but not in the plain text, or the other way round.
+        case quoteBoundaryMismatch
     }
 
     struct Output: Sendable, Equatable {
@@ -109,21 +111,46 @@ enum HTMLTextConvert {
         var linkTexts: [String] = []
         /// P3-48: the trimmed text of every skipped text node (atoms for the planner).
         var skippedTexts: [String] = []
+        /// P3-54: counts for the DEBUG trace (tags and attributes only).
+        var stats = Stats()
     }
 
     // MARK: - Entry
 
     /// Converts the copied `html` whose plain text is `plain` with `planner` (the same rule for both, link texts kept
     /// whole). The output's plain text is the planner's conversion of `plain` (checked against the HTML's).
+    /// P3-54: what the HTML looked like, for the DEBUG trace: counts only (never text, never class names).
+    struct Stats: Sendable, Equatable, CustomStringConvertible {
+        var blockquoteTags = 0
+        var classAttrs = 0
+        var gmailClassHits = 0
+        var skippedRegions = 0
+        /// `QuotedReply.boundary` found in the HTML's text / the plain text (box converts only).
+        var htmlBoundary = false
+        var plainBoundary = false
+        var description: String {
+            "blockquoteTags=\(blockquoteTags) classAttrs=\(classAttrs) gmailClassHits=\(gmailClassHits) "
+                + "skippedRegions=\(skippedRegions) quoteBoundary=\(htmlBoundary ? "html" : "-")/\(plainBoundary ? "plain" : "-")"
+        }
+    }
+
     /// P3-48: `skipQuotes`: a whole-box convert (quoted thread and signature left alone).
     static func convert(html: String, plain: String, skipQuotes: Bool = false,
                         planner: Planner) -> Swift.Result<Output, Refusal> {
+        var stats = Stats()
+        return convert(html: html, plain: plain, skipQuotes: skipQuotes, planner: planner, stats: &stats)
+    }
+
+    /// P3-54: the same, reporting `stats` (filled as far as the parse got).
+    static func convert(html: String, plain: String, skipQuotes: Bool, planner: Planner,
+                        stats: inout Stats) -> Swift.Result<Output, Refusal> {
         guard html.utf8.count <= maxBytes else { return .failure(.tooBig) }
         let parsed: Parsed
         switch parse(html, skipQuotes: skipQuotes) {
         case .failure(let r): return .failure(r)
         case .success(let p): parsed = p
         }
+        stats = parsed.stats
         guard ConvertController.sameVisibleText(parsed.t, plain) else { return .failure(.textMismatch) }
         // P3-48 QA: atoms protect every occurrence of their text, so a quote text that also occurs in the user's own part
         // (outside every skipped region) would keep the user's words from converting. Such a text is not an atom; a
@@ -146,8 +173,25 @@ enum HTMLTextConvert {
             return true
         }
         let atoms = (parsed.linkTexts + parsed.skippedTexts.filter(onlyInSkipped)).filter { $0.count >= 2 }
+        // P3-54 (owner: a Gmail reply in Zen converted the quoted email too; Gecko's copy kept no Gmail class and no
+        // `<blockquote>` the skip rule could see): a structure-free guard for the box. `QuotedReply.boundary` (`On …
+        // wrote:`, `בתאריך … כתב/ה:` / `… מאת … :`, a forward header, `-- `, `>` lines) is found in the HTML's text and in
+        // the plain text; only the part before it is planned (so the quote never converts and never decides the
+        // direction) and every text node after it is kept byte for byte. Found in only one of them → refused.
+        var planT = parsed.t
+        var planPlain = plain
+        if skipQuotes {
+            let bT = QuotedReply.boundary(in: parsed.t), bP = QuotedReply.boundary(in: plain)
+            stats.htmlBoundary = bT != nil
+            stats.plainBoundary = bP != nil
+            guard (bT == nil) == (bP == nil) else { return .failure(.quoteBoundaryMismatch) }
+            if let bT, let bP {
+                planT = String(decoding: Array(parsed.t.utf16)[..<bT], as: UTF16.self)
+                planPlain = String(decoding: Array(plain.utf16)[..<bP], as: UTF16.self)
+            }
+        }
         // P3-49: the plain text first, so a planner that fixes the direction on its first call uses the plain text's.
-        guard let pChanges = planner(plain, atoms), let tChanges = planner(parsed.t, atoms) else {
+        guard let pChanges = planner(planPlain, atoms), let tChanges = planner(planT, atoms) else {
             return .failure(.nothingToConvert)
         }
         guard !tChanges.isEmpty, !pChanges.isEmpty else { return .failure(.nothingToConvert) }
@@ -290,7 +334,16 @@ enum HTMLTextConvert {
                 if blockTags.contains(name) { addBreak() }
                 continue
             }
+            // P3-54: counts for the trace (tags and attribute names only).
+            if !closing {
+                if name == "blockquote" { p.stats.blockquoteTags += 1 }
+                for (attr, value) in attributes(String(body.dropFirst(name.count))) where attr.lowercased() == "class" {
+                    p.stats.classAttrs += 1
+                    if skippedClassWords.contains(where: { value.lowercased().contains($0) }) { p.stats.gmailClassHits += 1 }
+                }
+            }
             if skipQuotes, !closing, !selfClosing, opensSkippedRegion(name, String(body.dropFirst(name.count))) {
+                p.stats.skippedRegions += 1
                 skipStack.append(name)
                 addBreak()
                 continue

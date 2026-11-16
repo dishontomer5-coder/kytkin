@@ -39,9 +39,10 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     @TextActor private func rig(_ text: String, bold: Range<Int>? = nil, selection: Range<Int>? = nil,
-                                chromium: Bool = true, axWritesSelection: Bool = true) -> Rig {
+                                chromium: Bool = true, axWritesSelection: Bool = true, caret: Int? = nil) -> Rig {
         let poster = RecordingPoster()
-        let field = FakeChromiumField(text, selection: selection, poster: poster, clock: clock, boldUnits: bold)
+        let field = FakeChromiumField(text, caret: caret, selection: selection, poster: poster, clock: clock,
+                                      boldUnits: bold)
         let r = ScriptedReplacer(log: log)
         let selText = selection.map { s in String(decoding: Array(text.utf16)[s], as: UTF16.self) }
         r.focus = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: axWritesSelection,
@@ -503,6 +504,65 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertTrue(rig.poster.events.allSatisfy { $0.keyCode != KeyCode.delete }, "no key after the budget")
     }
 
+    // MARK: - P3-54 QA (Coordinator 2026-11-16): a webmail whole box where no quote was seen
+
+    @TextActor func testAWebmailBoxWithNoQuoteSeenConvertsOnlyTheCaretsBlockThroughAX() async {
+        // A reply whose header no pattern knows and whose AX tree shows no quote: the caret's paragraph block, up to the
+        // caret, is all that converts; the unrecognised thread below it (and any text above the empty line) stays.
+        let box = "nv nmc\n\nakuo vh\n\nIl Lun X ha scritto:\nnv nmc"
+        let rig = rig(box, caret: 15)
+        var r = request(empty(), app: chrome)
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "nv nmc\n\nשלום הי\n\nIl Lun X ha scritto:\nnv nmc")
+    }
+
+    @TextActor func testANonWebmailBoxStillConvertsWhole() async {
+        let rig = rig("nv nmc\n\nakuo vh", caret: 15)
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "מה מצב\n\nשלום הי")
+    }
+
+    @TextActor func testAFreshZenGmailComposeWithNoQuoteSignalIsPastedWhole() async {
+        // Coordinator decision 2026-11-16 (keeps §P3-50 ✅): the clipboard path has no caret after ⌘A, and a fresh
+        // compose has no quote at all: bold + two lines convert whole, as an HTML paste.
+        let rig = rig("שלום akuo\nnv vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><div><b>שלום</b> akuo</div><div>nv vh</div></div>")]
+        var r = request(empty(), app: "app.zen-browser.zen")
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'><div dir=\"ltr\"><div><b>שלום</b> שלום</div><div>מה הי</div></div>")
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
+    }
+
+    @TextActor func testAWebmailReplyWithARecognisedHeaderStillCutsOnTheClipboardPath() async {
+        // No Gmail class, no blockquote (as in Gecko's copy), but the English header: only the text above it converts.
+        let html = "<div><b>akuo</b> vh</div><div>On Mon, Nov 16, 2026 at 10:00 AM X wrote:</div><div>nv nmc</div>"
+        let rig = rig("akuo vh\nOn Mon, Nov 16, 2026 at 10:00 AM X wrote:\nnv nmc")
+        rig.pasteboard.copiedExtras = [.html(html)]
+        var r = request(empty(), app: "app.zen-browser.zen")
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'>" + html.replacingOccurrences(of: "<b>akuo</b> vh", with: "<b>שלום</b> הי"))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום הי\nOn Mon, Nov 16, 2026 at 10:00 AM X wrote:\nnv nmc")
+    }
+
+    func testTheCaretsBlockStartsAfterTheLastEmptyLine() {
+        func b(_ s: String, _ caret: Int) -> Int { ConvertController.blockStart(before: caret, in: Array(s.utf16)) }
+        XCTAssertEqual(b("akuo vh", 7), 0)
+        XCTAssertEqual(b("a\n\nakuo", 7), 3)
+        XCTAssertEqual(b("a\n \u{00A0}\nakuo\nvh", 12), 5, "a line of spaces / NBSP is empty")
+        XCTAssertEqual(b("a\nb\nakuo", 8), 0, "no empty line: the whole text before the caret")
+        XCTAssertEqual(b("a\n\n", 3), 3, "the caret on an empty line")
+        XCTAssertEqual(b("", 0), 0)
+    }
+
     private func clipboardKeysWithoutSelectAll(_ poster: RecordingPoster) -> Bool {
         let downs = poster.events.filter { $0.isKeyDown && $0.modifierFlags != 0 }.map(\.keyCode)
         return downs == [ClipboardShortcut.copy.keyCode, ClipboardShortcut.paste.keyCode]
@@ -694,5 +754,25 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
         XCTAssertEqual(rig.replacer?.pageChecks, 1)
         XCTAssertEqual(rig.replacer?.pageCheckBudgets, [ConvertController.pageCheckBudgetNanos])
+    }
+
+    // MARK: - P3-54: Gmail reply in Zen, Gecko's copy without classes
+
+    @TextActor func testAZenGmailReplyWithoutClassesKeepsTheQuote() async {
+        let rig = rig(HTMLTextConvertTests.geckoReplyPlain)
+        // Bold in the user's part makes the copy rich (the owner's case: `copyVerdict=richHTML htmlPaste=ok`).
+        let html = HTMLTextConvertTests.geckoReply.replacingOccurrences(of: ">akuo vh<", with: "><b>akuo</b> vh<")
+        rig.pasteboard.copiedExtras = [.html(html)]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains("><b>שלום</b> הי<") == true)
+        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains(">nv nmc</div><div dir=\"ltr\">nv nmc<")
+                      == true, "the quote byte for byte")
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last,
+                       "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\nnv nmc\nnv nmc")
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("html{blockquoteTags=0 classAttrs=0 gmailClassHits=0 skippedRegions=0 "
+                                    + "quoteBoundary=html/plain}"), line)
+        XCTAssertFalse(line.contains("akuo") || line.contains("wrote"), "no text in the trace")
     }
 }

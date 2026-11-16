@@ -9,7 +9,9 @@ import ApplicationServices
 import Dispatch
 
 enum AXPageCategoryReader {
-    static let maxParentSteps = 40
+    /// P3-54: was 40; Gmail compose in Chrome sits deeper than that (the walk never reached the top: `pageCheck=unknown`).
+    /// Still bounded by `maxWalkNanos` and the caller's budget.
+    static let maxParentSteps = 128
     /// P3-50 QA: the whole walk's wall-clock cap (each call alone may take up to the messaging timeout).
     static let maxWalkNanos: UInt64 = 300_000_000
 

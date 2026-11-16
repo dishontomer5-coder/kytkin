@@ -2,7 +2,7 @@
 // whole-box convert converts only what comes before the quoted thread or the signature. `boundary(in:)` finds the
 // first line that starts one:
 //   - a quote header: `On … wrote:` (also wrapped over two lines, the second ending in `wrote:`), or Gmail's Hebrew
-//     `בתאריך … כתב:` / `כתבה:` / `כתב/ה:`;
+//     `בתאריך … כתב:` / `כתבה:` / `כתב/ה:`, or (P3-54) `בתאריך … מאת … :`;
 //   - a forward header: `---------- Forwarded message ---------`, or the Hebrew `---------- הודעה שהועברה ----------`;
 //   - a quoted line (`>` first, after spaces);
 //   - the signature delimiter line `-- ` (or `--`).
@@ -38,6 +38,8 @@ enum QuotedReply {
         if lower.hasPrefix("on "), lower.hasSuffix("wrote:") || next.lowercased().hasSuffix("wrote:") { return true }
         if line.hasPrefix("בתאריך"),
            ["כתב:", "כתבה:", "כתב/ה:"].contains(where: { line.hasSuffix($0) || next.hasSuffix($0) }) { return true }
+        // P3-54: Gmail in Hebrew writes `בתאריך <date> מאת <name> <address>:` (no "wrote").
+        if line.hasPrefix("בתאריך"), line.contains("מאת"), line.hasSuffix(":") || next.hasSuffix(":") { return true }
         if lower.contains("forwarded message"), line.hasPrefix("---") { return true }
         if line.contains("הודעה שהועברה"), line.hasPrefix("---") { return true }
         return false

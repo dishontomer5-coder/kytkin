@@ -538,8 +538,11 @@ final class ChromiumAXConvertTests: XCTestCase {
     @TextActor private func runWithAtoms(_ f: FakeChromiumField) async -> (ChromiumAXConvert.Result, ChromiumAXConvert) {
         let ax = sut(SwitchableFocusProvider(f))
         let result = await ax.run(.box, expected: f, plan: { read in
-            let w = FieldWindow(text: read.text, location: 0, caret: read.selection.location, reachesFieldStart: true,
-                                reachesFieldEnd: true)
+            // As the controller: P3-54, only the text before a mail quote boundary is planned.
+            let b = read.quoteBoundary ?? read.text.utf16.count
+            let text = String(decoding: Array(read.text.utf16)[..<b], as: UTF16.self)
+            let w = FieldWindow(text: text, location: 0, caret: min(read.selection.location, b),
+                                reachesFieldStart: true, reachesFieldEnd: true)
             guard case .convert(let p) = BoxConversion.plan(w, classify: self.layouts.runClass,
                                                              atomicTexts: read.atoms, convert: { side, g in
                 self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
@@ -834,5 +837,46 @@ final class ChromiumAXConvertTests: XCTestCase {
                 XCTAssertEqual(result, .converted(pieces: 1), "Slack: not an error")
             }
         }
+    }
+
+    // MARK: - P3-54: an emoji mid-box when Slack writes ranges in page units
+
+    @TextActor func testVhEmojiVhVhWhenWritesTakePageUnits() async {
+        // Owner: `vh 😄 vh vh` failed while "word word 😄" worked. Reads in AXValue units (U+FFFC = 1), writes in page
+        // units (😄 = 2): the windows around the repeated `vh` hold the U+FFFC and read back with the emoji.
+        let f = field("vh 😄 vh vh")
+        f.emojiObject = 3..<5
+        f.emojiWritesInPageUnits = true
+        let (result, _) = await runWithAtoms(f)
+        XCTAssertEqual(result, .converted(pieces: 3))
+        XCTAssertEqual(f.text, "הי 😄 הי הי", "every vh once, the emoji kept")
+    }
+
+    @TextActor func testWordEmojiWordWhenWritesTakePageUnits() async {
+        let f = field("akuo 😄 akuo")
+        f.emojiObject = 5..<7
+        f.emojiWritesInPageUnits = true
+        let (result, _) = await runWithAtoms(f)
+        XCTAssertEqual(result, .converted(pieces: 2))
+        XCTAssertEqual(f.text, "שלום 😄 שלום")
+    }
+
+    func testObjectsAsFFFC() {
+        XCTAssertEqual(ChromiumAXConvert.objectsAsFFFC("a 😄 b👍🏽"), "a \u{FFFC} b\u{FFFC}")
+        XCTAssertEqual(ChromiumAXConvert.objectsAsFFFC("ab 12"), "ab 12")
+    }
+
+    // MARK: - P3-54: a mail reply in Chrome: the plan stops at the quote boundary, the quote isn't walked
+
+    @TextActor func testAChromeGmailReplyConvertsOnlyBeforeTheQuoteAndDoesNotWalkIt() async {
+        let f = field("akuo vh\n\nOn Mon, Nov 16 at 10:00 X <x@y.com> wrote:\nnv nmc\nnv nmc")
+        f.inlineAtoms = ["On Mon, Nov 16 at 10:00 X <x@y.com> wrote:", "nv nmc"]
+        f.inlineAtomRole = "AXQuoteText"
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .converted(pieces: 2), "only the user's two words")
+        XCTAssertEqual(f.text, "שלום הי\n\nOn Mon, Nov 16 at 10:00 X <x@y.com> wrote:\nnv nmc\nnv nmc")
+        XCTAssertEqual(f.searchQuotesAsks, [false], "the quote container isn't walked")
+        XCTAssertTrue(ax.lastDiagnostic.quoteBoundary)
+        XCTAssertEqual(ax.lastDiagnostic.atoms, 0)
     }
 }

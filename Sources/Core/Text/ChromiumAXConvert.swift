@@ -141,6 +141,11 @@ import Foundation
         var atoms: [String] = []
         /// P3-44: the selected range exactly as the app reported it (put back when nothing was typed).
         var rawSelection: TextRange?
+        /// P3-54: a box convert: where a mail's quoted thread / forward / signature starts in `text`
+        /// (`QuotedReply.boundary`); the plan converts only what comes before it.
+        var quoteBoundary: Int?
+        /// P3-54 QA: a quoted thread / signature was seen at all (a text boundary, or quote lines from the AX walk).
+        var quoteFound = false
     }
 
     /// The caller's conversion of a `Read`.
@@ -233,6 +238,8 @@ import Foundation
         var atomRoles: [String] = []
         /// P3-51: U+FFFC / emoji counts in the disagreeing prefix, AX side and value side (counts only).
         var prefixObjects: String?
+        /// P3-54: a mail quote boundary was found in the box's text (the plan stops there).
+        var quoteBoundary = false
     }
 
     /// P3-46: how `AXStringForRange(0, caret)` differed from `AXValue`'s prefix (UTF-16 counts only).
@@ -437,7 +444,14 @@ import Foundation
             while case .otherText(let got) = outcome, d + k < bound {
                 // `got` is the visible text of a selection `window.length + k` long: a proper prefix of the window's
                 // text = the start is right and hidden units ate the rest; widen by the visible units still missing.
-                let g = Array(got.utf16)
+                // P3-54 (owner: Slack `vh 😄 vh vh` and "word 😄 word" failed, "word word 😄" worked): when `AXValue`
+                // holds the emoji as U+FFFC but the app *writes* ranges in page units (the emoji's two), the window
+                // around a repeated word holds that U+FFFC and its read-back shows the emoji itself, so the plain UTF-16
+                // prefix test never matched and no window could be placed after an emoji. Compared with every emoji
+                // grapheme read back as one U+FFFC (only when the window holds a U+FFFC), the prefix test sees the
+                // missing units again; the widened window must still read back in place (`select`).
+                let normalized = windowUnits.contains(0xFFFC) ? Self.objectsAsFFFC(got) : got
+                let g = Array(normalized.utf16)
                 guard !g.isEmpty, g.count < windowUnits.count, windowUnits.starts(with: g) else { break }
                 let more = k + windowUnits.count - g.count
                 guard d + more <= bound else { break }
@@ -589,6 +603,11 @@ import Foundation
         return true
     }
 
+    /// P3-54: every object grapheme (an emoji) written as one U+FFFC, as `AXValue` shows it in Slack's shape C.
+    nonisolated static func objectsAsFFFC(_ s: String) -> String {
+        String(s.map { isObject($0) ? "\u{FFFC}" : $0 })
+    }
+
     /// P3-51: U+FFFC and other object graphemes in a text (counts only, for the DEBUG trace).
     nonisolated static func objectCounts(_ s: String) -> (fffc: Int, emoji: Int) {
         var f = 0, e = 0
@@ -652,11 +671,19 @@ import Foundation
         // P3-53: the walks get what is left of the read budget; none left → stop before anything is written.
         let elapsed = clock.nowNanos &- start
         guard elapsed < timing.readBudgetNanos else { return fail(.atomRead, .timedOut) }
+        // P3-54 (owner: a Chrome Gmail reply walked 126 quote lines as atoms, the pieces still reached the quote and the
+        // budget ran out): for a box, the quote boundary is found in the text first; when it is, the plan stops there
+        // and the quote isn't walked at all. Not found → the P3-48 container walk as before.
+        let quoteBoundary = source == .box ? QuotedReply.boundary(in: value) : nil
+        lastDiagnostic.quoteBoundary = quoteBoundary != nil
+        var quoteFound = quoteBoundary != nil   // P3-54 QA
         switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed,
-                                    quoteSearchMustComplete: quoteSearchMustComplete)) {
+                                    quoteSearchMustComplete: quoteSearchMustComplete && quoteBoundary == nil,
+                                    searchQuotes: quoteBoundary == nil)) {
         case .success(let a):
             atoms = a.map(\.text)
             lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
+            if a.contains(where: { $0.role == "AXQuoteText" }) { quoteFound = true }
         case .failure: if timedOut { return fail(.atomRead, .readFailed) }
         }
         // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
@@ -686,7 +713,8 @@ import Foundation
                     if source == .selection {
                         guard alignment.narrower == 0, c == sel.end else { return fail(.prefix, .inconsistent) }
                         lastDiagnostic.caretMapped = true
-                        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
+                        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw,
+                                    quoteBoundary: quoteBoundary, quoteFound: quoteFound))
                     }
                     // P3-51: the app's text for the range up to its caret may be in other units than the caret: wider
                     // (an emoji's two units where `AXValue` and the caret count one U+FFFC, or none) → it ends *before*
@@ -705,7 +733,8 @@ import Foundation
                 if source == .box, !atoms.isEmpty { return fail(.prefix, .inconsistent) }
             }
         }
-        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
+        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw,
+                                    quoteBoundary: quoteBoundary, quoteFound: quoteFound))
     }
 
     /// P3-46: an AX role for the DEBUG trace: kept only when it looks like an AX role name (`AX` + letters, ≤ 40),

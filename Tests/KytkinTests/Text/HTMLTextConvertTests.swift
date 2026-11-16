@@ -237,4 +237,38 @@ final class HTMLTextConvertTests: XCTestCase {
         XCTAssertEqual(ConvertTrace.roleCounts(["AXStaticText", "AXQuoteText", "AXQuoteText", "AXLink", "AXQuoteText"]),
                        "AXStaticText:1,AXQuoteText:3,AXLink:1")
     }
+
+    // MARK: - P3-54: Gecko's copy of a Gmail reply keeps no class and no blockquote
+
+    static let geckoReply = """
+        <div dir="ltr">akuo vh</div><br><div><div dir="ltr">On Mon, Nov 16, 2026 at 10:00 AM X &lt;x@y.com&gt; \
+        wrote:<br></div><div><div dir="ltr">nv nmc</div><div dir="ltr">nv nmc</div></div></div>
+        """
+    static let geckoReplyPlain = "akuo vh\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\nnv nmc\nnv nmc"
+
+    func testAGeckoReplyWithoutClassesStopsAtTheQuoteHeader() {
+        var stats = HTMLTextConvert.Stats()
+        let r = HTMLTextConvert.convert(html: Self.geckoReply, plain: Self.geckoReplyPlain, skipQuotes: true,
+                                        planner: planner, stats: &stats)
+        XCTAssertEqual(r, .success(.init(
+            html: Self.geckoReply.replacingOccurrences(of: ">akuo vh<", with: ">שלום הי<"),
+            plain: "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\nnv nmc\nnv nmc")),
+            "the quote after the header is kept byte for byte")
+        XCTAssertEqual(stats, .init(blockquoteTags: 0, classAttrs: 0, gmailClassHits: 0, skippedRegions: 0,
+                                    htmlBoundary: true, plainBoundary: true))
+        XCTAssertEqual("\(stats)", "blockquoteTags=0 classAttrs=0 gmailClassHits=0 skippedRegions=0 quoteBoundary=html/plain")
+    }
+
+    func testAHebrewGmailHeaderWithoutWroteIsABoundary() {
+        let header = "\u{202B}בתאריך יום ב׳, 16 בנוב׳ 2026 ב-10:00 מאת \u{202A}X\u{202C}\u{200F} <x@y.com>:\u{202C}"
+        XCTAssertEqual(QuotedReply.boundary(in: "שלום\n\n\(header)\nakuo"), 6)
+        XCTAssertNil(QuotedReply.boundary(in: "בתאריך מחר נדבר"), "an ordinary sentence")
+    }
+
+    func testABoundaryInOnlyOneTextIsRefused() {
+        var stats = HTMLTextConvert.Stats()
+        let r = HTMLTextConvert.convert(html: "<div>akuo</div><div>On Mon X wrote:</div>", plain: "akuo On Mon X wrote:",
+                                        skipQuotes: true, planner: planner, stats: &stats)
+        XCTAssertEqual(r, .failure(.quoteBoundaryMismatch))
+    }
 }

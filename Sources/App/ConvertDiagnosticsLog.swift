@@ -15,7 +15,9 @@ enum ConvertDiagnosticsLog {
         let logger = Logger(subsystem: "io.github.kytkin.Kytkin.dev", category: "convert")
         return { trace in
             // Only the bundle ID and enum names / counts are public; there is no text in the trace to mark private.
-            logger.info("double-Shift bundle=\(trace.bundleID, privacy: .public) \(trace.line, privacy: .public)")
+            // P3-54: `.notice`, which macOS keeps on disk (`.info` lives in memory only and was gone by the time the
+            // owner ran `log show`).
+            logger.notice("double-Shift bundle=\(trace.bundleID, privacy: .public) \(trace.line, privacy: .public)")
         }
         #else
         return nil

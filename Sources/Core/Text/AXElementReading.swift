@@ -23,7 +23,8 @@ protocol AXElementReading: AnyObject {
     /// 001 §7 B5); out of time inside a container that must be complete → `.timeout`.
     /// P3-53 QA: `quoteSearchMustComplete`: a search for quote containers cut short (time, element cap) → `.timeout`
     /// too (a webmail whole box); else not finding one in time is not an error.
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+    /// P3-54: `searchQuotes`: false = pills and links only (the caller found the quote boundary in the text itself).
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
         -> Result<[InlineAtom], AXAccessError>
 }
 
@@ -38,7 +39,7 @@ extension AXElementReading {
     /// P3-42: an element that can't list its attributes is never treated as web content (the safe default).
     func attributeNames() -> Result<[String], AXAccessError> { .failure(.unsupported) }
     /// P3-44: an element that can't list its inline elements has none (`BoxConversion`'s `@word` rule still holds).
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
         -> Result<[InlineAtom], AXAccessError> {
         .failure(.unsupported)
     }

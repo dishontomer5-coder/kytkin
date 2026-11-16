@@ -27,6 +27,8 @@ final class FakeChromiumField: AXTextElement {
     /// shows as one U+FFFC and the selected range reads and writes count as one unit, while `AXStringForRange` works in
     /// the page's own units (the emoji's two) and returns the emoji itself, as does `AXSelectedText`.
     var emojiObject: Range<Int>?
+    /// P3-54: with `emojiObject`, range *writes* take page units (the emoji's two) while reads stay in `AXValue` units.
+    var emojiWritesInPageUnits = false
     /// Setting `AXSelectedTextRange` takes the AX offsets as DOM offsets (they drift after `hidden`).
     var setRangeDrifts = false
     /// P3-42 QA: after a range write, `AXSelectedTextRange` reads back exactly the range written (until typing moves the
@@ -297,9 +299,15 @@ final class FakeChromiumField: AXTextElement {
     /// P3-53 QA: what each walk was asked (`quoteSearchMustComplete`).
     private(set) var quoteSearchMustCompleteAsks: [Bool] = []
 
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+    /// P3-54: what each walk was asked (`searchQuotes`).
+    private(set) var searchQuotesAsks: [Bool] = []
+
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
         -> Result<[InlineAtom], AXAccessError> {
         atomBudgets.append(budgetNanos)
+        searchQuotesAsks.append(searchQuotes)
+        // P3-54: quote lines come only from the quote walk.
+        if !searchQuotes, inlineAtomRole == "AXQuoteText" { return .success([]) }
         quoteSearchMustCompleteAsks.append(quoteSearchMustComplete)
         if quoteSearchCutShort, quoteSearchMustComplete { return .failure(.timeout) }
         onInlineAtoms?()
@@ -319,7 +327,10 @@ final class FakeChromiumField: AXTextElement {
         guard a == .selectedTextRange, value.location >= 0, value.length >= 0 else { return .failure(.failed) }
         var lo = toDOM(value.location, isEnd: false)
         var hi = value.isCaret ? lo : toDOM(value.end, isEnd: true)
-        if pill != nil || emojiObject != nil { lo = fromObject(value.location); hi = fromObject(value.end) }
+        if pill != nil || (emojiObject != nil && !emojiWritesInPageUnits) {
+            lo = fromObject(value.location)
+            hi = fromObject(value.end)
+        }
         guard lo <= hi, hi <= doc.count else { return .failure(.failed) }
         rangeWrites.append(value)
         previousSelection = domSelection
