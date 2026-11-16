@@ -21,6 +21,8 @@ import Foundation
     private var count = 100
     private(set) var restores = 0
     private(set) var transientWrites: [String] = []
+    /// P3-47: the HTML written with a formatting-preserving paste (nil entries = plain-only writes).
+    private(set) var transientHTMLWrites: [String?] = []
     var snapshotFails = false
     var writeFails = false
     private var reads = 0
@@ -102,6 +104,20 @@ import Foundation
                   PasteboardEntry(type: Self.concealed, data: Data())]]
         count += 1
         transientWrites.append(text)
+        transientHTMLWrites.append(nil)
+        return true
+    }
+
+    func writeTransient(_ text: String, html: String) -> Bool {
+        sync()
+        guard !writeFails else { return false }
+        items = [[PasteboardEntry(type: Self.plain, data: Data(text.utf8)),
+                  PasteboardEntry(type: "public.html", data: Data(html.utf8)),
+                  PasteboardEntry(type: Self.transient, data: Data()),
+                  PasteboardEntry(type: Self.concealed, data: Data())]]
+        count += 1
+        transientWrites.append(text)
+        transientHTMLWrites.append(html)
         return true
     }
 

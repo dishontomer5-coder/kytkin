@@ -55,7 +55,17 @@ import AppKit
     }
 
     func writeTransient(_ text: String) -> Bool {
+        write(text, html: nil)
+    }
+
+    /// P3-47: plain text and HTML in one item (the target app takes the HTML and keeps the formatting).
+    func writeTransient(_ text: String, html: String) -> Bool {
+        write(text, html: html)
+    }
+
+    private func write(_ text: String, html: String?) -> Bool {
         let item = NSPasteboardItem()
+        if let html, !item.setString(html, forType: .html) { return false }
         guard item.setString(text, forType: .string),
               item.setData(Data(), forType: Self.transientType),
               item.setData(Data(), forType: Self.concealedType) else { return false }

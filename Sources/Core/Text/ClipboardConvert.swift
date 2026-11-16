@@ -30,6 +30,13 @@
 // now sits right after it, so the caller may convert just that run by Backspace + typing; otherwise it only switches.
 // The decision reads the copied data in memory, for this one convert; never logged.
 //
+// P3-47 (owner 2026-11-16, Gmail compose in Zen: a bold word anywhere meant no convert at all): a rich copy whose HTML
+// holds only formatting (`CopiedContent.htmlForFormattingPaste`, then `HTMLTextConvert`) in an app that is not a chat app
+// is converted *inside* the HTML (text nodes only, tags kept byte for byte) and pasted as HTML + plain text, so the bold,
+// links and lists stay. The caller's `htmlPlanner` converts with the same rule as the plain text (links kept whole); the
+// caller's `convert` still runs first on the plain text (size cap, P3-40 selection check, line-break rule). Any refusal →
+// the P3-44 behaviour (`.richContent`). `lastCopy.htmlPaste` says which (enum names only).
+//
 // Privacy: the snapshot, the copied box and the converted text live only in this flow; P3-40: nothing is kept after
 // it (no undo copy any more). Nothing here is logged or stored (B12).
 
@@ -125,6 +132,20 @@ import Foundation
     struct CopyDiagnostic: Sendable, Equatable {
         let types: CopiedContent.TypeCounts?
         let reason: CopiedContent.Reason?
+        /// P3-47: the formatting-preserving paste: nil = not tried (plain copy, chat app, no planner).
+        var htmlPaste: HTMLPaste?
+    }
+
+    /// P3-47: how the formatting-preserving paste went (for the DEBUG trace).
+    enum HTMLPaste: Sendable, Equatable, CustomStringConvertible {
+        case ok
+        case refused(HTMLTextConvert.Refusal)
+        var description: String {
+            switch self {
+            case .ok: "ok"
+            case .refused(let r): "refused(\(r.rawValue))"
+            }
+        }
     }
     private(set) var lastCopy: CopyDiagnostic?
     private let poster: any KeyEventPosting
@@ -145,9 +166,11 @@ import Foundation
     /// go to whatever has focus). `mayWrite`: the B3 claim, asked once before the first post.
     /// P3-44: `typedTail`, the text the user typed last (the remembered buffer), for `.richContent(typedRunAtEnd:)`.
     /// P3-46: `app`: how strict the rich check is (chat apps: rich unless proven plain).
+    /// P3-47: `htmlPlanner`: converts a text with the box / selection rule keeping the given atoms whole (nil = no
+    /// formatting-preserving paste).
     func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other,
-             convert: (String) -> Conversion, focusIsSame: () -> Bool,
-             mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
+             convert: (String) -> Conversion, htmlPlanner: HTMLTextConvert.Planner? = nil,
+             focusIsSame: () -> Bool, mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         lastCopy = nil
         let start = clock.nowNanos
         guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
@@ -198,18 +221,48 @@ import Foundation
         let copied = pasteboard.snapshot(maxBytes: Self.maxCopiedBytes)
         let verdict = copied.map { CopiedContent.verdict($0.items, text: text, app: app) }
         lastCopy = CopyDiagnostic(types: copied.map { CopiedContent.typeCounts($0.items) }, reason: verdict?.reason)
+        var htmlOut: HTMLTextConvert.Output?
         if verdict?.isRich ?? true {
-            let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
-            return stop(.richContent(typedRunAtEnd: atEnd))
+            // P3-47: formatting only (not a chat app) → convert inside the HTML and paste it.
+            if app == .other, let planner = htmlPlanner, let items = copied?.items {
+                guard let html = CopiedContent.htmlForFormattingPaste(items) else {
+                    lastCopy?.htmlPaste = .refused(.notEligible)
+                    let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
+                    return stop(.richContent(typedRunAtEnd: atEnd))
+                }
+                // The caller's own checks first (size cap, P3-40 selection check, line breaks), as for a plain paste.
+                switch convert(text) {
+                case .nothing: return stop(.nothingToConvert)
+                case .tooLong: return stop(.tooLong)
+                case .unsafe: return stop(.unsafeText)
+                case .mismatch: return stop(.selectionMismatch)
+                case .replace: break
+                }
+                switch HTMLTextConvert.convert(html: html, plain: text, planner: planner) {
+                case .success(let out):
+                    lastCopy?.htmlPaste = .ok
+                    htmlOut = out
+                case .failure(let r):
+                    lastCopy?.htmlPaste = .refused(r)
+                }
+            }
+            if htmlOut == nil {
+                let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
+                return stop(.richContent(typedRunAtEnd: atEnd))
+            }
         }
 
         let new: String
-        switch convert(text) {
-        case .nothing: return stop(.nothingToConvert)
-        case .tooLong: return stop(.tooLong)
-        case .unsafe: return stop(.unsafeText)
-        case .mismatch: return stop(.selectionMismatch)
-        case .replace(let s): new = s
+        if let htmlOut {
+            new = htmlOut.plain
+        } else {
+            switch convert(text) {
+            case .nothing: return stop(.nothingToConvert)
+            case .tooLong: return stop(.tooLong)
+            case .unsafe: return stop(.unsafeText)
+            case .mismatch: return stop(.selectionMismatch)
+            case .replace(let s): new = s
+            }
         }
         guard !new.isEmpty, !new.unicodeScalars.elementsEqual(text.unicodeScalars) else {
             return stop(.nothingToConvert)
@@ -217,7 +270,8 @@ import Foundation
         if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
         // P2-49 item 3: ⌘V goes to whatever has focus; the selection would stay selected elsewhere anyway.
         guard focusIsSame() else { return stop(.focusChanged, collapsing: false) }
-        guard pasteboard.writeTransient(new) else {
+        let written = htmlOut.map { pasteboard.writeTransient(new, html: $0.html) } ?? pasteboard.writeTransient(new)
+        guard written else {
             pasteboard.restore(snapshot)
             if all { collapse() }
             return (.failed, nil)

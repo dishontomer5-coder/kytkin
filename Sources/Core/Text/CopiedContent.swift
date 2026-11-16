@@ -163,6 +163,34 @@ enum CopiedContent {
         return false
     }
 
+    /// P3-47: alternate representations a browser writes next to the HTML (the same content), allowed for a
+    /// formatting-preserving paste: RTF, web archives, Chromium's copy metadata, Mozilla's own flavours except custom
+    /// page data.
+    static let alternateTypes: Set<String> = ["com.apple.webarchive", "Apple Web Archive pasteboard type"]
+
+    /// P3-47: the copied HTML when the copy may get a formatting-preserving paste: one item, an HTML flavour (UTF-8, ≤
+    /// the analysis cap), and besides it only plain text, markers, RTF, web archives, Chromium copy metadata or
+    /// Mozilla flavours (not `org.mozilla.custom-clipdata`: a page's own data). nil = not eligible.
+    static func htmlForFormattingPaste(_ items: [[PasteboardEntry]]) -> String? {
+        guard items.count == 1, let item = items.first else { return nil }
+        var html: String?
+        for e in item {
+            if htmlTypes.contains(e.type) {
+                guard html == nil, e.data.count <= maxAnalyzedBytes, let s = String(data: e.data, encoding: .utf8) else {
+                    return nil
+                }
+                html = s
+            } else if plainTypes.contains(e.type) || markerTypes.contains(e.type) || rtfTypes.contains(e.type)
+                        || alternateTypes.contains(e.type) || chromiumMetaTypes.contains(e.type)
+                        || (e.type.hasPrefix("org.mozilla.") && e.type != "org.mozilla.custom-clipdata") {
+                continue
+            } else {
+                return nil
+            }
+        }
+        return html
+    }
+
     /// True when the copied items hold anything but plain text runs and line breaks.
     static func isRich(_ items: [[PasteboardEntry]]) -> Bool {
         guard items.count <= 1 else { return true }
