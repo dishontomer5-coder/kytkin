@@ -238,6 +238,11 @@ import Foundation
         var atomRoles: [String] = []
         /// P3-51: U+FFFC / emoji counts in the disagreeing prefix, AX side and value side (counts only).
         var prefixObjects: String?
+        /// P3-55: the prefix disagreed with no U+FFFC or emoji on either side (a shape not understood yet, e.g. a
+        /// `:shortcode:`-entered Slack emoji): the caller must not fall back to keys in a chat app.
+        var prefixUnexplained = false
+        /// P3-55: `AXValue`'s length (= `AXNumberOfCharacters`, checked), UTF-16 units (a count only).
+        var valueUnits = 0
         /// P3-54: a mail quote boundary was found in the box's text (the plan stops there).
         var quoteBoundary = false
     }
@@ -631,6 +636,7 @@ import Foundation
         let units = Array(value.utf16)
         let n = units.count
         guard n > 0, n <= ReplacementPlanner.maxFieldReadChars else { return fail(.boxSize, .boxSize) }
+        lastDiagnostic.valueUnits = n   // P3-55
         guard case .success(n) = track(el.integer(.numberOfCharacters)) else {
             return fail(.numberOfCharacters, timedOut ? .readFailed : .inconsistent)
         }
@@ -681,7 +687,7 @@ import Foundation
                                     quoteSearchMustComplete: quoteSearchMustComplete && quoteBoundary == nil,
                                     searchQuotes: quoteBoundary == nil)) {
         case .success(let a):
-            atoms = a.map(\.text)
+            atoms = a.map(\.text).filter { !$0.isEmpty }   // P3-55: images come as empty atoms (trace count only)
             lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
             if a.contains(where: { $0.role == "AXQuoteText" }) { quoteFound = true }
         case .failure: if timedOut { return fail(.atomRead, .readFailed) }
@@ -704,6 +710,7 @@ import Foundation
                     lastDiagnostic.prefixMismatch = Self.mismatch(Array(prefix.utf16), Array(expected.utf16))
                     let ax = Self.objectCounts(prefix), val = Self.objectCounts(expected)
                     lastDiagnostic.prefixObjects = "ax\(ax.fffc)fffc+\(ax.emoji)emoji/value\(val.fffc)fffc+\(val.emoji)emoji"
+                    lastDiagnostic.prefixUnexplained = ax.fffc + ax.emoji + val.fffc + val.emoji == 0
                     guard let alignment = Self.prefixAlignment(prefix, in: units, atoms: atoms),
                           alignment.end <= n, let c = Self.caret(fromPrefix: alignment, appCaret: sel.end), c <= n
                     else { return fail(.prefix, .inconsistent) }

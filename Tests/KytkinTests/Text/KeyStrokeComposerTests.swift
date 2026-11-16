@@ -71,7 +71,20 @@ final class KeyStrokeComposerTests: XCTestCase {
             let chunks = KeyStrokeComposer.chunks(text)
             XCTAssertTrue(chunks.allSatisfy { (1...16).contains($0.count) })
             XCTAssertEqual(chunks.flatMap { $0 }, Array(text.utf16))
-            for c in chunks { XCTAssertNotNil(SyntheticKeyEvent.text(c, keyDown: true), "no split surrogates") }
+            for c in chunks {
+                // No chunk splits a surrogate pair (the chunk round-trips) …
+                XCTAssertEqual(Array(String(decoding: c, as: UTF16.self).utf16), c, "no split surrogates")
+                // … and P3-55: an emoji is never typed at all.
+                XCTAssertNil(SyntheticKeyEvent.text(c, keyDown: true), "P3-55: objects are never posted")
+            }
         }
+    }
+
+    func testObjectsAreNeverPosted() {
+        // P3-55: the owner's Slack box got a typed copy holding a literal U+FFFC.
+        for text in ["שלום \u{FFFC} שלום", "😄", "a\u{FFFD}b", "👍🏽"] {
+            XCTAssertNil(SyntheticKeyEvent.text(Array(text.utf16), keyDown: true), text)
+        }
+        XCTAssertNotNil(SyntheticKeyEvent.text(Array("שלום akuo".utf16), keyDown: true))
     }
 }

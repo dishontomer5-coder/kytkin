@@ -88,13 +88,22 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
 
     nonisolated init(log: ConvertLog) { self.log = log }
 
+    /// P3-55: what focus reads from the `n`th on answer (e.g. Slack still showing the ⌘A selection after ⌘A).
+    var focusFromRead: (n: Int, info: FocusInfo)?
+    private var focusReads = 0
+    /// P3-55: every text posted through `perform` (`new`), to check nothing read from the box is typed.
+    private(set) var typedTexts: [String] = []
+
     func focusInfo(timeout: Double) -> FocusInfo? {
         log.add(.focus)
-        heldOld = focus?.selection
-        return focus
+        focusReads += 1
+        let f = focusFromRead.map { focusReads >= $0.n ? $0.info : focus } ?? focus
+        heldOld = f?.selection
+        return f
     }
 
     func perform(_ step: ReplacementStep, old: String, new: String) -> StepOutcome {
+        typedTexts.append(new)
         log.add(.perform(step))
         onPerform?()
         heldOld = old

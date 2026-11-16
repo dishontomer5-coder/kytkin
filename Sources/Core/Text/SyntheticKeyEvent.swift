@@ -54,6 +54,12 @@ struct SyntheticKeyEvent: Sendable, Equatable {
         return e.isSafeToPost ? e : nil
     }
 
+    /// P3-55: U+FFFC, U+FFFD, or an emoji / pictographic grapheme (`ChromiumAXConvert.isObject`).
+    static func holdsObject(_ text: String) -> Bool {
+        text.unicodeScalars.contains { $0.value == 0xFFFC || $0.value == 0xFFFD }
+            || text.contains(where: ChromiumAXConvert.isObject)
+    }
+
     /// The last check before posting, repeated by the live poster: a marked Backspace, or a marked Unicode
     /// event whose text is 1…16 units with no Cc/Zl/Zp character. Nothing else may be posted.
     var isSafeToPost: Bool {
@@ -73,6 +79,10 @@ struct SyntheticKeyEvent: Sendable, Equatable {
             let text = String(decoding: unicode, as: UTF16.self)
             // A lone surrogate decodes to U+FFFD; refuse it rather than type a replacement character.
             guard Array(text.utf16) == unicode else { return false }
+            // P3-55 (owner, Slack: a typed copy of the box held a literal U+FFFC): never type an object (U+FFFC, U+FFFD,
+            // an emoji or a picture symbol): a conversion never produces one, so one here means the text came from a
+            // read of the box, not from the user's keys.
+            guard !Self.holdsObject(text) else { return false }
             return !ReplacementPlanner.containsUnsafeCharacter(text)
         default:
             return false

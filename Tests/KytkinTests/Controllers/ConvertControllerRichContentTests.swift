@@ -775,4 +775,58 @@ final class ConvertControllerRichContentTests: XCTestCase {
                                     + "quoteBoundary=html/plain}"), line)
         XCTAssertFalse(line.contains("akuo") || line.contains("wrote"), "no text in the trace")
     }
+
+    // MARK: - P3-55: the Slack wrong-text write
+
+    @TextActor func testOwnersSlackBoxRichCopyFallbackUsesBackspacesNeverTheStaleSelection() async {
+        // `akuo 😄 akuo יקךךם`: the AX path gives up, the copy is Slack's own (unknownType) and ends with the typed run.
+        // Then AX still shows the ⌘A selection (the Right arrow hadn't reached it): the old fallback typed the AX
+        // selection's converted text (with U+FFFC) "over" it, and the keys were appended.
+        let box = "akuo 😄 akuo יקךךם"
+        let rig = rig(box)
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = [PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
+        // Read 1: the double-Shift's focus read; read 2: the fallback after the AX path; read 3 on: after ⌘A.
+        rig.replacer?.focusFromRead = (3, FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false,
+                                                    selTextSettable: true, selRangeSettable: true,
+                                                    selection: "akuo \u{FFFC} akuo יקךךם"))
+        let snap = WordSnapshot(strokes: ConvertFixtures.strokes("hello"), previousWords: [], renderedIn: IDs.hebrew,
+                                isValid: true)
+        var r = request(snap)
+        r = ConvertRequest(snapshot: snap, gen: 1, bundleID: slack, mode: .convert, pair: ConvertFixtures.pair,
+                           currentSource: IDs.hebrew, switchAfterConvert: true, useClipboard: true,
+                           allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.abc, by: .backspaceAndType(count: 5), switched: true))
+        XCTAssertEqual(log.performs, [.backspaceAndType(count: 5)], "never typeOverSelection")
+        XCTAssertEqual(rig.replacer?.typedTexts, ["hello"], "only the buffer's own re-rendering")
+        XCTAssertFalse(rig.replacer?.typedTexts.contains { $0.contains("\u{FFFC}") } ?? true)
+        XCTAssertEqual(pastes(rig.poster), 0)
+    }
+
+    @TextActor func testARichCopyRunHoldingAColonIsNeverTypedByKeys() async {
+        let rig = rig("akuo vh:")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = [PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
+        let colon = ConvertFixtures.abc.keys.filter { $0.value.shift == ":" }.map(\.key).min()!
+        let snap = WordSnapshot(strokes: ConvertFixtures.strokes("vh") + [Stroke(keyCode: colon, layer: .shift)],
+                                previousWords: [], renderedIn: IDs.abc, isValid: true)
+        rig.pasteboard.box = "akuo vh:"
+        let out = await rig.sut.handle(request(snap), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertTrue(log.performs.isEmpty)
+    }
+
+    @TextActor func testAnUnexplainedPrefixMismatchInAChatAppJustSwitches() async {
+        // The `:shortcode:` emoji shape: the prefix disagrees with no U+FFFC / emoji on either side.
+        let rig = rig("akuo akuo vh")
+        rig.field.stringForRangeOverride = "akuo xxxx vh"
+        rig.pasteboard.copiedExtras = [PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
+        let out = await rig.sut.handle(request(buffer("vh")), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertTrue(log.performs.isEmpty, "no keys")
+        XCTAssertFalse(rig.poster.events.contains { $0.modifierFlags != 0 }, "no ⌘A / ⌘C")
+        XCTAssertTrue(sink.traces.first?.line.contains("prefixUnexplained=true") == true)
+        XCTAssertTrue(sink.traces.first?.line.contains("valueUnits=12") == true)
+    }
 }
