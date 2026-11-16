@@ -273,7 +273,9 @@ import Foundation
     /// claim, asked once before the first write (the first selection set).
     /// P3-53: `startedAt`: when the convert started (the controller's request start), so the time spent before this
     /// path (another path's reads, the page check) counts against the same budget. nil = now.
+    /// P3-53 QA: `quoteSearchMustComplete`: a quote-container search cut short stops the read (a webmail whole box).
     func run(_ source: Source, expected: any FocusedElementIdentity, startedAt: UInt64? = nil,
+             quoteSearchMustComplete: Bool = false,
              plan: (Read) -> Planned, mayWrite: () -> Bool) async -> Result {
         timedOut = false
         lastDiagnostic = Diagnostic()
@@ -282,9 +284,14 @@ import Foundation
         if clock.nowNanos &- start > timing.readBudgetNanos { return .unavailable(.timedOut) }
         guard let el = focusedElement(), el.isSameElement(as: expected) else { return .unavailable(.focusChanged) }
         let read: Read
-        switch readBox(el, source, start: start) {
+        switch readBox(el, source, start: start, quoteSearchMustComplete: quoteSearchMustComplete) {
         case .failure(let stop): return .unavailable(stop)
         case .success(let r): read = r
+        }
+        // P3-53 QA: the prefix read after the atom walks can take one more AX timeout: the whole read must fit.
+        if clock.nowNanos &- start > timing.readBudgetNanos {
+            lastDiagnostic.readCheck = .atomRead
+            return .unavailable(.timedOut)
         }
         lastDiagnostic.atoms = read.atoms.count
         valueHasLiteralObjects = read.text.contains { $0 != "\u{FFFC}" && Self.isObject($0) }
@@ -307,6 +314,8 @@ import Foundation
             return .unavailable(.inconsistent)
         }
         lastDiagnostic.pieces = pieces.count
+        // P3-53 QA: never a claim after the budget (no write could follow it anyway).
+        if clock.nowNanos &- start > timing.budgetNanos { return .unavailable(.timedOut) }
         guard mayWrite() else { return .abandoned }
 
         var current = Array(read.text.utf16)
@@ -589,7 +598,8 @@ import Foundation
 
     // MARK: - Step 1
 
-    private func readBox(_ el: any AXTextElement, _ source: Source, start: UInt64) -> Swift.Result<Read, Stop> {
+    private func readBox(_ el: any AXTextElement, _ source: Source, start: UInt64,
+                         quoteSearchMustComplete: Bool) -> Swift.Result<Read, Stop> {
         func fail(_ check: Diagnostic.ReadCheck, _ stop: Stop) -> Swift.Result<Read, Stop> {
             lastDiagnostic.readCheck = check
             return .failure(stop)
@@ -642,7 +652,8 @@ import Foundation
         // P3-53: the walks get what is left of the read budget; none left → stop before anything is written.
         let elapsed = clock.nowNanos &- start
         guard elapsed < timing.readBudgetNanos else { return fail(.atomRead, .timedOut) }
-        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed)) {
+        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed,
+                                    quoteSearchMustComplete: quoteSearchMustComplete)) {
         case .success(let a):
             atoms = a.map(\.text)
             lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }

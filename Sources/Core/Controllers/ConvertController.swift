@@ -574,10 +574,20 @@ import Foundation
                           convert: (String) -> String?) -> ReplacementOutcome {
         let plan = ReplacementPlanner.plan(request, caps: capabilities, focus: focus)
         var caps = capabilities
-        let outcome = ReplacementChain.run(
-            plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateField: locateField,
-            capabilities: &caps, clock: clock,
-            mayWrite: { claim(gen) })   // B3 (§12 W8): before the first write
+        // P3-53 QA: the chain (AX writes, keys) runs inside what is left of the request's B5 budget, not a fresh one:
+        // after a Chromium read or a clipboard try its keys must still land before the hold-back flush.
+        let elapsed = clock.nowNanos &- requestStart
+        let left = ReplacementChain.defaultBudgetNanos > elapsed ? ReplacementChain.defaultBudgetNanos - elapsed : 0
+        let outcome: ReplacementOutcome
+        if left == 0 {
+            replacer.endReplacement()   // as the chain would (nothing it read is kept)
+            outcome = ReplacementOutcome(result: .timedOut, attempts: [])
+        } else {
+            outcome = ReplacementChain.run(
+                plan, on: replacer, bundleID: request.bundleID, old: old, convert: convert, locateField: locateField,
+                capabilities: &caps, clock: clock, budgetNanos: left,
+                mayWrite: { claim(gen) })   // B3 (§12 W8): before the first write
+        }
         capabilities = caps
         // P3-44: the trace names the chain by what it tried last (keys or AX).
         let keys = outcome.attempts.contains { a in
@@ -633,7 +643,7 @@ import Foundation
         if siteUnknown {
             let page = pageCategory(for: r)
             if page == .wholeDocument { return nil }
-            if page == .ordinary { siteUnknown = false }
+            if page.isOrdinary { siteUnknown = false }
         }
         if siteUnknown {
             // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): the
@@ -937,7 +947,11 @@ import Foundation
             }
         }
         let gen = r.gen
-        let result = await ax.run(job.source, expected: job.element, startedAt: requestStart, plan: plan,
+        // P3-53 QA (Coordinator 2026-11-16): on a webmail page a whole-box convert needs the quote search complete (a
+        // search cut short by the tighter clock could miss the quoted thread and convert it); elsewhere (Slack) not.
+        let webmail = r.webmailPage || (requestPage.map { $0.gen == r.gen && $0.category == .webmail } ?? false)
+        let result = await ax.run(job.source, expected: job.element, startedAt: requestStart,
+                                  quoteSearchMustComplete: job.source == .box && webmail, plan: plan,
                                   mayWrite: { self.claim(gen) })
         note(.chromiumAX, "\(result)")
         trace?.chromium = ax.lastDiagnostic

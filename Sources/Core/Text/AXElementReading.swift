@@ -21,7 +21,10 @@ protocol AXElementReading: AnyObject {
     /// one convert only and never logged. P3-46: each with its AX role (for the DEBUG trace, as a role name only).
     /// P3-53: `budgetNanos`: the most wall-clock time the walks may take (what is left of the convert's read budget,
     /// 001 §7 B5); out of time inside a container that must be complete → `.timeout`.
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError>
+    /// P3-53 QA: `quoteSearchMustComplete`: a search for quote containers cut short (time, element cap) → `.timeout`
+    /// too (a webmail whole box); else not finding one in time is not an error.
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+        -> Result<[InlineAtom], AXAccessError>
 }
 
 /// P3-46: one inline element that must stay whole (a mention pill, a channel link, a link). `text` is held for one
@@ -35,7 +38,8 @@ extension AXElementReading {
     /// P3-42: an element that can't list its attributes is never treated as web content (the safe default).
     func attributeNames() -> Result<[String], AXAccessError> { .failure(.unsupported) }
     /// P3-44: an element that can't list its inline elements has none (`BoxConversion`'s `@word` rule still holds).
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+        -> Result<[InlineAtom], AXAccessError> {
         .failure(.unsupported)
     }
 }

@@ -47,6 +47,8 @@ struct ConvertRequest: Sendable, Equatable {
     var pageState: BrowserPageState?
     /// P3-50: whether Kytkin watches this browser, or why not (an enum-like name), for the DEBUG trace only.
     var siteWatch: String?
+    /// P3-53 QA: the page's host is a webmail host (`PageCategory.isWebmail`; the host itself is not kept).
+    var webmailPage = false
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
          currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
@@ -76,6 +78,7 @@ struct ConvertRequest: Sendable, Equatable {
                                   browserSiteUnknown: browserSiteUnknown)
         copy.pageState = pageState
         copy.siteWatch = siteWatch
+        copy.webmailPage = webmailPage
         return copy
     }
 }

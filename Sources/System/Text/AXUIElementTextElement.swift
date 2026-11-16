@@ -74,14 +74,15 @@ final class AXUIElementTextElement: AXTextElement {
     /// so a pill whose name is split over text runs stays whole. Never logs; the texts go straight to the convert's plan
     /// (the role names may go to the DEBUG trace).
     /// P3-48: plus every text of a Gmail quoted thread / signature / extra or a blockquote (`quoteAtoms`).
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+        -> Result<[InlineAtom], AXAccessError> {
         // P3-48 QA: one wall clock for both walks. P3-53: that clock is what is left of the convert's read budget
         // (`budgetNanos`, from `ChromiumAXConvert`, inside the B5 400 ms), never more than 500 ms.
         let deadline = DispatchTime.now().uptimeNanoseconds &+ min(500_000_000, budgetNanos)
         switch pillAtoms(maxNodes: maxNodes, deadline: deadline) {
         case .failure(let e): return .failure(e)
         case .success(let pills):
-            return quoteAtoms(deadline: deadline).map { pills + $0 }
+            return quoteAtoms(deadline: deadline, searchMustComplete: quoteSearchMustComplete).map { pills + $0 }
         }
     }
 
@@ -93,7 +94,7 @@ final class AXUIElementTextElement: AXTextElement {
     /// container found but not walked to its end (budget, the shared wall clock of `inlineAtoms`) → `.timeout`: the Chromium
     /// convert stops before typing (the caller falls back), rather than convert a part of the quote it couldn't see.
     /// Not finding a container within the search budget is not an error (an ordinary long box). Never logs.
-    private func quoteAtoms(deadline: UInt64) -> Result<[InlineAtom], AXAccessError> {
+    private func quoteAtoms(deadline: UInt64, searchMustComplete: Bool) -> Result<[InlineAtom], AXAccessError> {
         // P3-53: no single call is given more than what is left of the shared deadline (≥ 10 ms).
         let timeout = Self.callTimeout(until: deadline)
         func children(_ e: AXUIElement) -> (list: [AXUIElement], timedOut: Bool) {
@@ -130,11 +131,14 @@ final class AXUIElementTextElement: AXTextElement {
         let top = children(element)
         if top.timedOut { return .failure(.timeout) }
         var queue: [(AXUIElement, Int)] = top.list.prefix(300).map { ($0, 1) }
+        /// P3-53 QA: the search left elements unlooked-at (time, or the 300-element cap).
+        var searchCut = top.list.count > 300
         var i = 0
         while i < queue.count, i < 300 {   // bounded
             // P3-48 QA: out of time while *searching* = nothing found further (as the doc says: not an error; stopping
             // every convert of a long box would be a regression). A container found is still walked completely.
-            if DispatchTime.now().uptimeNanoseconds > deadline { break }
+            // P3-53 QA (Coordinator 2026-11-16): except where the search must be complete (a webmail whole box).
+            if DispatchTime.now().uptimeNanoseconds > deadline { searchCut = true; break }
             let (e, depth) = queue[i]
             i += 1
             let (role, roleTimedOut) = string(e, kAXRoleAttribute)
@@ -146,9 +150,12 @@ final class AXUIElementTextElement: AXTextElement {
             if depth < 3 {
                 let next = children(e)
                 if next.timedOut { return .failure(.timeout) }
-                queue += next.list.prefix(max(0, 300 - queue.count)).map { ($0, depth + 1) }
+                let room = max(0, 300 - queue.count)
+                if next.list.count > room { searchCut = true }
+                queue += next.list.prefix(room).map { ($0, depth + 1) }
             }
         }
+        if searchMustComplete, searchCut { return .failure(.timeout) }
         guard !containers.isEmpty else { return .success([]) }
         // 2. Every text inside them (complete, or the convert stops).
         var atoms: [InlineAtom] = []

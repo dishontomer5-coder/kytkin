@@ -102,7 +102,15 @@ final class HTMLTextConvertTests: XCTestCase {
 
     func testPageCategory() {
         // P3-50: the convert's own page check (the address is reduced to a category and dropped).
-        XCTAssertEqual(PageCategory.of(url: "https://mail.google.com/mail/u/0/#inbox?compose=new"), .ordinary)
+        XCTAssertEqual(PageCategory.of(url: "https://mail.google.com/mail/u/0/#inbox?compose=new"), .webmail,
+                       "P3-53 QA: an ordinary page that is webmail")
+        XCTAssertEqual(PageCategory.of(url: "https://outlook.office.com/mail/"), .wholeDocument,
+                       "office.com is a whole-document host already (blocked outright)")
+        XCTAssertEqual(PageCategory.of(url: "https://outlook.live.com/mail/0/"), .webmail)
+        XCTAssertEqual(PageCategory.of(url: "https://mail.example.com/"), .ordinary)
+        XCTAssertTrue(PageCategory.webmail.isOrdinary)
+        XCTAssertFalse(PageCategory.isWebmail(host: nil))
+        XCTAssertFalse(PageCategory.isWebmail(host: "notmail.google.com.evil.com"))
         XCTAssertEqual(PageCategory.of(url: "https://docs.google.com/document/d/x/edit"), .wholeDocument)
         XCTAssertEqual(PageCategory.of(url: "https://x.sharepoint.com/sites/y"), .wholeDocument)
         XCTAssertEqual(PageCategory.of(url: "http://example.com"), .ordinary)
@@ -116,11 +124,12 @@ final class HTMLTextConvertTests: XCTestCase {
         // P3-50 QA: innermost first.
         let gmail = "https://mail.google.com/mail/u/0/"
         let docs = "https://docs.google.com/document/d/x/edit"
-        XCTAssertEqual(PageCategory.of(webAreaURLs: [gmail], reachedTop: true), .ordinary)
-        XCTAssertEqual(PageCategory.of(webAreaURLs: ["about:blank", gmail], reachedTop: true), .ordinary,
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [gmail], reachedTop: true), .webmail)
+        XCTAssertEqual(PageCategory.of(webAreaURLs: ["about:blank", gmail], reachedTop: true), .webmail,
                        "an about:blank editor iframe inside an ordinary page")
         XCTAssertEqual(PageCategory.of(webAreaURLs: [gmail, "chrome://browser/content/browser.xhtml"], reachedTop: true),
-                       .ordinary, "a browser's own UI web area says nothing")
+                       .webmail, "a browser's own UI web area says nothing")
+        XCTAssertEqual(PageCategory.of(webAreaURLs: ["https://example.com/a"], reachedTop: true), .ordinary)
         XCTAssertEqual(PageCategory.of(webAreaURLs: [docs, "https://example.com/blog"], reachedTop: true),
                        .wholeDocument, "Docs in an iframe of an ordinary page")
         XCTAssertEqual(PageCategory.of(webAreaURLs: ["https://example.com", docs], reachedTop: true), .wholeDocument)
