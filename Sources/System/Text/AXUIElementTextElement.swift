@@ -72,7 +72,105 @@ final class AXUIElementTextElement: AXTextElement {
     /// with no text of its own whose direct `AXStaticText` children (≤ 8) together read `@…` / `#…` is kept as one atom,
     /// so a pill whose name is split over text runs stays whole. Never logs; the texts go straight to the convert's plan
     /// (the role names may go to the DEBUG trace).
+    /// P3-48: plus every text of a Gmail quoted thread / signature / extra or a blockquote (`quoteAtoms`).
     func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
+        switch pillAtoms(maxNodes: maxNodes) {
+        case .failure(let e): return .failure(e)
+        case .success(let pills):
+            return quoteAtoms().map { pills + $0 }
+        }
+    }
+
+    /// P3-48 (Coordinator 2026-11-16): a whole-box convert of a Gmail reply never converts the quoted thread or the
+    /// signature. Breadth-first over the box's elements to depth 3 (≤ 300 elements) for a container whose
+    /// `AXDOMClassList` names `gmail_quote`, `gmail_signature` or `gmail_extra`, or whose `AXBlockQuoteLevel` is above 0;
+    /// then, depth-first inside each (≤ 1,500 elements, ≤ 40 levels), the `AXValue` of every `AXStaticText`, trimmed,
+    /// as an atom (role `AXQuoteText`): `BoxConversion` never converts them and they never decide the direction. A
+    /// container found but not walked to its end (budget, the shared 400 ms wall clock) → `.timeout`: the Chromium
+    /// convert stops before typing (the caller falls back), rather than convert a part of the quote it couldn't see.
+    /// Not finding a container within the search budget is not an error (an ordinary long box). Never logs.
+    private func quoteAtoms() -> Result<[InlineAtom], AXAccessError> {
+        let timeout: Float = 0.25
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ 400_000_000
+        func children(_ e: AXUIElement) -> (list: [AXUIElement], timedOut: Bool) {
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &value)
+            if error == .cannotComplete { return ([], true) }
+            let list = (value as? [AXUIElement]) ?? []
+            for c in list { AXUIElementSetMessagingTimeout(c, timeout) }
+            return (list, false)
+        }
+        func string(_ e: AXUIElement, _ attribute: String) -> (String?, Bool) {
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(e, attribute as CFString, &value)
+            if error == .cannotComplete { return (nil, true) }
+            guard error == .success, let value, CFGetTypeID(value) == CFStringGetTypeID() else { return (nil, false) }
+            return ((value as! String), false)
+        }
+        func isQuoteContainer(_ e: AXUIElement) -> (Bool, Bool) {
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(e, "AXDOMClassList" as CFString, &value)
+            if error == .cannotComplete { return (false, true) }
+            if let classes = value as? [String],
+               classes.contains(where: { c in ["gmail_quote", "gmail_signature", "gmail_extra"].contains { c.contains($0) } }) {
+                return (true, false)
+            }
+            var level: CFTypeRef?
+            let levelError = AXUIElementCopyAttributeValue(e, "AXBlockQuoteLevel" as CFString, &level)
+            if levelError == .cannotComplete { return (false, true) }
+            if let n = level as? NSNumber, n.intValue > 0 { return (true, false) }
+            return (false, false)
+        }
+        // 1. Find the containers (bounded search; not finding one is fine).
+        var containers: [AXUIElement] = []
+        let top = children(element)
+        if top.timedOut { return .failure(.timeout) }
+        var queue: [(AXUIElement, Int)] = top.list.prefix(300).map { ($0, 1) }
+        var i = 0
+        while i < queue.count, i < 300 {   // bounded
+            if DispatchTime.now().uptimeNanoseconds > deadline { return .failure(.timeout) }
+            let (e, depth) = queue[i]
+            i += 1
+            let (role, roleTimedOut) = string(e, kAXRoleAttribute)
+            if roleTimedOut { return .failure(.timeout) }
+            if role == kAXStaticTextRole { continue }
+            let (isQuote, quoteTimedOut) = isQuoteContainer(e)
+            if quoteTimedOut { return .failure(.timeout) }
+            if isQuote { containers.append(e); continue }
+            if depth < 3 {
+                let next = children(e)
+                if next.timedOut { return .failure(.timeout) }
+                queue += next.list.prefix(max(0, 300 - queue.count)).map { ($0, depth + 1) }
+            }
+        }
+        guard !containers.isEmpty else { return .success([]) }
+        // 2. Every text inside them (complete, or the convert stops).
+        var atoms: [InlineAtom] = []
+        var visited = 0
+        func walk(_ e: AXUIElement, depth: Int) -> Bool {   // false = budget / timeout: incomplete
+            visited += 1
+            guard visited <= 1_500, depth <= 40, DispatchTime.now().uptimeNanoseconds <= deadline else { return false }
+            let (role, roleTimedOut) = string(e, kAXRoleAttribute)
+            if roleTimedOut { return false }
+            if role == kAXStaticTextRole {
+                let (v, t) = string(e, kAXValueAttribute)
+                if t { return false }
+                if let v {
+                    let trimmed = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.count >= 2 { atoms.append(InlineAtom(text: trimmed, role: "AXQuoteText")) }
+                }
+                return true
+            }
+            let next = children(e)
+            if next.timedOut { return false }
+            for c in next.list where !walk(c, depth: depth + 1) { return false }
+            return true
+        }
+        for c in containers where !walk(c, depth: 1) { return .failure(.timeout) }
+        return .success(atoms)
+    }
+
+    private func pillAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
         let timeout: Float = 0.25   // ReplacementExecutor.axTimeout, the per-element timeout the provider sets (B5)
         struct Node {
             let element: AXUIElement

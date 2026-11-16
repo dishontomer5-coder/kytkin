@@ -130,4 +130,71 @@ final class HTMLTextConvertTests: XCTestCase {
         XCTAssertEqual(PageCategory.of(webAreaURLs: [], reachedTop: true), .unknown)
         XCTAssertEqual(PageCategory.of(webAreaURLs: ["about:blank"], reachedTop: true), .unknown)
     }
+
+    // MARK: - P3-48: Gmail quoted thread and signature
+
+    private func box(_ html: String, _ plain: String) -> Swift.Result<HTMLTextConvert.Output, HTMLTextConvert.Refusal> {
+        HTMLTextConvert.convert(html: html, plain: plain, skipQuotes: true, planner: planner)
+    }
+
+    static let reply = """
+        <div dir="ltr">akuo vh</div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" \
+        class="gmail_attr">On Mon, Nov 16, 2026 at 10:00 AM X &lt;x@y.com&gt; wrote:<br></div><blockquote \
+        class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">\
+        <div dir="ltr">nv nmc</div></blockquote></div>
+        """
+    static let replyPlain = "akuo vh\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\n\nnv nmc"
+
+    func testAGmailReplyConvertsOnlyWhatTheUserWrote() {
+        let r = box(Self.reply, Self.replyPlain)
+        XCTAssertEqual(r, .success(.init(
+            html: Self.reply.replacingOccurrences(of: ">akuo vh<", with: ">שלום הי<"),
+            plain: "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\n\nnv nmc")),
+            "the quote is byte for byte, its English never converted and never deciding the direction")
+    }
+
+    func testTheQuoteNeverDecidesTheDirection() {
+        // The box ends in the quote's English letters; without skipping them they would decide English → Hebrew and
+        // convert the quote. Skipped, the user's own Hebrew word decides.
+        let html = "<div dir=\"rtl\">שלום</div><blockquote>nv nmc</blockquote>"
+        XCTAssertEqual(box(html, "שלום\nnv nmc"),
+                       .success(.init(html: "<div dir=\"rtl\">akuo</div><blockquote>nv nmc</blockquote>",
+                                      plain: "akuo\nnv nmc")))
+    }
+
+    func testAGmailSignatureIsLeftAlone() {
+        let html = """
+            <div dir="ltr">akuo<br clear="all"><br><span class="gmail_signature_prefix">-- </span><br>\
+            <div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature">Tomer Dishon<img src="x.png"></div></div>
+            """
+        let r = box(html, "akuo\n\n-- \nTomer Dishon")
+        XCTAssertEqual(r, .success(.init(html: html.replacingOccurrences(of: ">akuo<", with: ">שלום<"),
+                                         plain: "שלום\n\n-- \nTomer Dishon")))
+    }
+
+    func testASelectionInsideTheQuoteStillConverts() {
+        // skipQuotes is only for the whole box.
+        let html = "<blockquote class=\"gmail_quote\"><div dir=\"ltr\">nv nmc</div></blockquote>"
+        XCTAssertEqual(convert(html, "nv nmc"),
+                       .success(.init(html: html.replacingOccurrences(of: "nv nmc", with: "מה מצב"), plain: "מה מצב")))
+    }
+
+    func testActiveContentInsideAQuoteIsStillRefused() {
+        XCTAssertEqual(box("<div>akuo</div><div class=\"gmail_quote\"><script>x</script></div>", "akuo\nx"),
+                       .failure(.unsupportedTag))
+        XCTAssertEqual(box("<div>akuo</div><div class=\"gmail_quote\"><div>x</div>", "akuo\nx"), .failure(.parse),
+                       "an unclosed quote")
+    }
+
+    func testQuotedReplyBoundaries() {
+        func b(_ s: String) -> Int? { QuotedReply.boundary(in: s) }
+        XCTAssertEqual(b("akuo\n\nOn Mon, Nov 16 at 10:00 X <x@y.com> wrote:\n> nv"), 6)
+        XCTAssertEqual(b("akuo\nOn Mon, Nov 16, 2026 at 10:00 AM Very Long Name <x@y.com>\nwrote:\nnv"), 5, "wrapped")
+        XCTAssertEqual(b("akuo\n\u{200F}בתאריך יום ב׳, 16 בנוב׳ 2026 ב-10:00 מאת X <x@y.com>\u{200F} כתב/ה:\nnv"), 5)
+        XCTAssertEqual(b("akuo\n\n---------- Forwarded message ---------\nFrom: X"), 6)
+        XCTAssertEqual(b("akuo\n> nv"), 5)
+        XCTAssertEqual(b("akuo\n-- \nTomer"), 5, "the signature delimiter")
+        XCTAssertNil(b("akuo vh\nnv nmc"))
+        XCTAssertNil(b("on the way, I wrote: x"), "an ordinary sentence")
+    }
 }

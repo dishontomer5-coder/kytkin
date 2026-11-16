@@ -558,4 +558,47 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.replacer?.pageChecks, 0)
     }
+
+    // MARK: - P3-48: Gmail reply / forward: the quoted thread and the signature never convert
+
+    @TextActor func testAPlainReplyCopyConvertsOnlyWhatComesBeforeTheQuote() async {
+        let box = "akuo vh\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\n> nv nmc"
+        let rig = rig(box)
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []   // plain text only
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last,
+                       "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\n> nv nmc")
+    }
+
+    @TextActor func testAZenGmailReplyPastesTheQuoteBackUnchanged() async {
+        let html = HTMLTextConvertTests.reply
+        let rig = rig(HTMLTextConvertTests.replyPlain)
+        rig.pasteboard.copiedExtras = [.html(html)]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'>" + html.replacingOccurrences(of: ">akuo vh<", with: ">שלום הי<"))
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
+    }
+
+    @TextActor func testAChromeGmailReplyThroughAXKeepsTheQuote() async {
+        // The AX tree shows the quote's lines (`AXQuoteText` atoms from the live walk): never typed over.
+        let rig = rig("akuo vh\nOn Mon X wrote:\nnv nmc")
+        rig.field.inlineAtoms = ["On Mon X wrote:", "nv nmc"]
+        rig.field.inlineAtomRole = "AXQuoteText"
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "שלום הי\nOn Mon X wrote:\nnv nmc")
+    }
+
+    @TextActor func testASelectionInsideTheQuoteStillConverts() async {
+        let rig = rig("ok\nnv nmc", selection: 3..<9, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "nv nmc"
+        rig.pasteboard.copiedExtras = [.html("<blockquote class=\"gmail_quote\"><div>nv nmc</div></blockquote>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "ok\nמה מצב")
+    }
 }
