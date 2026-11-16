@@ -74,7 +74,7 @@ final class AXUIElementTextElement: AXTextElement {
     /// so a pill whose name is split over text runs stays whole. Never logs; the texts go straight to the convert's plan
     /// (the role names may go to the DEBUG trace).
     /// P3-48: plus every text of a Gmail quoted thread / signature / extra or a blockquote (`quoteAtoms`).
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool)
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
         -> Result<[InlineAtom], AXAccessError> {
         // P3-48 QA: one wall clock for both walks. P3-53: that clock is what is left of the convert's read budget
         // (`budgetNanos`, from `ChromiumAXConvert`, inside the B5 400 ms), never more than 500 ms.
@@ -82,6 +82,8 @@ final class AXUIElementTextElement: AXTextElement {
         switch pillAtoms(maxNodes: maxNodes, deadline: deadline) {
         case .failure(let e): return .failure(e)
         case .success(let pills):
+            // P3-54: the quote boundary was found in the text: the quote isn't walked (its lines aren't atoms).
+            guard searchQuotes else { return .success(pills) }
             return quoteAtoms(deadline: deadline, searchMustComplete: quoteSearchMustComplete).map { pills + $0 }
         }
     }

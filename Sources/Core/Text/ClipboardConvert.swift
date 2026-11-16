@@ -138,6 +138,8 @@ import Foundation
         let reason: CopiedContent.Reason?
         /// P3-47: the formatting-preserving paste: nil = not tried (plain copy, chat app, no planner).
         var htmlPaste: HTMLPaste?
+        /// P3-54: the HTML's tag / attribute counts and the quote boundary (counts only).
+        var htmlStats: HTMLTextConvert.Stats?
     }
 
     /// P3-47: how the formatting-preserving paste went (for the DEBUG trace).
@@ -247,7 +249,11 @@ import Foundation
                 case .replace: break
                 }
                 // P3-48: a whole box leaves a quoted thread and a signature alone; a selection is the user's choice.
-                switch HTMLTextConvert.convert(html: html, plain: text, skipQuotes: source == .box, planner: planner) {
+                var stats = HTMLTextConvert.Stats()
+                let converted = HTMLTextConvert.convert(html: html, plain: text, skipQuotes: source == .box,
+                                                        planner: planner, stats: &stats)
+                lastCopy?.htmlStats = stats
+                switch converted {
                 case .success(let out):
                     lastCopy?.htmlPaste = .ok
                     htmlOut = out

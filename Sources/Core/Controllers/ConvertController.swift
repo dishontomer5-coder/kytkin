@@ -930,7 +930,14 @@ import Foundation
                 target = whole.target
                 return changes.isEmpty ? .nothing : .changes(changes)
             case .box:
-                let window = FieldWindow(text: read.text, location: 0, caret: read.selection.location,
+                // P3-54: a mail reply / forward: only the text before the quoted thread (or signature) is planned.
+                var text = read.text
+                var caret = read.selection.location
+                if let b = read.quoteBoundary {
+                    text = String(decoding: Array(read.text.utf16)[..<b], as: UTF16.self)
+                    caret = min(caret, b)
+                }
+                let window = FieldWindow(text: text, location: 0, caret: caret,
                                          reachesFieldStart: true, reachesFieldEnd: true)
                 // P3-44: mention pills / links the AX tree shows as their own elements stay whole.
                 let result = BoxConversion.plan(window, classify: layouts.runClass, atomicTexts: read.atoms) {

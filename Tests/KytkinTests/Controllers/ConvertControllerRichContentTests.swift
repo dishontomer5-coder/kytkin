@@ -695,4 +695,24 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(rig.replacer?.pageChecks, 1)
         XCTAssertEqual(rig.replacer?.pageCheckBudgets, [ConvertController.pageCheckBudgetNanos])
     }
+
+    // MARK: - P3-54: Gmail reply in Zen, Gecko's copy without classes
+
+    @TextActor func testAZenGmailReplyWithoutClassesKeepsTheQuote() async {
+        let rig = rig(HTMLTextConvertTests.geckoReplyPlain)
+        // Bold in the user's part makes the copy rich (the owner's case: `copyVerdict=richHTML htmlPaste=ok`).
+        let html = HTMLTextConvertTests.geckoReply.replacingOccurrences(of: ">akuo vh<", with: "><b>akuo</b> vh<")
+        rig.pasteboard.copiedExtras = [.html(html)]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains("><b>שלום</b> הי<") == true)
+        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains(">nv nmc</div><div dir=\"ltr\">nv nmc<")
+                      == true, "the quote byte for byte")
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last,
+                       "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\nnv nmc\nnv nmc")
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("html{blockquoteTags=0 classAttrs=0 gmailClassHits=0 skippedRegions=0 "
+                                    + "quoteBoundary=html/plain}"), line)
+        XCTAssertFalse(line.contains("akuo") || line.contains("wrote"), "no text in the trace")
+    }
 }
