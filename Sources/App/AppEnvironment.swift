@@ -86,7 +86,9 @@ import AppKit
                                   sleep: { nanos in try? await Task.sleep(nanoseconds: nanos) })
             },
             chromiumAXEnabled: ChromiumAXConvert.isEnabled
-                && !UserDefaults.standard.bool(forKey: ChromiumAXConvert.killSwitchDefaultsKey))
+                && !UserDefaults.standard.bool(forKey: ChromiumAXConvert.killSwitchDefaultsKey),
+            // P3-44: DEBUG builds only: one privacy-safe line per double-Shift (paths tried, stop reasons; no text).
+            diagnose: ConvertDiagnosticsLog.hook)
         convert = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
 
         controller = AppController(switcher: switcher, context: contextMonitor, store: store,

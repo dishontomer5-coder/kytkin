@@ -22,6 +22,14 @@
 // (`Conversion.mismatch`), converts it and the paste replaces the selection. Nothing copied → `.boxEmpty` (the selection
 // is untouched, nothing was posted but ⌘C).
 //
+// P3-44 (owner tests 2026-11-16: Slack bold + @mention + emoji, Gmail bold, flattened to plain text): after the copy,
+// what the app put on the pasteboard is checked (`CopiedContent.isRich`: HTML with formatting, mentions, emoji images,
+// links, code, lists; RTF formatting; images, files). Rich → nothing is pasted: the clipboard goes back at once, the ⌘A
+// selection is dropped (Right arrow: the caret at the end of the box), and `.richContent` tells the caller whether the
+// copied box text *ends with* the run the user typed (`typedTail`, the remembered buffer's text), i.e. whether the caret
+// now sits right after it, so the caller may convert just that run by Backspace + typing; otherwise it only switches.
+// The decision reads the copied data in memory, for this one convert; never logged.
+//
 // Privacy: the snapshot, the copied box and the converted text live only in this flow; P3-40: nothing is kept after
 // it (no undo copy any more). Nothing here is logged or stored (B12).
 
@@ -49,6 +57,8 @@ import Foundation
 
     /// The most clipboard data Kytkin copies to put back (a large image or file list). Bigger → no clipboard convert.
     static let maxSnapshotBytes = 16 * 1024 * 1024
+    /// P3-44: the most copied data read to decide whether it is rich (more → rich, nothing pasted).
+    static let maxCopiedBytes = 4 * 1024 * 1024
 
     enum Source: Sendable, Equatable {
         /// ⌘A, ⌘C: the whole text box.
@@ -78,6 +88,10 @@ import Foundation
         case unsafeText
         /// P3-40: the copy is not the selection AX reported (`Conversion.mismatch`); the clipboard put back (beeps).
         case selectionMismatch
+        /// P3-44: the copy is rich (formatting, mentions, emoji images, links…): nothing pasted, the clipboard put back,
+        /// a ⌘A selection dropped (caret at the end of the box). `typedRunAtEnd`: the copied box text ends with the
+        /// caller's `typedTail` (so the caret is right after the typed run).
+        case richContent(typedRunAtEnd: Bool)
         /// ⌘C changed nothing, or copied nothing: an empty box, or an app that can't copy. The caller falls back.
         /// P3-40: for `.copiedSelection` the selection is still there (no ⌘A, no Right arrow was posted).
         case boxEmpty
@@ -122,7 +136,8 @@ import Foundation
 
     /// Runs steps 1–5. `focusIsSame`: the focused element is still the one the convert started on (P2-49 item 3: keys
     /// go to whatever has focus). `mayWrite`: the B3 claim, asked once before the first post.
-    func run(_ source: Source, convert: (String) -> Conversion, focusIsSame: () -> Bool,
+    /// P3-44: `typedTail`, the text the user typed last (the remembered buffer), for `.richContent(typedRunAtEnd:)`.
+    func run(_ source: Source, typedTail: String? = nil, convert: (String) -> Conversion, focusIsSame: () -> Bool,
              mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         let start = clock.nowNanos
         guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
@@ -166,6 +181,13 @@ import Foundation
             pasteboard.restore(snapshot)
             if collapsing && all { collapse() }
             return (result, nil)
+        }
+
+        // P3-44: never paste plain text over rich content (an unreadable copy counts as rich).
+        let copied = pasteboard.snapshot(maxBytes: Self.maxCopiedBytes)
+        if copied.map({ CopiedContent.isRich($0.items) }) ?? true {
+            let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
+            return stop(.richContent(typedRunAtEnd: atEnd))
         }
 
         let new: String
@@ -226,6 +248,21 @@ import Foundation
             // The app's copy landed after we gave up: undo it, so the user's clipboard is what it was.
             if pasteboard.changeCount != baseline { pasteboard.restore(pending.snapshot) }
         }
+    }
+
+    /// P3-44: the copied (plain) box text ends with the typed run, so the caret after ⌘A + Right arrow is right after
+    /// it. P3-44 QA: never for a run holding a colon: Slack turns a typed `:joy:` (or `:)`) into one emoji while the
+    /// plain-text copy still reads `:joy:`, so the copy would "end with" the run and the Backspaces (one per typed
+    /// character) would delete the emoji and the text before it.
+    nonisolated static func typedRunIsAtEnd(of text: String, typedTail: String?) -> Bool {
+        guard let tail = typedTail, !tail.isEmpty, !tail.contains(":") else { return false }
+        return endsWith(text.unicodeScalars, tail.unicodeScalars)
+    }
+
+    /// P3-44: `a` ends with `b`, scalar by scalar (no canonical equivalence: the key path counts the buffer's own text).
+    nonisolated static func endsWith(_ a: String.UnicodeScalarView, _ b: String.UnicodeScalarView) -> Bool {
+        let x = Array(a), y = Array(b)
+        return y.count <= x.count && Array(x[(x.count - y.count)...]) == y
     }
 
     /// Drops the ⌘A selection, caret at the end (best effort; nothing else is posted).

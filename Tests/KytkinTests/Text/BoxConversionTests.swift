@@ -223,4 +223,54 @@ final class BoxConversionTests: XCTestCase {
     func testTheNearestLetterDecidesEvenInAMostlyOtherLanguageBox() {
         XCTAssertEqual(converted(box("akuo vh nv שלום")), "akuo vh nv akuo")
     }
+
+    // MARK: - P3-44: mentions and shortcodes are atomic
+
+    private func converted(_ w: FieldWindow, atoms: [String]) -> String? {
+        guard case .convert(let p) = BoxConversion.plan(w, classify: layouts.runClass, atomicTexts: atoms, convert: {
+            side, g in self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
+        }) else { return nil }
+        var units = Array(w.text.utf16)
+        units.replaceSubrange(p.edit.offset..<(p.edit.offset + p.edit.length), with: Array(p.text.utf16))
+        return String(decoding: units, as: UTF16.self)
+    }
+
+    func testOwnersSlackBoxKeepsTheMentionAndTheShortcode() {
+        // P3-44 owner test, as the clipboard's plain text showed it: the mention's first word and the emoji's shortcode
+        // were converted (`@יורךקך`, `:חסט:`). Now only the typed line converts.
+        let w = box("שלום @Hillel Banai :joy:\nakuo vh")
+        XCTAssertEqual(converted(w, atoms: ["@Hillel Banai"]), "שלום @Hillel Banai :joy:\nשלום הי")
+        // Without the pill's text (no AX tree): the @word and the shortcode still stay; the pill's second word can't
+        // be told from typed text.
+        XCTAssertEqual(converted(w), "שלום @Hillel נשמשן :joy:\nשלום הי")
+    }
+
+    func testAMentionNeverDecidesTheDirection() {
+        // The caret right after the mention: the nearest letter outside it (Hebrew) decides, nothing English converts.
+        let w = box("שלום @akuo", caret: "שלום @akuo".utf16.count)
+        XCTAssertEqual(converted(w), "akuo @akuo")
+    }
+
+    func testShortcodes() {
+        XCTAssertEqual(converted(box("vh :smile: vh")), "הי :smile: הי")
+        XCTAssertEqual(converted(box("vh :+1::white_check_mark: vh")), "הי :+1::white_check_mark: הי")
+        XCTAssertEqual(converted(box("vh:joy:")), "הי:joy:", "a shortcode right after a word")
+        XCTAssertEqual(converted(box("vh :: vh")), "הי :: הי", "no letters: nothing to keep")
+        XCTAssertEqual(converted(box("vh :not closed")), "הי :מםא בךםדקג", "an unclosed colon is not a shortcode")
+    }
+
+    func testAPlainLatinWordStillConverts() {
+        XCTAssertEqual(converted(box("a@b vh")), "ש@נ הי", "@ inside a word is not a mention")
+        XCTAssertEqual(converted(box("@ vh")), "@ הי", "a lone @ is not a mention")
+    }
+
+    func testWebAddressesAreKept() {
+        XCTAssertEqual(converted(box("vh https://example.com vh")), "הי https://example.com הי")
+        XCTAssertEqual(converted(box("vh www.example.com")), "הי www.example.com")
+    }
+
+    func testAtomicTextsAreKeptWhereverTheyOccur() {
+        XCTAssertEqual(converted(box("Hillel Banai vh"), atoms: ["Hillel Banai"]), "Hillel Banai הי")
+        XCTAssertEqual(converted(box("vh"), atoms: ["x"]), "הי", "one-character atoms are ignored")
+    }
 }

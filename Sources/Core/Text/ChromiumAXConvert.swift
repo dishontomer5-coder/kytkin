@@ -36,6 +36,25 @@
 //   `.unavailable` (fall back). After at least one verified piece → `.partial` (each written piece was verified; the
 //   caller beeps). Typed keys that never showed, or a post that failed part way → `.failed` (state unknown, beep).
 //
+// P3-44 (owner test 2026-11-16, Slack: bold Hebrew + an @mention pill + 😂, then a line typed on EN; the box was pasted
+// as plain text by the clipboard path, so this path had stopped before typing). In the P3-42 fakes that is exactly the
+// Slack emoji drift: `AXValue` (and the caret read) leave the emoji out while an `AXSelectedTextRange` write counts it,
+// so every piece after the emoji selected text one emoji early, the read-back disagreed (`.selectionMismatch`) and
+// nothing was typed. Which of two shapes Slack really has is not proven on the owner's Mac (the probe had no emoji), so
+// both are handled and the DEBUG log (`ConvertTrace`, `Diagnostic`) says which one was seen:
+//   (A) reads in `AXValue` units, writes in page units (the fake's `setRangeDrifts`);
+//   (B) reads and writes in page units: the caret then reads *past* the end of `AXValue` (by the hidden units).
+// Fix, without trusting any offset: each piece's unique window is tried at a shift of `d` hidden units (the last piece's
+// shift first, then smaller ones, then larger ones up to `maxHiddenUnits`; pieces are written last to first, so an
+// earlier piece never has more hidden units before it). A shift is taken only when the app shows the selection and
+// `AXSelectedText` reads back exactly the unique window's text: a selection holding a hidden unit reads back shorter, and
+// a unique text can only sit at its own place, so a wrong shift is never typed over. (B) also lets the box read go on
+// with the caret past the end (taken as the end of `AXValue`). The caret goes back in the units the app takes: (B) the
+// raw caret read moved by the length changes; (A) the logical caret plus the shift of the last written piece before it.
+// Known limit (A): a hidden emoji *right* before the caret can't be seen, so the caret may land just before it.
+// P3-44 also passes the texts of mention pills / links the AX tree shows as their own elements (`inlineAtomTexts`) to the
+// plan, so `BoxConversion` keeps them whole, and records a `Diagnostic` (enums and counts, never text) for the DEBUG log.
+//
 // Privacy: the box text, the pieces and the converted text live only in `run` for this one convert, never logged or
 // stored (B12, CLAUDE.md). `AXValue` is read to convert and to verify Kytkin's own write, piece by piece.
 
@@ -54,6 +73,11 @@ import Foundation
     /// both are listed for Slack's composer, Translate's textarea and Gmail's compose in the probe). Native fields (the
     /// omnibox, the Find bar) have no DOM.
     nonisolated static let webContentAttributes: Set<String> = ["AXDOMIdentifier", "AXDOMClassList"]
+    /// P3-44: the most units the page may count that `AXValue` leaves out (Slack emoji) before a piece or the caret.
+    /// Bounds the shift search (≤ maxHiddenUnits + 1 tries per piece, each also inside the budget).
+    nonisolated static let maxHiddenUnits = 16
+    /// P3-44: the most inline elements looked at for mention pills (`inlineAtomTexts`).
+    nonisolated static let maxAtomNodes = 64
 
     struct Timing: Sendable, Equatable {
         /// Poll interval while waiting for the app to take a piece's keys.
@@ -75,10 +99,15 @@ import Foundation
         case selection
     }
 
-    /// What step 1 read. `text` is `AXValue`; `selection` is the AX selected range (a caret for `.box`).
+    /// What step 1 read. `text` is `AXValue`; `selection` is the AX selected range (a caret for `.box`), in `AXValue`
+    /// units (P3-44: a caret read past the end is taken as the end).
     struct Read: Sendable, Equatable {
         let text: String
         let selection: TextRange
+        /// P3-44: texts of inline elements that are mention pills or links (kept whole by the plan). Never logged.
+        var atoms: [String] = []
+        /// P3-44: the selected range exactly as the app reported it (put back when nothing was typed).
+        var rawSelection: TextRange?
     }
 
     /// The caller's conversion of a `Read`.
@@ -114,8 +143,10 @@ import Foundation
         /// Length, range or text checks disagree (step 1), or a piece isn't typeable.
         case inconsistent
         case tooManyPieces
-        /// Setting the selection failed, or the read-back is not the expected piece (Slack's emoji shift).
+        /// Setting the selection failed, or the read-back is not the expected piece at any shift (Slack's emoji shift).
         case selectionMismatch
+        /// P3-44: the app never showed the range set (within `selectSettleNanos`): nothing judged, nothing typed.
+        case selectionNotShown
         /// The budget ran out before a piece.
         case timedOut
         /// A key event couldn't be posted.
@@ -142,6 +173,28 @@ import Foundation
         case failed(written: Int, Stop)
     }
 
+    /// P3-44: what the last `run` saw, for the DEBUG log (`ConvertTrace`). Enums and counts only, never text.
+    struct Diagnostic: Sendable, Equatable {
+        /// The step-1 check that failed, if one did.
+        enum ReadCheck: String, Sendable, Equatable {
+            case notWebContent, valueRead, boxSize, numberOfCharacters, rangeRead, rangeBounds, selectedTextRead,
+                 scalarBoundary, caretSelectedText, selectionText, prefix, atomRead
+        }
+        /// Which unit space the app's reads turned out to use (header: A = value, B = page), once a shift showed it.
+        enum ReadSpace: String, Sendable, Equatable { case unknown, value, page }
+        var readCheck: ReadCheck?
+        /// UTF-16 units the caret read past the end of `AXValue` (shape B), else 0.
+        var caretPastValue = 0
+        var pieces = 0
+        var atoms = 0
+        /// The largest shift a written piece was found at.
+        var maxShift = 0
+        /// Selection tries that showed another text (a wrong shift).
+        var otherTextTries = 0
+        var readSpace: ReadSpace = .unknown
+    }
+    private(set) var lastDiagnostic = Diagnostic()
+
     private let focusProvider: any FocusedElementProviding
     private let poster: any KeyEventPosting
     private let clock: any Clock
@@ -164,6 +217,7 @@ import Foundation
     func run(_ source: Source, expected: any FocusedElementIdentity, plan: (Read) -> Planned,
              mayWrite: () -> Bool) async -> Result {
         timedOut = false
+        lastDiagnostic = Diagnostic()
         let start = clock.nowNanos
         guard let el = focusedElement(), el.isSameElement(as: expected) else { return .unavailable(.focusChanged) }
         let read: Read
@@ -171,6 +225,7 @@ import Foundation
         case .failure(let stop): return .unavailable(stop)
         case .success(let r): read = r
         }
+        lastDiagnostic.atoms = read.atoms.count
         let changes: [TextChange]
         switch plan(read) {
         case .nothing: return .nothingToConvert
@@ -180,6 +235,8 @@ import Foundation
         }
         // The caret (or the selection's end) never falls inside a piece, so its new place is known exactly.
         let anchor = source == .box ? read.selection.location : read.selection.end
+        let raw = read.rawSelection ?? read.selection
+        let rawAnchor = source == .box ? raw.location : raw.end
         var pieces = Self.pieces(changes, in: read.text, splittingAt: anchor)
         if pieces.count > Self.maxPieces { pieces = Self.joinedAcrossSpaces(pieces, in: read.text, splittingAt: anchor) }
         guard !pieces.isEmpty else { return .nothingToConvert }
@@ -187,20 +244,41 @@ import Foundation
         guard Self.isValid(pieces, in: read.text, source: source, selection: read.selection) else {
             return .unavailable(.inconsistent)
         }
+        lastDiagnostic.pieces = pieces.count
         guard mayWrite() else { return .abandoned }
 
         var current = Array(read.text.utf16)
         var written: [Piece] = []
+        /// P3-44: the shift each written piece was found at (same order as `written`).
+        var shifts: [Int] = []
+        /// P3-44: the unit space the app reads in (header: A = value, B = page). A caret read past the end is B.
+        var space: Diagnostic.ReadSpace = rawAnchor != anchor ? .page : .unknown
+        /// Where the caret goes at the end (or after a stop), in the units the app takes for writes.
+        func caretTarget() -> Int {
+            let moved = Self.caret(after: written, anchor: anchor)
+            if space == .value {
+                // (A): page units = value units + the hidden units before; the last written piece before the caret
+                // gives the best lower bound.
+                let before = zip(written, shifts).filter { $0.0.end <= anchor }.map(\.1).max() ?? 0
+                return moved + before
+            }
+            return moved + (rawAnchor - anchor)
+        }
         /// Put the caret back (moved by the written pieces before it) and say how the flow ended.
         func stop(_ why: Stop) -> Result {
+            lastDiagnostic.readSpace = space
             if written.isEmpty {
-                if !timedOut { _ = el.setRange(read.selection, for: .selectedTextRange) }
+                if !timedOut { _ = el.setRange(raw, for: .selectedTextRange) }
                 return .unavailable(why)
             }
-            if !timedOut { placeCaret(el, at: Self.caret(after: written, anchor: anchor)) }
+            if !timedOut { placeCaret(el, at: caretTarget()) }
             return .partial(written: written.count, why)
         }
 
+        // P3-44: the most hidden units before the next piece (pieces go last to first, so it only shrinks), and the
+        // shift to try first (shape B: the caret's own excess).
+        var bound = Self.maxHiddenUnits
+        var hint = min(rawAnchor - anchor, bound)
         for piece in pieces.reversed() {   // bounded: ≤ maxPieces
             if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
             guard let now = focusedElement(), now.isSameElement(as: el) else { return stop(.focusChanged) }
@@ -211,15 +289,14 @@ import Foundation
             // and require that read back: an agreeing unique text can only sit at its own place, so the offsets map
             // exactly there. No unique window (the box repeats itself) → nothing more is typed.
             guard let window = Self.anchorWindow(for: piece.range, in: current) else { return stop(.selectionMismatch) }
-            if window != piece.range {
-                let windowText = String(decoding: current[window.location..<window.end], as: UTF16.self)
-                guard case .success = track(el.setRange(window, for: .selectedTextRange)),
-                      await selects(el, window, windowText) else { return stop(.selectionMismatch) }
-                if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
+            let windowText = String(decoding: current[window.location..<window.end], as: UTF16.self)
+            // P3-44: where the window and the piece sit in the page's units (bounded tries; see `locate`).
+            let d: Int
+            switch await locate(el, piece: piece, window: window, windowText: windowText, hint: hint, bound: bound,
+                                start: start) {
+            case .found(let shift): d = shift
+            case .stop(let why): return stop(why)
             }
-            // Select the piece and check that the app selected exactly the expected text (offset drift, Slack emoji).
-            guard case .success = track(el.setRange(piece.range, for: .selectedTextRange)),
-                  await selects(el, piece.range, piece.original) else { return stop(.selectionMismatch) }
             // P3-42 QA: the waits above can use up the budget; keys are posted only inside it, so they are in the event
             // stream before the hold-back flush (deadline + hard cap) can replay the user's held keys onto a selection.
             if clock.nowNanos &- start > timing.budgetNanos { return stop(.timedOut) }
@@ -228,19 +305,27 @@ import Foundation
             }
             for (i, e) in events.enumerated() where !poster.post(e) {
                 if i == 0 { return stop(.postFailed) }
+                lastDiagnostic.readSpace = space
                 return .failed(written: written.count, .postFailed)
             }
             current.replaceSubrange(piece.location..<piece.end, with: Array(piece.replacement.utf16))
             let caretAfterPiece = piece.location + piece.replacement.utf16.count
-            guard await settled(el, expected: current, caret: caretAfterPiece) else {
+            guard let seen = await settled(el, expected: current, caret: caretAfterPiece, shift: d) else {
                 // The keys may still land later: move nothing (a caret set now could put them elsewhere).
+                lastDiagnostic.readSpace = space
                 return .failed(written: written.count, .notSettled)
             }
+            if d > 0, space == .unknown { space = seen }
             written.append(piece)
+            shifts.append(d)
+            lastDiagnostic.maxShift = max(lastDiagnostic.maxShift, d)
+            hint = d
+            bound = d
         }
 
         // Step 4: the caret to its logical place, then the whole box once more.
-        placeCaret(el, at: Self.caret(after: written, anchor: anchor))
+        lastDiagnostic.readSpace = space
+        placeCaret(el, at: caretTarget())
         guard !timedOut, case .success(let final) = track(el.string(.value)),
               ReplacementExecutor.readsBackAs(final, String(decoding: current, as: UTF16.self)) else {
             return .failed(written: written.count, .verifyFailed)
@@ -248,85 +333,236 @@ import Foundation
         return .converted(pieces: written.count)
     }
 
+    /// P3-44: how `locate` ended.
+    private enum Located {
+        case found(Int)
+        case stop(Stop)
+    }
+
+    /// P3-44: finds the page offset of `piece`, without trusting any offset. For each start shift `d` (`shiftCandidates`)
+    /// the unique `window` is selected at `window.location + d`:
+    ///   - its text reads back exactly → no hidden unit in it, the piece sits at the same shift (selected and read back
+    ///     on its own when it is not the window);
+    ///   - it reads back as a shorter *prefix* of the window's text → `k` hidden units inside it: the selection is
+    ///     widened by `k` (still `d + k ≤ bound`) and must then read back exactly the window's text; the piece, whose
+    ///     text must occur only once in the window, is then found inside that range (shift `d … d + k`) by an exact
+    ///     read-back;
+    ///   - anything else → the next `d`.
+    /// An exact unique text can only sit at its own place, and a piece-length selection whose text is the piece's has
+    /// no hidden unit in it, so a wrong place is never typed over. Every try is inside the budget.
+    private func locate(_ el: any AXTextElement, piece: Piece, window: TextRange, windowText: String, hint: Int,
+                        bound: Int, start: UInt64) async -> Located {
+        let windowUnits = Array(windowText.utf16)
+        for d in Self.shiftCandidates(hint: hint, upper: bound) {   // bounded: ≤ bound + 1
+            if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
+            var k = 0
+            var outcome = await select(el, window, shift: d, windowText)
+            // Hidden units inside the window: widen it (bounded: k only grows, d + k ≤ bound).
+            while case .otherText(let got) = outcome, d + k < bound {
+                // `got` is the visible text of a selection `window.length + k` long: a proper prefix of the window's
+                // text = the start is right and hidden units ate the rest; widen by the visible units still missing.
+                let g = Array(got.utf16)
+                guard !g.isEmpty, g.count < windowUnits.count, windowUnits.starts(with: g) else { break }
+                let more = k + windowUnits.count - g.count
+                guard d + more <= bound else { break }
+                k = more
+                if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
+                outcome = await select(el, TextRange(location: window.location, length: window.length + k), shift: d,
+                                       windowText)
+            }
+            switch outcome {
+            case .notShown: return .stop(timedOut ? .readFailed : .selectionNotShown)
+            case .otherText:
+                lastDiagnostic.otherTextTries += 1
+                if timedOut { return .stop(.readFailed) }
+                continue
+            case .matched: break
+            }
+            if window == piece.range, k == 0 { return .found(d) }
+            // The piece inside the window: at shift d (k == 0), or somewhere in d … d + k when hidden units are inside
+            // (then its text must occur once in the window, so the exact read-back can only be that occurrence).
+            let inner = k == 0 ? [d] : Array(d...(d + k))
+            if k > 0 {
+                let p = Array(piece.original.utf16)
+                var hits = 0
+                var i = 0
+                while i + p.count <= windowUnits.count {   // bounded by the window's length
+                    if windowUnits[i..<(i + p.count)].elementsEqual(p) { hits += 1 }
+                    i += 1
+                }
+                // The piece's text more than once in the window: its place can't be told; try the next shift.
+                guard hits == 1 else { continue }
+            }
+            for shift in inner {
+                if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
+                switch await select(el, piece.range, shift: shift, piece.original) {
+                case .matched: return .found(shift)
+                case .notShown: return .stop(timedOut ? .readFailed : .selectionNotShown)
+                case .otherText:
+                    lastDiagnostic.otherTextTries += 1
+                    if timedOut { return .stop(.readFailed) }
+                }
+            }
+            // Not found inside this window placement: the next shift.
+        }
+        return .stop(.selectionMismatch)
+    }
+
+    /// P3-44: the shifts to try for one piece: `hint` first, then smaller ones down to 0, then larger ones up to `upper`.
+    nonisolated static func shiftCandidates(hint: Int, upper: Int) -> [Int] {
+        let u = max(0, upper)
+        let h = max(0, min(hint, u))
+        return [h] + Array(stride(from: h - 1, through: 0, by: -1)) + Array(stride(from: h + 1, through: u, by: 1))
+    }
+
     // MARK: - Step 1
 
     private func readBox(_ el: any AXTextElement, _ source: Source) -> Swift.Result<Read, Stop> {
+        func fail(_ check: Diagnostic.ReadCheck, _ stop: Stop) -> Swift.Result<Read, Stop> {
+            lastDiagnostic.readCheck = check
+            return .failure(stop)
+        }
         guard case .success(let names) = track(el.attributeNames()),
               names.contains(where: Self.webContentAttributes.contains) else {
-            return .failure(timedOut ? .readFailed : .notWebContent)
+            return fail(.notWebContent, timedOut ? .readFailed : .notWebContent)
         }
-        guard case .success(let value) = track(el.string(.value)) else { return .failure(.readFailed) }
+        guard case .success(let value) = track(el.string(.value)) else { return fail(.valueRead, .readFailed) }
         let units = Array(value.utf16)
         let n = units.count
-        guard n > 0, n <= ReplacementPlanner.maxFieldReadChars else { return .failure(.boxSize) }
+        guard n > 0, n <= ReplacementPlanner.maxFieldReadChars else { return fail(.boxSize, .boxSize) }
         guard case .success(n) = track(el.integer(.numberOfCharacters)) else {
-            return .failure(timedOut ? .readFailed : .inconsistent)
+            return fail(.numberOfCharacters, timedOut ? .readFailed : .inconsistent)
         }
-        guard case .success(let sel) = track(el.range(.selectedTextRange)) else { return .failure(.readFailed) }
+        guard case .success(let raw) = track(el.range(.selectedTextRange)) else { return fail(.rangeRead, .readFailed) }
+        var sel = raw
+        // P3-44 (shape B): a caret read past the end of `AXValue` by no more than `maxHiddenUnits` = the page counts
+        // units the value leaves out (Slack's emoji); taken as the end of the value, and put back as read.
+        if source == .box, raw.isCaret, raw.location > n, raw.location - n <= Self.maxHiddenUnits {
+            sel = TextRange(location: n, length: 0)
+            lastDiagnostic.caretPastValue = raw.location - n
+        }
         guard sel.location >= 0, sel.length >= 0, sel.end <= n,
-              source == .box ? sel.isCaret : !sel.isCaret else { return .failure(.inconsistent) }
-        guard case .success(let selected) = track(el.string(.selectedText)) else { return .failure(.readFailed) }
+              source == .box ? sel.isCaret : !sel.isCaret else { return fail(.rangeBounds, .inconsistent) }
+        guard case .success(let selected) = track(el.string(.selectedText)) else {
+            return fail(.selectedTextRead, .readFailed)
+        }
         let slice = Array(units[sel.location..<sel.end])
         let sliceText = String(decoding: slice, as: UTF16.self)
         // Scalar boundaries: a range splitting a surrogate pair decodes to U+FFFD.
-        guard Array(sliceText.utf16) == slice else { return .failure(.inconsistent) }
+        guard Array(sliceText.utf16) == slice else { return fail(.scalarBoundary, .inconsistent) }
         if source == .box {
-            guard selected.isEmpty else { return .failure(.inconsistent) }
+            guard selected.isEmpty else { return fail(.caretSelectedText, .inconsistent) }
         } else if !selected.unicodeScalars.elementsEqual(sliceText.unicodeScalars) {
             // P3-40: Chromium's AXSelectedText can drop the line breaks between paragraphs. Then the visible characters
             // must agree and the value's text (which keeps its LF) is used; every piece is checked again below.
             guard sliceText.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, sliceText) else {
-                return .failure(.inconsistent)
+                return fail(.selectionText, .inconsistent)
             }
         }
         // The text up to the caret (or the selection's end), where the app answers it (Slack fails it for the whole box,
         // -25212, but answers before the caret). An answer that disagrees means the offsets can't be trusted.
-        if sel.end > 0 {
+        // P3-44: not with a caret read past the end (shape B: the app's range units are not the value's).
+        if sel.end > 0, sel == raw {
             switch track(el.string(in: TextRange(location: 0, length: sel.end))) {
             case .success(let prefix):
                 let expected = String(decoding: units[..<sel.end], as: UTF16.self)
-                if !prefix.isEmpty, !ReplacementExecutor.readsBackAs(prefix, expected) { return .failure(.inconsistent) }
+                if !prefix.isEmpty, !ReplacementExecutor.readsBackAs(prefix, expected) {
+                    return fail(.prefix, .inconsistent)
+                }
             case .failure:
-                if timedOut { return .failure(.readFailed) }
+                if timedOut { return fail(.prefix, .readFailed) }
             }
         }
-        return .success(Read(text: value, selection: sel))
+        // P3-44: mention pills / links the AX tree shows as their own elements, for the plan to keep whole. Best
+        // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
+        var atoms: [String] = []
+        switch track(el.inlineAtomTexts(maxNodes: Self.maxAtomNodes)) {
+        case .success(let a): atoms = a
+        case .failure: if timedOut { return fail(.atomRead, .readFailed) }
+        }
+        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
     }
 
     // MARK: - Step 3 helpers
 
-    /// After the range write: polls (bounded) until the app reports `range` selected (Chromium applies a selection in
-    /// the renderer and updates the AX tree asynchronously, research §5 step 3), then requires `AXSelectedText` to be
-    /// exactly `original` (P3-42 QA: or, for a window holding a line break, the same visible text: P3-40, Chromium can
-    /// drop line breaks from it). The right range with other text = offset drift: false at once. The first check is
-    /// immediate.
-    private func selects(_ el: any AXTextElement, _ range: TextRange, _ original: String) async -> Bool {
-        let polls = max(1, Int(timing.selectSettleNanos / max(timing.pollNanos, 1)))
-        for i in 0...polls {
-            if case .success(range) = track(el.range(.selectedTextRange)) {
-                guard case .success(let selected) = track(el.string(.selectedText)) else { return false }
-                if selected.unicodeScalars.elementsEqual(original.unicodeScalars) { return true }
-                return original.contains(where: \.isNewline) && ConvertController.sameVisibleText(selected, original)
-            }
-            if timedOut { return false }
-            if i < polls { await sleep(timing.pollNanos) }
-        }
-        return false
+    /// P3-44: what one selection try showed.
+    enum SelectOutcome: Sendable, Equatable {
+        /// The app showed the selection and `AXSelectedText` is exactly the expected text.
+        case matched
+        /// The app showed a selection whose text is something else (a wrong shift / drift; the text read back, for
+        /// `locate` only, dropped at once).
+        case otherText(String)
+        /// The app never showed a new selection in time (or a read failed): nothing to judge.
+        case notShown
     }
 
-    /// Polls (bounded) until `AXValue` reads as `expected` and the caret is at `caret`. The first check is immediate.
-    private func settled(_ el: any AXTextElement, expected: [UInt16], caret: Int) async -> Bool {
+    /// Sets `range` moved by `shift` page units, then polls (bounded) until the app shows the selection (Chromium applies
+    /// it in the renderer and updates the AX tree asynchronously, research §5 step 3) and judges `AXSelectedText`: it
+    /// must be exactly `original` (P3-42 QA: or, for a window holding a line break, the same visible text: P3-40,
+    /// Chromium can drop line breaks from it). P3-44: "shows" = any range that differs from the one read just before the
+    /// write (shape A reports in value units); it is then judged by the text alone. P3-44 QA: when the selection
+    /// before already reads like the target (or can't be read), it is first moved to a caret, so a stale read of the old
+    /// AX tree can never pass for the new selection. The first check is immediate.
+    private func select(_ el: any AXTextElement, _ range: TextRange, shift: Int, _ original: String) async
+        -> SelectOutcome {
+        let target = TextRange(location: range.location + shift, length: range.length)
+        var before: TextRange? = if case .success(let r) = track(el.range(.selectedTextRange)) { r } else { nil }
+        if timedOut { return .notShown }
+        let polls = max(1, Int(timing.selectSettleNanos / max(timing.pollNanos, 1)))
+        // P3-44 QA: a read of the old AX tree (Chromium applies a range write asynchronously; the range *and* the
+        // selected text of the old tree) must never pass for the new selection. When the selection now reads as the
+        // new one would (shape A reports a widened window holding hidden units as the bare piece range), or can't be
+        // read, it is first moved to a caret at the target: a caret read is told apart from any (non-empty) target.
+        if before == nil || before == target || before == range {
+            let caret = TextRange(location: target.location, length: 0)
+            guard case .success = track(el.setRange(caret, for: .selectedTextRange)) else {
+                return timedOut ? .notShown : .otherText("")
+            }
+            before = nil
+            for i in 0...polls {
+                if case .success(let r) = track(el.range(.selectedTextRange)), r.isCaret { before = r; break }
+                if timedOut { return .notShown }
+                if i < polls { await sleep(timing.pollNanos) }
+            }
+            guard before != nil else { return .notShown }
+        }
+        guard case .success = track(el.setRange(target, for: .selectedTextRange)) else {
+            return timedOut ? .notShown : .otherText("")   // e.g. a shifted range past the page's end
+        }
+        for i in 0...polls {
+            // Shown = any range other than the one read just before the write (shape A reports the new selection in
+            // value units, which may be neither `target` nor `range`); `before` is never a twin of the target here.
+            if case .success(let r) = track(el.range(.selectedTextRange)), r != before {
+                guard case .success(let selected) = track(el.string(.selectedText)) else { return .notShown }
+                if selected.unicodeScalars.elementsEqual(original.unicodeScalars) { return .matched }
+                if original.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, original) {
+                    return .matched
+                }
+                return .otherText(selected)
+            }
+            if timedOut { return .notShown }
+            if i < polls { await sleep(timing.pollNanos) }
+        }
+        return .notShown
+    }
+
+    /// Polls (bounded) until `AXValue` reads as `expected` and the caret is after the piece: at `caret` (value units,
+    /// shape A) or `caret + shift` (page units, shape B). Returns which one it saw, nil if it never settled. The first
+    /// check is immediate.
+    private func settled(_ el: any AXTextElement, expected: [UInt16], caret: Int, shift: Int) async
+        -> Diagnostic.ReadSpace? {
         let want = String(decoding: expected, as: UTF16.self)
         let polls = max(1, Int(timing.settleNanos / max(timing.pollNanos, 1)))
         for i in 0...polls {
             if case .success(let v) = track(el.string(.value)), ReplacementExecutor.readsBackAs(v, want),
-               case .success(let r) = track(el.range(.selectedTextRange)), r == TextRange(location: caret, length: 0) {
-                return true
+               case .success(let r) = track(el.range(.selectedTextRange)), r.isCaret {
+                if r.location == caret { return shift == 0 ? .unknown : .value }
+                if r.location == caret + shift { return .page }
             }
-            if timedOut { return false }
+            if timedOut { return nil }
             if i < polls { await sleep(timing.pollNanos) }
         }
-        return false
+        return nil
     }
 
     /// Best effort: the text is verified separately, so a caret the app won't move doesn't fail the convert.

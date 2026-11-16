@@ -4,6 +4,7 @@
 // Not compiled into the test target: tests can't reach real apps.
 
 import ApplicationServices
+import Dispatch
 
 final class AXUIElementTextElement: AXTextElement {
     private let element: AXUIElement
@@ -61,6 +62,59 @@ final class AXUIElementTextElement: AXTextElement {
         let error = AXUIElementCopyAttributeNames(element, &names)
         guard error == .success else { return .failure(AXAccessError(error)) }
         return .success((names as? [String]) ?? [])
+    }
+
+    /// P3-44: mention pills and links inside the box (breadth-first over `AXChildren`, ≤ `maxNodes` elements, ≤ 4
+    /// levels; each element gets the same messaging timeout as this one; P3-44 QA: ≤ 300 ms in all, else `.timeout`). Kept: an element whose role is `AXLink`, or
+    /// whose own text (`AXValue`, else `AXTitle`, else `AXDescription`) starts with `@` or `#`; 2–64 UTF-16 units, no line
+    /// break. Never logs; the texts go straight to the convert's plan.
+    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> {
+        let timeout: Float = 0.25   // ReplacementExecutor.axTimeout, the per-element timeout the provider sets (B5)
+        var queue: [(AXUIElement, Int)] = []
+        func enqueueChildren(of e: AXUIElement, depth: Int) -> AXError {
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &value)
+            guard error == .success, let list = value as? [AXUIElement] else {
+                return error == .cannotComplete ? error : .success
+            }
+            for child in list where queue.count < maxNodes {
+                if timeout > 0 { AXUIElementSetMessagingTimeout(child, timeout) }
+                queue.append((child, depth))
+            }
+            return .success
+        }
+        func text(of e: AXUIElement, _ attribute: String) -> (String?, AXError) {
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(e, attribute as CFString, &value)
+            guard error == .success, let value, CFGetTypeID(value) == CFStringGetTypeID() else { return (nil, error) }
+            return (value as! String, .success)
+        }
+        if enqueueChildren(of: element, depth: 1) == .cannotComplete { return .failure(.timeout) }
+        var atoms: [String] = []
+        var i = 0
+        // P3-44 QA: a wall-clock cap too (each call may take up to the 0.25 s timeout without failing: ≤ 5 calls × 64
+        // elements could hold the AX thread for many seconds). Past it the walk counts as a timeout: the convert stops
+        // rather than run without the pills it may have missed.
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ 300_000_000
+        while i < queue.count {   // bounded: the queue never grows past maxNodes
+            if DispatchTime.now().uptimeNanoseconds > deadline { return .failure(.timeout) }
+            let (e, depth) = queue[i]
+            i += 1
+            let (role, roleError) = text(of: e, kAXRoleAttribute)
+            if roleError == .cannotComplete { return .failure(.timeout) }
+            var own: String?
+            for attribute in [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute] {
+                let (t, error) = text(of: e, attribute)
+                if error == .cannotComplete { return .failure(.timeout) }
+                if let t, !t.isEmpty { own = t; break }
+            }
+            if let own, (2...64).contains(own.utf16.count), !own.contains(where: \.isNewline),
+               role == "AXLink" || own.hasPrefix("@") || own.hasPrefix("#") {
+                atoms.append(own)
+            }
+            if depth < 4, enqueueChildren(of: e, depth: depth + 1) == .cannotComplete { return .failure(.timeout) }
+        }
+        return .success(atoms)
     }
 
     // MARK: Writing

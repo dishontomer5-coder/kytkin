@@ -36,6 +36,8 @@ import Foundation
     var pasteDelayNanos: UInt64? = 30_000_000
     /// ⌘C copies this instead of the box (e.g. "" for an app that copies nothing).
     var copiesInstead: String?
+    /// P3-44: what else ⌘C puts in the copied item next to the plain text (e.g. `public.html` from Slack / Chrome).
+    var copiedExtras: [PasteboardEntry] = []
     private(set) var selectedAll = false
     /// P3-40: the user's selection in the box (its text, found in `box`), nil = a caret.
     var userSelection: String?
@@ -132,7 +134,7 @@ import Foundation
         if let due = copyDue, now >= due {
             copyDue = nil
             let copied = copiesInstead ?? (selectedAll ? box : userSelection ?? box)
-            items = [[PasteboardEntry(type: Self.plain, data: Data(copied.utf8))]]
+            items = [[PasteboardEntry(type: Self.plain, data: Data(copied.utf8))] + copiedExtras]
             count += 1
         }
         if let due = pasteDue, now >= due {
@@ -150,6 +152,13 @@ import Foundation
             userSelection = nil
             pastes += 1
         }
+    }
+}
+
+extension PasteboardEntry {
+    /// P3-44: an HTML entry, as Chromium writes it for a contenteditable copy.
+    static func html(_ s: String) -> PasteboardEntry {
+        PasteboardEntry(type: "public.html", data: Data(("<meta charset='utf-8'>" + s).utf8))
     }
 }
 

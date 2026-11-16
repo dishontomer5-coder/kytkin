@@ -120,17 +120,67 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(f.text, "שלום 😀 שלום", "the emoji is untouched")
     }
 
-    @TextActor func testEmojiOffsetDriftFailsTheReadBackAndTypesNothing() async {
-        // Slack: offsets after the emoji land one emoji early when the range is set: the selected text read back is not
-        // the expected piece, so nothing is typed, the caret goes back, and the caller falls back (the clipboard).
+    @TextActor func testEmojiOffsetDriftIsFoundByReadBackAndConverts() async {
+        // Slack: offsets after the emoji land one emoji early when the range is set (P3-42 fell back here, P3-44 owner
+        // test). P3-44: the unique window "  akuo" reads back short ("  ak", the emoji ate two units), so it is widened
+        // by two, then reads back exactly; the piece is found inside it two units on, by an exact read-back. The emoji
+        // stays, both words convert, the caret ends at the very end (after the emoji's units are counted).
         let f = field("akuo 😀 akuo")
         f.hidden = 5..<7
         f.setRangeDrifts = true
         let result = await run(f)
-        XCTAssertEqual(result, .unavailable(.selectionMismatch))
-        XCTAssertTrue(poster.events.isEmpty, "nothing typed")
-        XCTAssertEqual(f.text, "akuo 😀 akuo")
-        XCTAssertEqual(f.rangeWrites.last, TextRange(location: 10, length: 0), "the caret is put back")
+        XCTAssertEqual(result, .converted(pieces: 2))
+        XCTAssertEqual(f.text, "שלום 😀 שלום")
+        XCTAssertEqual(poster.typed, "שלוםשלום")
+        XCTAssertEqual(f.rangeWrites.last, TextRange(location: 12, length: 0), "caret at the page's end")
+    }
+
+    @TextActor func testEmojiDriftWithAPageUnitCaretConverts() async {
+        // P3-44 shape B: the app reads *and* writes page units, so the caret at the end reads past the end of AXValue
+        // (by the emoji's two units). The read goes on (caret = the value's end), the shift search starts at 2.
+        let f = field("vh 😀 vh vh")
+        f.hidden = 3..<5
+        f.setRangeDrifts = true
+        f.readsInPageUnits = true
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, plan: { self.boxPlan($0) }, mayWrite: { true })
+        XCTAssertEqual(result, .converted(pieces: 3))
+        XCTAssertEqual(f.text, "הי 😀 הי הי", "every vh once, the emoji kept")
+        XCTAssertEqual(ax.lastDiagnostic.caretPastValue, 2)
+        XCTAssertEqual(ax.lastDiagnostic.readSpace, .page)
+        XCTAssertEqual(f.rangeWrites.last, TextRange(location: 11, length: 0), "caret back at the end, page units")
+    }
+
+    @TextActor func testOwnersSlackBoxBoldMentionEmojiTwoLines() async {
+        // P3-44 owner test: line 1 bold "שלום" + mention pill "@Hillel Banai" (AX shows it as its own element) + 😂
+        // (missing from AXValue, drifting the range writes); line 2 "akuo vh" typed on EN. Only line 2 converts; the
+        // bold, the mention and the emoji stay; nothing is typed into line 1.
+        let f = field("שלום @Hillel Banai 😂\nakuo vh", bold: 0..<4)
+        f.hidden = 19..<21
+        f.setRangeDrifts = true
+        f.inlineAtoms = ["@Hillel Banai"]
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, plan: { read in
+            let w = FieldWindow(text: read.text, location: 0, caret: read.selection.location, reachesFieldStart: true,
+                                reachesFieldEnd: true)
+            guard case .convert(let p) = BoxConversion.plan(w, classify: self.layouts.runClass,
+                                                             atomicTexts: read.atoms, convert: { side, g in
+                self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
+            }) else { return .nothing }
+            return .changes(p.changes)
+        }, mayWrite: { true })
+        XCTAssertEqual(result, .converted(pieces: 2))
+        XCTAssertEqual(f.text, "שלום @Hillel Banai 😂\nשלום הי")
+        XCTAssertEqual(f.boldText, "שלום")
+        XCTAssertEqual(poster.typed, "הישלום", "only line 2's two words, last first")
+        XCTAssertEqual(ax.lastDiagnostic.atoms, 1)
+        XCTAssertEqual(ax.lastDiagnostic.maxShift, 2)
+    }
+
+    @TextActor func testShiftCandidates() async {
+        XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 2, upper: 4), [2, 1, 0, 3, 4])
+        XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 0, upper: 0), [0])
+        XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 9, upper: 3), [3, 2, 1, 0])
     }
 
     @TextActor func testPiecesBeforeTheEmojiAreUnaffectedByTheDrift() async {
@@ -296,11 +346,30 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(f.text, "שלום שלום")
     }
 
+    @TextActor func testStaleTreeAfterAWidenedWindowNeverTypesOverTheEmoji() async {
+        // P3-44 QA: shape A (value-unit reads, drifted writes), the emoji right before the only piece. The widened window
+        // (emoji + "akuo") reads back as the value range (2, 4) = the piece's own range. The next try selects the piece
+        // at shift 0 (DOM: emoji + "ak"); Chromium's AX tree is still the old one for a read, so the range *and* the text
+        // still say (2, 4) / "akuo". Accepting that stale read typed over the emoji. Now the selection is first moved
+        // to a caret, so a stale read can't look like the new selection: the emoji survives and "akuo" converts.
+        let f = field("x 😀akuo")
+        f.hidden = 2..<4
+        f.setRangeDrifts = true
+        f.staleRangeReadsAfterSet = 1
+        f.staleSelectedTextToo = true
+        let result = await sut(SwitchableFocusProvider(f)).run(.box, expected: f, plan: { _ in
+            .changes([TextChange(offset: 2, length: 4, text: "שלום")])
+        }, mayWrite: { true })
+        XCTAssertTrue(f.text.contains("😀"), "the emoji is never typed over")
+        XCTAssertEqual(result, .converted(pieces: 1))
+        XCTAssertEqual(f.text, "x 😀שלום")
+    }
+
     @TextActor func testASelectionThatNeverShowsTypesNothing() async {
         let f = field("akuo")
         f.staleRangeReadsAfterSet = 10_000
         let r = await run(f)
-        XCTAssertEqual(r, .unavailable(.selectionMismatch))
+        XCTAssertEqual(r, .unavailable(.selectionNotShown), "P3-44: told apart from a mismatch for the DEBUG log")
         XCTAssertTrue(poster.events.isEmpty)
     }
 
@@ -398,10 +467,11 @@ final class ChromiumAXConvertTests: XCTestCase {
 
     // MARK: - P3-42 QA: a drifted selection on another occurrence of the same text
 
-    @TextActor func testDriftOntoAnotherOccurrenceOfTheSameTextTypesNothing() async {
+    @TextActor func testDriftOntoAnotherOccurrenceOfTheSameTextConvertsTheRightOne() async {
         // P3-42 QA: Slack's emoji shifts every offset by two units, and the range reads back drifted the same way, so the
         // range "agrees". "a a a" repeats with that period: the piece (the last "a") selects the middle "a", whose text
-        // agrees too. The unique window around it ("a a a", the whole box) reads back as "a a": nothing is typed.
+        // agrees too. The unique window around it ("a a a", the whole box) reads back as "a a", so the middle "a" is
+        // never typed over. P3-44: the shift search then finds the window two units on, and the *last* "a" converts.
         let f = field("😀a a a")
         f.hidden = 0..<2
         f.setRangeDrifts = true
@@ -409,9 +479,8 @@ final class ChromiumAXConvertTests: XCTestCase {
         let result = await sut(SwitchableFocusProvider(f)).run(.box, expected: f, plan: { _ in
             .changes([TextChange(offset: 4, length: 1, text: "ש")])
         }, mayWrite: { true })
-        XCTAssertEqual(result, .unavailable(.selectionMismatch))
-        XCTAssertTrue(poster.events.isEmpty, "no key typed over the wrong a")
-        XCTAssertEqual(f.text, "😀a a a")
+        XCTAssertEqual(result, .converted(pieces: 1))
+        XCTAssertEqual(f.text, "😀a a ש", "the last a, never the middle one")
     }
 
     @TextActor func testRepeatedWordWithoutDriftStillConvertsThroughItsWindow() async {

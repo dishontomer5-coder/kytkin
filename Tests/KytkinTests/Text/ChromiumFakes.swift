@@ -42,7 +42,16 @@ final class FakeChromiumField: AXTextElement {
     /// report the old selection.
     var staleRangeReadsAfterSet = 0
     private var staleLeft = 0
+    /// P3-44 QA: a stale range read comes from the old AX tree, so `AXSelectedText` read right after it is stale too
+    /// (Chromium updates the whole tree asynchronously).
+    var staleSelectedTextToo = false
+    private var lastRangeReadStale = false
     private var previousSelection: Range<Int> = 0..<0
+    /// P3-44: the texts the AX tree shows as inline elements (mention pills, links). nil = the call is unsupported.
+    var inlineAtoms: [String]? = []
+    /// P3-44 (shape B): the selected range is read in page (DOM) units, as written, so a caret after a hidden emoji reads
+    /// past the end of `AXValue`.
+    var readsInPageUnits = false
     /// Runs after every `AXSelectedTextRange` write (to move the clock, change focus…).
     var onSetRange: ((TextRange) -> Void)?
 
@@ -167,10 +176,11 @@ final class FakeChromiumField: AXTextElement {
             valueReads += 1
             return valueFails ? .failure(.failed) : .success(String(decoding: axUnits, as: UTF16.self))
         case .selectedText:
-            var u = Array(doc[domSelection])
+            let shown = staleSelectedTextToo && lastRangeReadStale ? previousSelection : domSelection
+            var u = Array(doc[shown])
             if let h = hidden {
-                let overlap = h.clamped(to: domSelection)
-                if !overlap.isEmpty { u.removeSubrange((overlap.lowerBound - domSelection.lowerBound)..<(overlap.upperBound - domSelection.lowerBound)) }
+                let overlap = h.clamped(to: shown)
+                if !overlap.isEmpty { u.removeSubrange((overlap.lowerBound - shown.lowerBound)..<(overlap.upperBound - shown.lowerBound)) }
             }
             let s = String(decoding: u, as: UTF16.self)
             return .success(selectedTextDropsLineBreaks ? s.filter { !$0.isNewline } : s)
@@ -189,11 +199,13 @@ final class FakeChromiumField: AXTextElement {
         switch a {
         case .selectedTextRange:
             var sel = domSelection
+            lastRangeReadStale = staleLeft > 0
             if staleLeft > 0 {
                 staleLeft -= 1
                 sel = previousSelection
             }
             if rangeReadEchoesWrite, let echoedRange { return .success(echoedRange) }
+            if readsInPageUnits { return .success(TextRange(location: sel.lowerBound, length: sel.count)) }
             let lo = toAX(sel.lowerBound), hi = toAX(sel.upperBound)
             return .success(TextRange(location: lo, length: hi - lo))
         case .markedTextRange: return .failure(.noValue)
@@ -215,6 +227,10 @@ final class FakeChromiumField: AXTextElement {
     }
 
     func supportsStringForRange() -> Result<Bool, AXAccessError> { .success(true) }
+
+    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> {
+        inlineAtoms.map { .success(Array($0.prefix(maxNodes))) } ?? .failure(.unsupported)
+    }
 
     func setString(_ value: String, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
         // Chromium web content: `kReplaceSelectedText` is not handled, the call still succeeds (research §2).

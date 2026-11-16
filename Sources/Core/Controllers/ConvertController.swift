@@ -69,8 +69,19 @@
 //   before typing (`.unavailable`) → the P3-37 / P3-40 path exactly as before (clipboard, else keys). Kill switch:
 //   `ChromiumAXConvert.isEnabled` and the `KytkinDisableChromiumAX` user default (`chromiumAXEnabled`).
 //
+// P3-44 (owner tests 2026-11-16, Slack bold + @mention + emoji, Gmail bold: flattened by the clipboard paste):
+//   - the clipboard path never pastes over rich content (`ClipboardConvert.Result.richContent`): with a remembered
+//     buffer whose text the copied box *ends with* (the ⌘A selection was dropped with Right arrow, so the caret is right
+//     after it), only that run converts by Backspace + typing; otherwise double-Shift just switches the language
+//     (the buffer is forgotten: the caret moved). A rich *selection* is never pasted over either: just switch.
+//   - whole-box conversion keeps @mentions, `:shortcodes:` and mention pills the Chromium AX tree shows whole
+//     (`BoxConversion` atomic tokens; `ChromiumAXConvert.Read.atoms`).
+//   - `diagnose` (DEBUG builds only, wired by the composition root): one `ConvertTrace` per double-Shift with the paths
+//     tried and why each stopped, as enum names and counts; never text.
+//
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
-// only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs.
+// only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs; the
+// P3-44 trace holds no text.
 
 import Foundation
 
@@ -93,6 +104,8 @@ import Foundation
         /// keys-only (Slack, Chrome…); an unseeded app could be a terminal Kytkin doesn't know (an Electron one whose
         /// xterm.js box reads as an AXTextArea), where a pasted line break without bracketed paste runs a command.
         let mayPasteLineBreaks: Bool
+        /// P3-44: the remembered buffer's text as typed (nil = none), to tell whether a rich box ends with it.
+        let typedTail: String?
     }
 
     /// P3-42: one Chromium/Electron AX convert, decided synchronously in `decide` and run (it waits) in `run`.
@@ -113,6 +126,10 @@ import Foundation
     private let makeChromiumAX: (@TextActor @Sendable () -> ChromiumAXConvert?)?
     /// P3-42: the kill switch (`ChromiumAXConvert.isEnabled` and the hidden user default, read by the composition root).
     private let chromiumAXEnabled: Bool
+    /// P3-44: the DEBUG log hook (nil in Release): one privacy-safe `ConvertTrace` per request.
+    private let diagnose: (@Sendable (ConvertTrace) -> Void)?
+    /// P3-44: the trace of the request being handled (enum names and counts only).
+    private var trace: ConvertTrace?
 
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
@@ -140,7 +157,8 @@ import Foundation
                      switchLanguage: @escaping SwitchLanguage,
                      makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)? = nil,
                      makeChromiumAX: (@TextActor @Sendable () -> ChromiumAXConvert?)? = nil,
-                     chromiumAXEnabled: Bool = ChromiumAXConvert.isEnabled) {
+                     chromiumAXEnabled: Bool = ChromiumAXConvert.isEnabled,
+                     diagnose: (@Sendable (ConvertTrace) -> Void)? = nil) {
         self.keyWatcher = keyWatcher
         self.clock = clock
         self.capabilities = capabilities
@@ -150,6 +168,7 @@ import Foundation
         self.makeClipboard = makeClipboard
         self.makeChromiumAX = makeChromiumAX
         self.chromiumAXEnabled = chromiumAXEnabled
+        self.diagnose = diagnose
     }
 
     // MARK: - Entry points
@@ -167,6 +186,7 @@ import Foundation
     }
 
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
+        trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
         var finish = Finish()
         defer {
             // P2-59c (X5): a kept, re-rendered buffer is the whole buffer, never new strokes for the current word.
@@ -188,7 +208,17 @@ import Foundation
             }
         }
         lastOutcome = outcome
+        if let diagnose, var t = trace {
+            t.outcome = "\(outcome)"
+            diagnose(t)
+        }
+        trace = nil
         return outcome
+    }
+
+    /// P3-44: notes one path tried and why it stopped (an enum's description: never text).
+    private func note(_ path: ConvertTrace.Path, _ reason: String) {
+        trace?.steps.append(.init(path: path, reason: reason))
     }
 
     /// Settings → Apps (§12 T5): replaces the user's overrides; removed apps fall back to the seeds.
@@ -278,6 +308,7 @@ import Foundation
     /// Only the input source changes. The switch is not flagged as keeping the buffer: its strokes were typed in the
     /// old layout, so the change notification must reset it.
     private func toggle(_ r: ConvertRequest, because reason: ConvertOutcome.ToggleReason) async -> ConvertOutcome {
+        note(.switchOnly, "\(reason)")
         guard let target = r.pair.other(than: r.currentSource) else {
             beep()
             return .noop(.notInPair)
@@ -313,7 +344,7 @@ import Foundation
             if allowClipboard, let f = focus,
                !ReplacementPlanner.writesSelection(bundleID: r.bundleID, caps: capabilities, focus: f),
                let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .copiedSelection,
-                                 direction: nil, axSelection: selection) {
+                                 direction: nil, axSelection: selection, typedTail: nil) {
                 return .clipboard(job)
             }
             let request = ReplacementRequest(kind: .convertSelection, bundleID: r.bundleID, snapshot: r.snapshot,
@@ -376,7 +407,7 @@ import Foundation
                 old?.contains { $0.isLetter && layouts.runClass(of: $0) == .strong(side) } == true ? side : nil
             }
             if let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .box,
-                                 direction: direction, axSelection: nil) {
+                                 direction: direction, axSelection: nil, typedTail: old) {
                 return .clipboard(job)
             }
         }
@@ -505,6 +536,7 @@ import Foundation
         guard claim(r.gen) else { return .failed(.replacement(.abandoned), beeps: false, textMayHaveChanged: false) }
         let count = old.count
         let result = replacer.postTerminalKeys(count: count, new: rendered.text)
+        note(.keys, "terminal:\(result.verdict)")
         switch result.verdict {
         case .done:
             return .replaced(target: rendered.target, step: .backspaceAndType(count: count), keptBuffer: true,
@@ -526,6 +558,14 @@ import Foundation
             capabilities: &caps, clock: clock,
             mayWrite: { claim(gen) })   // B3 (§12 W8): before the first write
         capabilities = caps
+        // P3-44: the trace names the chain by what it tried last (keys or AX).
+        let keys = outcome.attempts.contains { a in
+            switch a.step {
+            case .backspaceAndType, .typeOverSelection, .keyCodesAfterSwitch: return true
+            default: return false
+            }
+        }
+        note(keys ? .keys : .ax, "\(outcome.result)")
         return outcome
     }
 
@@ -542,7 +582,7 @@ import Foundation
     /// P3-37 (c): a clipboard job, or nil when the clipboard may not be used here.
     private func clipJob(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
                          element: (any FocusedElementIdentity)?, source: ClipboardConvert.Source,
-                         direction: PairSide?, axSelection: String?) -> ClipJob? {
+                         direction: PairSide?, axSelection: String?, typedTail: String?) -> ClipJob? {
         guard makeClipboard != nil, !r.inAddressBar, let f = focus, let element, !f.isSecure,
               f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText, layouts.clipboardShortcutsAreSafe,
               // P3-37 QA: ⌘ + key 0 / 8 / 9 is read in the layout in front: one outside the pair is unchecked.
@@ -565,7 +605,7 @@ import Foundation
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
         return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
-                       mayPasteLineBreaks: mayPasteLineBreaks)
+                       mayPasteLineBreaks: mayPasteLineBreaks, typedTail: typedTail)
     }
 
     /// P3-37 (c): the AX roles of a text box, for apps not seeded as keys-only.
@@ -621,9 +661,10 @@ import Foundation
             replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.isSameElement(as: element) ?? false
         }
         let gen = r.gen
-        let (result, pending) = await cb.run(job.source, convert: convert, focusIsSame: focusIsSame,
-                                             mayWrite: { self.claim(gen) })
+        let (result, pending) = await cb.run(job.source, typedTail: job.typedTail, convert: convert,
+                                             focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
+        note(.clipboard, "\(result)")
         switch result {
         case .pasted:
             guard let target else {   // can't happen: pasted after `convert`
@@ -651,6 +692,17 @@ import Foundation
         case .selectionMismatch:   // P3-40 (b): ⌘C copied something else than the selection AX reported
             beep()
             return .noop(.replacement(.refused(.selectionUnreadable)))
+        case .richContent(let typedRunAtEnd):
+            // P3-44: never paste plain text over rich content. The clipboard is back already; for the box the ⌘A
+            // selection was dropped with Right arrow, so the caret is at the end of the box: the remembered run may be
+            // typed over there only when the box ends with exactly that run. Otherwise (or a selection, or nothing
+            // remembered) just switch the language; the buffer is forgotten (the caret moved).
+            trace?.richCopy = true
+            if job.source == .box, typedRunAtEnd, r.snapshot.hasRun {
+                return await fallBack(r, layouts: layouts, finish: &finish)
+            }
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .richContent)
         case .boxEmpty where job.source == .copiedSelection:
             // P3-40 (b): ⌘C copied nothing; only ⌘C was posted, so the selection is still there. Convert it the old way
             // (AX write / type over the AX text, one line only), all Kytkin can do without a copy.
@@ -689,12 +741,34 @@ import Foundation
     /// P3-42: a Chromium/Electron AX job, or nil when the path may not be used here.
     private func chromiumJob(_ r: ConvertRequest, focus: FocusInfo?, element: (any FocusedElementIdentity)?,
                              source: ChromiumAXConvert.Source) -> ChromiumJob? {
+        // P3-44: for the DEBUG trace, why the path was skipped in an app it is meant for (enum-like names only).
+        if trace != nil, ReplacementCapabilities.chromiumAXBundleIDs.contains(r.bundleID.lowercased()) {
+            trace?.chromiumSkipped = Self.chromiumSkipReason(r, focus: focus, element: element,
+                                                             enabled: chromiumAXEnabled && makeChromiumAX != nil,
+                                                             family: capabilities.family(for: r.bundleID))
+        }
         guard chromiumAXEnabled, makeChromiumAX != nil, r.allowsChromiumAX, !r.inAddressBar,
               capabilities.family(for: r.bundleID) == .chromiumAX,
               let f = focus, let element, !f.isSecure, f.role != FocusInfo.secureTextFieldRole, !f.hasMarkedText,
               f.selRangeSettable, let role = f.role, Self.clipboardTextRoles.contains(role)
         else { return nil }
         return ChromiumJob(source: source, element: element)
+    }
+
+    /// P3-44: the first `chromiumJob` gate that fails, as a name (nil = none: the path runs).
+    private static func chromiumSkipReason(_ r: ConvertRequest, focus: FocusInfo?, element: (any FocusedElementIdentity)?,
+                                           enabled: Bool, family: FieldFamily?) -> String? {
+        if !enabled { return "disabled" }
+        if !r.allowsChromiumAX { return "notAllowedHere" }
+        if r.inAddressBar { return "addressBar" }
+        if family != .chromiumAX { return "notChromiumFamily(userOverrideOrMethod)" }
+        guard let f = focus else { return "focusUnknown" }
+        if element == nil { return "noElement" }
+        if f.isSecure || f.role == FocusInfo.secureTextFieldRole { return "secure" }
+        if f.hasMarkedText { return "markedText" }
+        if !f.selRangeSettable { return "rangeNotSettable" }
+        guard let role = f.role, clipboardTextRoles.contains(role) else { return "role" }
+        return nil
     }
 
     private func currentChromiumAX() -> ChromiumAXConvert? {
@@ -736,7 +810,9 @@ import Foundation
             case .box:
                 let window = FieldWindow(text: read.text, location: 0, caret: read.selection.location,
                                          reachesFieldStart: true, reachesFieldEnd: true)
-                let result = BoxConversion.plan(window, classify: layouts.runClass) { side, grapheme in
+                // P3-44: mention pills / links the AX tree shows as their own elements stay whole.
+                let result = BoxConversion.plan(window, classify: layouts.runClass, atomicTexts: read.atoms) {
+                    side, grapheme in
                     layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
                 }
                 switch result {
@@ -750,6 +826,8 @@ import Foundation
         }
         let gen = r.gen
         let result = await ax.run(job.source, expected: job.element, plan: plan, mayWrite: { self.claim(gen) })
+        note(.chromiumAX, "\(result)")
+        trace?.chromium = ax.lastDiagnostic
         switch result {
         case .converted:
             // The caret moved by the length changes, not where the buffer ended: forget the buffer (X5 table).

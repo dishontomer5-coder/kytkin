@@ -19,6 +19,12 @@
 //      transparent to that test.
 //   6. The write is one range: from the first to the last character that changes (unchanged text in between is
 //      written back as it was). The caret stays where it was, moved only by a length change before it.
+//   P3-44 (owner test 2026-11-16: a Slack @mention's name and the `:joy:` shortcode of an emoji were converted): atomic
+//      tokens never convert and never decide the direction: a word (between separators) starting with `@` (a mention:
+//      `@name`), a web address (a word holding `://` or starting with `www.`), a `:shortcode:` (colon, 1+ ASCII
+//      letters / digits / `_` `+` `-`, colon; no spaces), and every occurrence of a caller-given atomic text (`atomicTexts`: e.g. the text of a mention pill the Chromium AX tree
+//      exposes as its own element, so `@Hillel Banai`'s second word is kept too). A typed Latin word that is not such a
+//      token converts as before.
 
 import Foundation
 
@@ -59,8 +65,9 @@ enum BoxConversion {
     ///   - convert: one grapheme typed on `side`'s keys, retyped on the other layout's.
     ///   - direction: P3-37: the side to convert from, decided by the caller (the clipboard convert has no caret: the
     ///     remembered buffer's language). nil = step 3 (the letter nearest the caret).
+    ///   - atomicTexts: P3-44: texts kept whole wherever they occur (mention pills read from the AX tree).
     static func plan(_ w: FieldWindow, classify: (Character) -> RunCharClass, direction: PairSide? = nil,
-                     convert: (PairSide, String) -> String) -> Result {
+                     atomicTexts: [String] = [], convert: (PairSide, String) -> String) -> Result {
         let total = w.text.utf16.count
         let caretRel = w.caret - w.location
         guard caretRel >= 0, caretRel <= total else { return .nothing }
@@ -79,6 +86,9 @@ enum BoxConversion {
             units += n
         }
         let caret = caretIndex ?? g.count
+        let chars = Array(w.text)
+        // P3-44: graphemes of atomic tokens (mentions, shortcodes, caller-given pills): never converted.
+        let atomic = atomicMask(chars, g, text: w.text, atomicTexts: atomicTexts)
 
         // Step 1: the segment holding the caret.
         var lo = 0
@@ -102,9 +112,12 @@ enum BoxConversion {
         if let direction {
             side = direction   // P3-37
         } else {
-            let before = g[lo..<max(lo, min(caret, hi))].last(where: \.isLetter)
-            let after = caret < hi ? g[max(caret, lo)..<hi].first(where: \.isLetter) : nil
-            guard let nearest = before ?? after, case .strong(let s) = nearest.cls else { return .nothing }
+            // P3-44: a letter inside an atomic token (a mention, a shortcode) never decides.
+            let before = (lo..<max(lo, min(caret, hi))).last(where: { g[$0].isLetter && !atomic[$0] })
+            let after = caret < hi ? (max(caret, lo)..<hi).first(where: { g[$0].isLetter && !atomic[$0] }) : nil
+            guard let nearest = (before ?? after).map({ g[$0] }), case .strong(let s) = nearest.cls else {
+                return .nothing
+            }
             side = s
         }
 
@@ -123,8 +136,7 @@ enum BoxConversion {
         var pieces: [String?] = Array(repeating: nil, count: g.count)
         var first: Int?
         var last: Int?
-        let chars = Array(w.text)
-        for k in lo..<hi where converts[k] {
+        for k in lo..<hi where converts[k] && !atomic[k] {
             let original = String(chars[k])
             let out = convert(side, original)
             guard !out.isEmpty, !out.unicodeScalars.elementsEqual(original.unicodeScalars) else { continue }
@@ -158,6 +170,61 @@ enum BoxConversion {
         }
         return .convert(Plan(edit: FieldEdit(offset: offset, length: end - offset, caretAfter: caretAfter),
                              text: text, side: side, changes: changes))
+    }
+
+    /// P3-44: true for every grapheme of an atomic token: a word starting with `@` (more than the `@`), a web address, a
+    /// `:shortcode:`
+    /// inside a word, and each occurrence of an `atomicTexts` entry (≥ 2 characters; graphemes it overlaps).
+    private static func atomicMask(_ chars: [Character], _ g: [Grapheme], text: String,
+                                   atomicTexts: [String]) -> [Bool] {
+        var mask = [Bool](repeating: false, count: g.count)
+        var i = 0
+        while i < g.count {   // word by word
+            if g[i].isSeparator { i += 1; continue }
+            var j = i
+            while j < g.count, !g[j].isSeparator { j += 1 }
+            let word = String(chars[i..<j])
+            if (chars[i] == "@" && j - i > 1) || word.contains("://") || word.lowercased().hasPrefix("www.") {
+                // A mention, or a web address (a link's text: converting it breaks it).
+                for k in i..<j { mask[k] = true }
+            } else {
+                // `:code:` runs inside the word (bounded: each grapheme is looked at a constant number of times).
+                var a = i
+                while a < j {
+                    guard chars[a] == ":" else { a += 1; continue }
+                    var b = a + 1
+                    while b < j, isShortcodeCharacter(chars[b]) { b += 1 }
+                    if b < j, chars[b] == ":", b > a + 1 {
+                        for k in a...b { mask[k] = true }
+                        a = b + 1
+                    } else {
+                        a = b   // `b` is not a shortcode character: it may start the next `:code:`
+                    }
+                }
+            }
+            i = j
+        }
+        guard !atomicTexts.isEmpty else { return mask }
+        let ns = text as NSString
+        for atom in atomicTexts where atom.count >= 2 {
+            var from = 0
+            while from < ns.length {   // bounded: each match moves `from` forward
+                let r = ns.range(of: atom, options: [.literal], range: NSRange(location: from, length: ns.length - from))
+                guard r.location != NSNotFound, r.length > 0 else { break }
+                for (k, x) in g.enumerated() where x.offset < r.location + r.length && x.offset + x.units > r.location {
+                    mask[k] = true
+                }
+                from = r.location + r.length
+            }
+        }
+        return mask
+    }
+
+    /// P3-44: a character of a Slack-style emoji shortcode (`:joy:`, `:+1:`, `:white_check_mark:`): ASCII only.
+    private static func isShortcodeCharacter(_ c: Character) -> Bool {
+        guard c.isASCII, let a = c.asciiValue else { return false }
+        return (a >= 0x30 && a <= 0x39) || (a >= 0x41 && a <= 0x5A) || (a >= 0x61 && a <= 0x7A)
+            || c == "_" || c == "+" || c == "-"
     }
 
     /// Steps 4–5 for one word `r` (no separators inside).
