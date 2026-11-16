@@ -48,7 +48,7 @@ import Foundation
         executor.focusedApplicationPID(timeout: timeout)
     }
 
-    func focusedPageCategory(timeout: Double) -> PageCategory {   // P3-50
-        AXPageCategoryReader.focusedPageCategory(timeout: timeout)
+    func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory {   // P3-50
+        AXPageCategoryReader.focusedPageCategory(timeout: timeout, budgetNanos: budgetNanos)
     }
 }

@@ -306,4 +306,30 @@ final class ClipboardConvertTests: XCTestCase {
         hebrew2.id = IDs.abc
         XCTAssertFalse(LayoutSnapshot(pair: pair, a: hebrew2, b: hebrew)!.clipboardShortcutsAreSafe)
     }
+
+    // MARK: - P3-53: one budget clock per convert
+
+    @TextActor func testTooLateToCopyPostsNothing() async {
+        let (sut, pb, poster) = make(box: "akuo")
+        let started = clock.nowNanos
+        clock.advance(byMilliseconds: 250)   // the Chromium read and the page check took this long
+        var claims = 0
+        let (result, pending) = await sut.run(.box, startedAt: started, convert: upper, focusIsSame: { true },
+                                              mayWrite: { claims += 1; return true })
+        XCTAssertEqual(result, .timedOut)
+        XCTAssertNil(pending)
+        XCTAssertTrue(poster.events.isEmpty, "no ⌘A / ⌘C")
+        XCTAssertEqual(claims, 0, "not even the claim")
+        XCTAssertTrue(pb.holdsUserClipboard)
+    }
+
+    @TextActor func testInsideTheCopyBudgetRunsAsBefore() async {
+        let (sut, pb, _) = make(box: "akuo")
+        let started = clock.nowNanos
+        clock.advance(byMilliseconds: 100)
+        let (result, _) = await sut.run(.box, startedAt: started, convert: upper, focusIsSame: { true },
+                                        mayWrite: { true })
+        XCTAssertEqual(result, .pasted)
+        XCTAssertEqual(pb.transientWrites.last, "AKUO")
+    }
 }

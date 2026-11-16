@@ -117,6 +117,10 @@ import Foundation
         var selectSettleNanos: UInt64 = 100_000_000
         /// 001 §7 B5: no new piece starts later than this after the flow started.
         var budgetNanos: UInt64 = ReplacementChain.defaultBudgetNanos
+        /// P3-53: step 1 (the box read and the atom walks) must end within this much of the double-Shift, so the
+        /// first piece still has time inside `budgetNanos` (and the hold-back deadline, B5). Out of time → stop
+        /// before anything is written (`.unavailable(.timedOut)`).
+        var readBudgetNanos: UInt64 = 200_000_000
 
         init() {}
     }
@@ -267,14 +271,18 @@ import Foundation
 
     /// Steps 1–4. `expected`: the element the convert started on. `plan`: the caller's conversion. `mayWrite`: the B3
     /// claim, asked once before the first write (the first selection set).
-    func run(_ source: Source, expected: any FocusedElementIdentity, plan: (Read) -> Planned,
-             mayWrite: () -> Bool) async -> Result {
+    /// P3-53: `startedAt`: when the convert started (the controller's request start), so the time spent before this
+    /// path (another path's reads, the page check) counts against the same budget. nil = now.
+    func run(_ source: Source, expected: any FocusedElementIdentity, startedAt: UInt64? = nil,
+             plan: (Read) -> Planned, mayWrite: () -> Bool) async -> Result {
         timedOut = false
         lastDiagnostic = Diagnostic()
-        let start = clock.nowNanos
+        let start = startedAt ?? clock.nowNanos
+        // P3-53: already past the read budget (a slow earlier path): nothing is asked of the app.
+        if clock.nowNanos &- start > timing.readBudgetNanos { return .unavailable(.timedOut) }
         guard let el = focusedElement(), el.isSameElement(as: expected) else { return .unavailable(.focusChanged) }
         let read: Read
-        switch readBox(el, source) {
+        switch readBox(el, source, start: start) {
         case .failure(let stop): return .unavailable(stop)
         case .success(let r): read = r
         }
@@ -581,7 +589,7 @@ import Foundation
 
     // MARK: - Step 1
 
-    private func readBox(_ el: any AXTextElement, _ source: Source) -> Swift.Result<Read, Stop> {
+    private func readBox(_ el: any AXTextElement, _ source: Source, start: UInt64) -> Swift.Result<Read, Stop> {
         func fail(_ check: Diagnostic.ReadCheck, _ stop: Stop) -> Swift.Result<Read, Stop> {
             lastDiagnostic.readCheck = check
             return .failure(stop)
@@ -631,12 +639,17 @@ import Foundation
         // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
         // P3-46: read before the prefix check (it uses them, and the trace counts them even when the check fails).
         var atoms: [String] = []
-        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes)) {
+        // P3-53: the walks get what is left of the read budget; none left → stop before anything is written.
+        let elapsed = clock.nowNanos &- start
+        guard elapsed < timing.readBudgetNanos else { return fail(.atomRead, .timedOut) }
+        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed)) {
         case .success(let a):
             atoms = a.map(\.text)
             lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
         case .failure: if timedOut { return fail(.atomRead, .readFailed) }
         }
+        // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
+        if clock.nowNanos &- start > timing.readBudgetNanos { return fail(.atomRead, .timedOut) }
         lastDiagnostic.atoms = atoms.count
         // The text up to the caret (or the selection's end), where the app answers it (Slack fails it for the whole box,
         // -25212, but answers before the caret). An answer that disagrees means the offsets can't be trusted.

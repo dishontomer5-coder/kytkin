@@ -23,8 +23,9 @@
 // is untouched, nothing was posted but ⌘C).
 //
 // P3-44 (owner tests 2026-11-16: Slack bold + @mention + emoji, Gmail bold, flattened to plain text): after the copy,
-// what the app put on the pasteboard is checked (`CopiedContent.isRich`: HTML with formatting, mentions, emoji images,
-// links, code, lists; RTF formatting; images, files). Rich → nothing is pasted: the clipboard goes back at once, the ⌘A
+// what the app put on the pasteboard is checked (`CopiedContent.verdict`: HTML with formatting, mentions, emoji images,
+// links, code, lists; RTF formatting; images, files). Rich → no plain-text paste (P3-47: a formatting-only HTML copy is
+// pasted as converted HTML, below); otherwise nothing is pasted: the clipboard goes back at once, the ⌘A
 // selection is dropped (Right arrow: the caret at the end of the box), and `.richContent` tells the caller whether the
 // copied box text *ends with* the run the user typed (`typedTail`, the remembered buffer's text), i.e. whether the caret
 // now sits right after it, so the caller may convert just that run by Backspace + typing; otherwise it only switches.
@@ -58,6 +59,9 @@ import Foundation
         var lateCopyWatchNanos: UInt64 = 750_000_000
         /// 001 §7 B5: ⌘V is never posted later than this after the flow started.
         var budgetNanos: UInt64 = ReplacementChain.defaultBudgetNanos
+        /// P3-53: ⌘A / ⌘C are posted only this soon after the convert started (`startedAt`), so the copy wait still
+        /// fits before `budgetNanos`. Later → `.timedOut`, nothing posted.
+        var copyStartBudgetNanos: UInt64 = 200_000_000
 
         init() {}
     }
@@ -168,11 +172,15 @@ import Foundation
     /// P3-46: `app`: how strict the rich check is (chat apps: rich unless proven plain).
     /// P3-47: `htmlPlanner`: converts a text with the box / selection rule keeping the given atoms whole (nil = no
     /// formatting-preserving paste).
-    func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other,
+    /// P3-53: `startedAt`: when the convert started (the controller's request start): the time spent on other paths
+    /// and the page check counts against the same budget. nil = now.
+    func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other, startedAt: UInt64? = nil,
              convert: (String) -> Conversion, htmlPlanner: HTMLTextConvert.Planner? = nil,
              focusIsSame: () -> Bool, mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         lastCopy = nil
-        let start = clock.nowNanos
+        let start = startedAt ?? clock.nowNanos
+        // P3-53: too late to copy and still paste inside the budget: nothing is posted.
+        if clock.nowNanos &- start > timing.copyStartBudgetNanos { return (.timedOut, nil) }
         guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
         let before = pasteboard.changeCount
         guard mayWrite() else { return (.abandoned, nil) }

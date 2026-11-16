@@ -285,8 +285,13 @@ final class FakeChromiumField: AXTextElement {
 
     func supportsStringForRange() -> Result<Bool, AXAccessError> { .success(true) }
 
-    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
-        inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) }) }
+    /// P3-53: the budget the last atom walk was given, and a hook (to move the fake clock: a slow walk).
+    private(set) var atomBudgets: [UInt64] = []
+    var onInlineAtoms: (() -> Void)?
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
+        atomBudgets.append(budgetNanos)
+        onInlineAtoms?()
+        return inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) }) }
             ?? .failure(.unsupported)
     }
 

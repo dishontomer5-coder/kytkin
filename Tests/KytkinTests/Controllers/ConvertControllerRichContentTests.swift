@@ -601,4 +601,41 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.pasteboard.box, "ok\nמה מצב")
     }
+
+    // MARK: - P3-53: the Chromium path on a browser page whose host is unknown (Google Docs right after load)
+
+    @TextActor func testAWholeDocumentPageNeverGetsTheChromiumPath() async {
+        let rig = rig("akuo vh")
+        rig.replacer?.pageCategory = .wholeDocument
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty, "no AX selection in the document")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "wholeDocumentPage")
+        XCTAssertEqual(rig.replacer?.pageChecks, 1, "asked once per request")
+    }
+
+    @TextActor func testAnUnknownPageGetsTheChromiumPathForASelectionOnly() async {
+        let box = rig("akuo vh")
+        box.replacer?.pageCategory = .unknown
+        _ = await box.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertTrue(box.field.rangeWrites.isEmpty, "the whole box: never")
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "siteUnknownBox")
+
+        sink = TraceSink()
+        let sel = rig("ok akuo ok", selection: 3..<7)
+        sel.replacer?.pageCategory = .unknown
+        let out = await sel.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(sel.field.text, "ok שלום ok")
+    }
+
+    @TextActor func testAnOrdinaryPageGetsTheChromiumPathAndThePageIsAskedOnce() async {
+        let rig = rig("akuo vh")
+        rig.replacer?.pageCategory = .ordinary
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.replacer?.pageChecks, 1)
+        XCTAssertEqual(rig.replacer?.pageCheckBudgets, [ConvertController.pageCheckBudgetNanos])
+    }
 }

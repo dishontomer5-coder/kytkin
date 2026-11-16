@@ -761,4 +761,42 @@ final class ChromiumAXConvertTests: XCTestCase {
         if case .converted = result { XCTAssertEqual(f.text, "❤️ הי 😄 הי") }
         else { XCTAssertTrue(["❤️ vh 😄 vh", "❤️ vh 😄 הי"].contains(f.text), "\(result): \(f.text)") }
     }
+
+    // MARK: - P3-53: the read and its atom walks fit the B5 budget
+
+    @TextActor func testTheAtomWalkGetsWhatIsLeftOfTheReadBudget() async {
+        let f = field("akuo")
+        let started = clock.nowNanos
+        clock.advance(byMilliseconds: 150)
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, startedAt: started, plan: { self.boxPlan($0) }, mayWrite: { true })
+        XCTAssertEqual(result, .converted(pieces: 1))
+        XCTAssertEqual(f.atomBudgets, [50_000_000], "200 ms read budget − 150 ms already spent")
+    }
+
+    @TextActor func testASlowAtomWalkStopsBeforeAnythingIsWritten() async {
+        let f = field("akuo")
+        let clock = self.clock!
+        f.onInlineAtoms = { clock.advance(byMilliseconds: 250) }   // one AX call that took its whole timeout
+        var claims = 0
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, plan: { self.boxPlan($0) }, mayWrite: { claims += 1; return true })
+        XCTAssertEqual(result, .unavailable(.timedOut))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .atomRead)
+        XCTAssertTrue(f.rangeWrites.isEmpty, "no selection moved")
+        XCTAssertTrue(poster.events.isEmpty, "nothing typed")
+        XCTAssertEqual(claims, 0, "the hold-back claim is never taken")
+    }
+
+    @TextActor func testAConvertThatStartsPastTheReadBudgetAsksTheAppNothing() async {
+        let f = field("akuo")
+        let started = clock.nowNanos
+        clock.advance(byMilliseconds: 300)
+        let provider = SwitchableFocusProvider(f)
+        let ax = sut(provider)
+        let result = await ax.run(.box, expected: f, startedAt: started, plan: { self.boxPlan($0) }, mayWrite: { true })
+        XCTAssertEqual(result, .unavailable(.timedOut))
+        XCTAssertEqual(provider.reads, 0)
+        XCTAssertEqual(f.valueReads, 0)
+    }
 }

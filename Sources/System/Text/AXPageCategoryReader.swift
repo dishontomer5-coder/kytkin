@@ -13,12 +13,18 @@ enum AXPageCategoryReader {
     /// P3-50 QA: the whole walk's wall-clock cap (each call alone may take up to the messaging timeout).
     static let maxWalkNanos: UInt64 = 300_000_000
 
-    static func focusedPageCategory(timeout: Double) -> PageCategory {
+    /// P3-53: `budgetNanos` caps the walk below `maxWalkNanos` (the convert's B5 budget), and no AX call is given more
+    /// time than is left.
+    static func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory {
         guard AXIsProcessTrusted() else { return .unknown }
-        let deadline = DispatchTime.now().uptimeNanoseconds &+ maxWalkNanos
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ min(maxWalkNanos, budgetNanos)
+        func callTimeout() -> Float {
+            let left = Double(deadline &- min(deadline, DispatchTime.now().uptimeNanoseconds)) / 1e9
+            return Float(max(0.01, min(timeout, left)))
+        }
         func late() -> Bool { DispatchTime.now().uptimeNanoseconds > deadline }
         let systemWide = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(systemWide, Float(timeout))
+        AXUIElementSetMessagingTimeout(systemWide, callTimeout())
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &value) == .success,
               let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return .unknown }
@@ -27,7 +33,7 @@ enum AXPageCategoryReader {
         var reachedTop = false
         for _ in 0..<maxParentSteps {   // bounded walk up
             if late() { return .unknown }
-            AXUIElementSetMessagingTimeout(element, Float(timeout))
+            AXUIElementSetMessagingTimeout(element, callTimeout())
             var role: CFTypeRef?
             let roleError = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
             if roleError == .cannotComplete { return .unknown }   // a timeout: ask nothing more

@@ -65,7 +65,8 @@ final class AXUIElementTextElement: AXTextElement {
     }
 
     /// P3-44: mention pills and links inside the box (breadth-first over `AXChildren`, ≤ `maxNodes` elements, ≤ 4
-    /// levels; each element gets the same messaging timeout as this one; P3-44 QA: ≤ 300 ms in all, else `.timeout`).
+    /// levels; each element gets the same messaging timeout as this one; P3-44 QA: ≤ 300 ms in all, else `.timeout`;
+    /// P3-53: and never past the shared deadline of `inlineAtoms`).
     /// Kept: an element whose role is `AXLink`, or whose own text (`AXValue`, else `AXTitle`, else `AXDescription`)
     /// starts with `@` or `#`; 2–64 UTF-16 units, no line break.
     /// P3-46 (owner retest: `@Tomer Dishon`'s second word converted): an element below the box's paragraphs (depth ≥ 2)
@@ -73,10 +74,11 @@ final class AXUIElementTextElement: AXTextElement {
     /// so a pill whose name is split over text runs stays whole. Never logs; the texts go straight to the convert's plan
     /// (the role names may go to the DEBUG trace).
     /// P3-48: plus every text of a Gmail quoted thread / signature / extra or a blockquote (`quoteAtoms`).
-    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
-        // P3-48 QA: one wall clock for both walks (the pill walk caps itself at 300 ms; together ≤ 500 ms).
-        let deadline = DispatchTime.now().uptimeNanoseconds &+ 500_000_000
-        switch pillAtoms(maxNodes: maxNodes) {
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
+        // P3-48 QA: one wall clock for both walks. P3-53: that clock is what is left of the convert's read budget
+        // (`budgetNanos`, from `ChromiumAXConvert`, inside the B5 400 ms), never more than 500 ms.
+        let deadline = DispatchTime.now().uptimeNanoseconds &+ min(500_000_000, budgetNanos)
+        switch pillAtoms(maxNodes: maxNodes, deadline: deadline) {
         case .failure(let e): return .failure(e)
         case .success(let pills):
             return quoteAtoms(deadline: deadline).map { pills + $0 }
@@ -88,11 +90,12 @@ final class AXUIElementTextElement: AXTextElement {
     /// `AXDOMClassList` names `gmail_quote`, `gmail_signature` or `gmail_extra`, or whose `AXBlockQuoteLevel` is above 0;
     /// then, depth-first inside each (≤ 1,500 elements, ≤ 40 levels), the `AXValue` of every `AXStaticText`, trimmed,
     /// as an atom (role `AXQuoteText`): `BoxConversion` never converts them and they never decide the direction. A
-    /// container found but not walked to its end (budget, the shared 400 ms wall clock) → `.timeout`: the Chromium
+    /// container found but not walked to its end (budget, the shared wall clock of `inlineAtoms`) → `.timeout`: the Chromium
     /// convert stops before typing (the caller falls back), rather than convert a part of the quote it couldn't see.
     /// Not finding a container within the search budget is not an error (an ordinary long box). Never logs.
     private func quoteAtoms(deadline: UInt64) -> Result<[InlineAtom], AXAccessError> {
-        let timeout: Float = 0.25
+        // P3-53: no single call is given more than what is left of the shared deadline (≥ 10 ms).
+        let timeout = Self.callTimeout(until: deadline)
         func children(_ e: AXUIElement) -> (list: [AXUIElement], timedOut: Bool) {
             var value: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &value)
@@ -173,8 +176,8 @@ final class AXUIElementTextElement: AXTextElement {
         return .success(atoms)
     }
 
-    private func pillAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
-        let timeout: Float = 0.25   // ReplacementExecutor.axTimeout, the per-element timeout the provider sets (B5)
+    private func pillAtoms(maxNodes: Int, deadline shared: UInt64) -> Result<[InlineAtom], AXAccessError> {
+        let timeout = Self.callTimeout(until: shared)   // ≤ the provider's 0.25 s (B5), ≤ what is left (P3-53)
         struct Node {
             let element: AXUIElement
             let depth: Int
@@ -210,7 +213,7 @@ final class AXUIElementTextElement: AXTextElement {
         // P3-44 QA: a wall-clock cap too (each call may take up to the 0.25 s timeout without failing: ≤ 5 calls × 64
         // elements could hold the AX thread for many seconds). Past it the walk counts as a timeout: the convert stops
         // rather than run without the pills it may have missed.
-        let deadline = DispatchTime.now().uptimeNanoseconds &+ 300_000_000
+        let deadline = min(shared, DispatchTime.now().uptimeNanoseconds &+ 300_000_000)
         while i < nodes.count {   // bounded: the list never grows past maxNodes
             if DispatchTime.now().uptimeNanoseconds > deadline { return .failure(.timeout) }
             let e = nodes[i].element
@@ -245,6 +248,14 @@ final class AXUIElementTextElement: AXTextElement {
             }
         }
         return .success(atoms)
+    }
+
+    /// P3-53: a messaging timeout for one AX call: the provider's 0.25 s, or what is left until `deadline` if less
+    /// (never below 10 ms).
+    static func callTimeout(until deadline: UInt64) -> Float {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let left = Double(deadline > now ? deadline - now : 0) / 1e9
+        return Float(max(0.01, min(0.25, left)))
     }
 
     // MARK: Writing

@@ -197,22 +197,6 @@ enum CopiedContent {
         return html
     }
 
-    /// True when the copied items hold anything but plain text runs and line breaks.
-    static func isRich(_ items: [[PasteboardEntry]]) -> Bool {
-        guard items.count <= 1 else { return true }
-        guard let item = items.first else { return false }
-        var html: Data?
-        var rtf: Data?
-        for e in item {
-            if richTypes.contains(e.type) || e.type.hasPrefix("public.image") { return true }
-            if htmlTypes.contains(e.type), html == nil { html = e.data }
-            if rtfTypes.contains(e.type), rtf == nil { rtf = e.data }
-        }
-        if let html { return htmlIsRich(html) }
-        if let rtf { return rtfIsRich(rtf) }
-        return false
-    }
-
     // MARK: - HTML
 
     static func htmlIsRich(_ data: Data) -> Bool {
