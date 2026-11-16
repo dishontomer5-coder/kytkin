@@ -50,8 +50,6 @@ enum HTMLTextConvert {
         case quoteChanged
         /// P3-54: a quote boundary (`QuotedReply`) in the HTML's text but not in the plain text, or the other way round.
         case quoteBoundaryMismatch
-        /// P3-54 QA: a webmail whole box with no quote seen at all (the caller refuses it).
-        case noQuoteSignal
     }
 
     struct Output: Sendable, Equatable {

@@ -525,37 +525,32 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(rig.field.text, "מה מצב\n\nשלום הי")
     }
 
-    @TextActor func testAWebmailPlainCopyWithNoQuoteHeaderIsNotPasted() async {
-        let rig = rig("akuo vh\n\nIl Lun X ha scritto:\nnv nmc")
-        axNeverSelects(rig)
-        rig.pasteboard.copiedExtras = []
-        var r = request(buffer("vh"), app: "app.zen-browser.zen")
-        r.webmailPage = true
-        _ = await rig.sut.handle(r, layouts: layouts)
-        XCTAssertEqual(pastes(rig.poster), 0, "no whole-box paste: the thread could be anywhere")
-        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .refused(.noQuoteSignal))
-        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
-    }
-
-    @TextActor func testAWebmailHTMLCopyWithNoQuoteSeenIsNotPasted() async {
-        let rig = rig("akuo vh\nIl Lun X ha scritto:\nnv nmc")
-        rig.pasteboard.copiedExtras = [.html("<div><b>akuo</b> vh</div><div>Il Lun X ha scritto:</div><div>nv nmc</div>")]
+    @TextActor func testAFreshZenGmailComposeWithNoQuoteSignalIsPastedWhole() async {
+        // Coordinator decision 2026-11-16 (keeps §P3-50 ✅): the clipboard path has no caret after ⌘A, and a fresh
+        // compose has no quote at all: bold + two lines convert whole, as an HTML paste.
+        let rig = rig("שלום akuo\nnv vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><div><b>שלום</b> akuo</div><div>nv vh</div></div>")]
         var r = request(empty(), app: "app.zen-browser.zen")
         r.webmailPage = true
-        _ = await rig.sut.handle(r, layouts: layouts)
-        XCTAssertEqual(pastes(rig.poster), 0)
-        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .refused(.noQuoteSignal))
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'><div dir=\"ltr\"><div><b>שלום</b> שלום</div><div>מה הי</div></div>")
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
     }
 
-    @TextActor func testAWebmailHTMLCopyWithAGmailQuoteIsStillPasted() async {
-        let html = HTMLTextConvertTests.reply
-        let rig = rig(HTMLTextConvertTests.replyPlain)
+    @TextActor func testAWebmailReplyWithARecognisedHeaderStillCutsOnTheClipboardPath() async {
+        // No Gmail class, no blockquote (as in Gecko's copy), but the English header: only the text above it converts.
+        let html = "<div><b>akuo</b> vh</div><div>On Mon, Nov 16, 2026 at 10:00 AM X wrote:</div><div>nv nmc</div>"
+        let rig = rig("akuo vh\nOn Mon, Nov 16, 2026 at 10:00 AM X wrote:\nnv nmc")
         rig.pasteboard.copiedExtras = [.html(html)]
         var r = request(empty(), app: "app.zen-browser.zen")
         r.webmailPage = true
         let out = await rig.sut.handle(r, layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'>" + html.replacingOccurrences(of: "<b>akuo</b> vh", with: "<b>שלום</b> הי"))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום הי\nOn Mon, Nov 16, 2026 at 10:00 AM X wrote:\nnv nmc")
     }
 
     func testTheCaretsBlockStartsAfterTheLastEmptyLine() {

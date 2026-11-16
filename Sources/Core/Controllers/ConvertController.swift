@@ -794,7 +794,6 @@ import Foundation
                                              app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
                                              convert: convert,
                                              htmlPlanner: htmlPlanner,
-                                             requireQuoteSignal: job.source == .box && isWebmail(r),
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
         note(.clipboard, "\(result)")
@@ -967,6 +966,10 @@ import Foundation
                     text = String(decoding: units[..<b], as: UTF16.self)
                     caret = min(caret, b)
                 } else if webmail, !read.quoteFound {
+                    // (Coordinator 2026-11-16: the AX path only. The clipboard path, with no caret after ⌘A, converts a
+                    // webmail box with no quote signal whole, as verified in §P3-50: Gmail writes the attribution
+                    // header in the account's language, and English + Hebrew are matched, plus the class / blockquote
+                    // rules.)
                     // P3-54 QA (Coordinator 2026-11-16): a webmail box with no quote seen (no Gmail class, blockquote or
                     // header matched): a reply's thread could be anywhere after the caret, so only the paragraph block
                     // holding the caret, from the previous empty line up to the caret, converts.
