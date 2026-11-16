@@ -421,12 +421,15 @@ final class ConvertControllerClipboardTests: XCTestCase {
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 
-    /// An app that can't copy: only ⌘C was posted, the selection is still there: the P2-21 type-over.
-    @TextActor func testASelectionTheAppWontCopyIsTypedOver() async {
+    /// An app that can't copy: only ⌘C was posted. P3-55 QA: no type-over of AX's selected text any more (a selection
+    /// AX still reports after Kytkin's own ⌘A / arrow / ⌘V may be gone, and typing over it appended a copy of the box
+    /// in Slack); a real selection would have been copied. Just switch.
+    @TextActor func testASelectionTheAppWontCopyOnlySwitches() async {
         let rig = rig(box: "", focus: selected("akuo"))
         rig.pasteboard.copyDelayNanos = nil
         let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .typeOverSelection, switched: true))
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertFalse(rig.poster.events.contains { $0.keyCode == SyntheticKeyEvent.unicodeKeyCode }, "nothing typed")
         XCTAssertFalse(rig.poster.events.contains { $0.keyCode == ClipboardShortcut.selectAll.keyCode },
                        "never ⌘A")
     }

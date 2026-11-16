@@ -831,15 +831,27 @@ import Foundation
             // typed over there only when the box ends with exactly that run. Otherwise (or a selection, or nothing
             // remembered) just switch the language; the buffer is forgotten (the caret moved).
             trace?.richCopy = true
+            // P3-55 (owner, Slack: a converted copy of the whole box, with a literal U+FFFC, was *appended*): this used
+            // to call `fallBack`, which reads the focus again; Slack still reported the ⌘A selection (the Right arrow
+            // that dropped it hadn't reached AX yet), so the *selection* path typed the AX selected text (the whole box,
+            // its emoji as U+FFFC) "over" a selection that no longer existed. Now only the remembered keys, by
+            // Backspace × their count + typing, never through a selection read.
             if job.source == .box, typedRunAtEnd, r.snapshot.hasRun {
-                return await fallBack(r, layouts: layouts, finish: &finish)
+                if let decision = richCopyKeyDecision(r, layouts: layouts) {
+                    return await apply(decision, r, layouts: layouts, finish: &finish)
+                }
+                note(.switchOnly, "richCopyKeysRefused")
             }
             if r.snapshot.hasRun { finish.bufferAfter = [] }
             return await toggle(r, because: .richContent)
         case .boxEmpty where job.source == .copiedSelection:
-            // P3-40 (b): ⌘C copied nothing; only ⌘C was posted, so the selection is still there. Convert it the old way
-            // (AX write / type over the AX text, one line only), all Kytkin can do without a copy.
-            return await fallBack(r, layouts: layouts, finish: &finish)
+            // P3-40 (b): ⌘C copied nothing; only ⌘C was posted. P3-55 QA: the old way (type over the AX text) is what
+            // wrote a copy of the box at the end in Slack: AX can report a selection that is no longer there (right
+            // after Kytkin's own ⌘A / Right arrow / ⌘V, e.g. a second double-Shift), and a real selection would have
+            // been copied. The clipboard path only runs where AX can't write the selection, so the old way is always
+            // typing AX's text: never. Just switch; the buffer is forgotten (a selection may be there).
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
         case .boxEmpty where r.snapshot.hasRun:
             // P3-37 QA: ⌘A (and the Right arrow that dropped its selection) were posted, so the caret is at the end of
             // the box, or one character further right if ⌘A did nothing: not where the remembered buffer ends. Typing
@@ -847,7 +859,11 @@ import Foundation
             finish.bufferAfter = []
             beep()
             return .noop(.replacement(.exhausted))
-        case .boxEmpty, .unavailable:
+        case .boxEmpty:
+            // P3-55 QA: ⌘A and the Right arrow were posted (nothing copied, nothing remembered): a fallback would read
+            // the focus again while AX may still report the ⌘A selection, and type the box over it. Just switch.
+            return await toggle(r, because: .nothingToConvert)
+        case .unavailable:
             // `.unavailable`: nothing was posted (no snapshot, the first event refused), so the caret is where it was.
             return await fallBack(r, layouts: layouts, finish: &finish)
         case .abandoned:
@@ -861,6 +877,46 @@ import Foundation
             beep()
             return .noop(.replacement(.halted(after: .pasteboard)))
         }
+    }
+
+    /// P3-55: after a rich copy whose box text ends with the remembered run (the ⌘A selection dropped with Right arrow,
+    /// so the caret is right after it): Backspace × the run's graphemes, then its re-rendering, from the key buffer's
+    /// own strokes, never from any text read from the box. Refused (just switch, buffer forgotten) when the run can't be
+    /// counted or typed, holds a `:` (Slack turns `:smile:` into one emoji) or an object, or the focus looks secure or
+    /// composing. Events are queued after the Right arrow, so the Backspaces start at the end even when AX still shows
+    /// the old ⌘A selection.
+    /// nil = refused (the caller just switches and forgets the buffer).
+    private func richCopyKeyDecision(_ r: ConvertRequest, layouts: LayoutSnapshot) -> Decision? {
+        let snap = r.snapshot
+        let source = snap.renderedIn ?? r.currentSource
+        func justSwitch() -> Decision? { nil }
+        guard layouts.side(of: source) != nil, let old = layouts.typedRun(snap, in: source),
+              let rendered = layouts.renderRun(snap, from: source), rendered.text != old, !old.isEmpty,
+              !old.contains(":"), !SyntheticKeyEvent.holdsObject(old), !SyntheticKeyEvent.holdsObject(rendered.text),
+              !ReplacementPlanner.containsUnsafeCharacter(old),
+              !ReplacementPlanner.containsUnsafeCharacter(rendered.text) else { return justSwitch() }
+        let replacer = currentReplacer()
+        defer { replacer.endReplacement() }
+        guard let f = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout), !f.isSecure, !f.hasMarkedText,
+              f.role != FocusInfo.secureTextFieldRole else { return justSwitch() }
+        var caps = capabilities
+        let count = old.count
+        // P3-55 QA: inside what is left of the request's B5 budget (P3-53 QA), after the copy wait: late → just switch.
+        let elapsed = clock.nowNanos &- requestStart
+        guard ReplacementChain.defaultBudgetNanos > elapsed else { return justSwitch() }
+        let outcome = ReplacementChain.run(.steps([.backspaceAndType(count: count)]), on: replacer,
+                                           bundleID: r.bundleID, old: old, convert: { _ in rendered.text },
+                                           capabilities: &caps, clock: clock,
+                                           budgetNanos: ReplacementChain.defaultBudgetNanos - elapsed,
+                                           mayWrite: { self.claim(r.gen) })
+        capabilities = caps
+        note(.keys, "\(outcome.result)")
+        guard case .replaced(let step) = outcome.result else {
+            if case .halted = outcome.result { return Self.failure(outcome) }
+            return justSwitch()
+        }
+        // The whole buffer was converted by its strokes (X5): kept, re-rendered in the target.
+        return .replaced(target: rendered.target, step: step, keptBuffer: true, isRun: true)
     }
 
     /// P3-37 (c): the clipboard found nothing to copy (or couldn't start): the remembered buffer by keys, else switch.
@@ -1033,6 +1089,13 @@ import Foundation
             // typed; beep instead.
             beep()
             return .noop(.replacement(.timedOut))
+        case .unavailable(.inconsistent) where ax.lastDiagnostic.readCheck == .prefix
+                && ax.lastDiagnostic.prefixUnexplained && CopiedContent.appKind(bundleID: r.bundleID) == .chat:
+            // P3-55 (owner: a Slack box with a `:smile:`-entered emoji): the prefix disagreed with nothing the walk can
+            // explain (no U+FFFC, no emoji on either side), and in chat apps the next paths (clipboard → keys) once
+            // wrote a wrong copy of the box. Until that shape is understood: just switch, forget the buffer.
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
         case .unavailable:
             return await fallBackFromChromium(r, layouts: layouts, finish: &finish)
         case .partial, .failed:

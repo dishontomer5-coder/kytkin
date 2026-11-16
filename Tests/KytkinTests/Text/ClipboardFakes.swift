@@ -82,7 +82,11 @@ import Foundation
         return snapshotFails || s.byteCount > maxBytes ? nil : s
     }
 
+    /// P3-55 QA: runs on every restore (to move the clock).
+    var onRestore: (() -> Void)?
+
     func restore(_ snapshot: PasteboardSnapshot) -> Bool {
+        onRestore?()
         sync()
         items = snapshot.items
         count += 1

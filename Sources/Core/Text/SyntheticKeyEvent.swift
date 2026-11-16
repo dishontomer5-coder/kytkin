@@ -54,6 +54,20 @@ struct SyntheticKeyEvent: Sendable, Equatable {
         return e.isSafeToPost ? e : nil
     }
 
+    /// P3-55: U+FFFC, U+FFFD, or an emoji grapheme: one with an emoji-presentation scalar, VS16, a keycap, or a ZWJ
+    /// joining emoji. P3-55 QA: *not* text symbols a layout types (`™` ⌥2, `☺`, arrows: emoji-capable but text-presented
+    /// by default), nor a lone ZWJ / ZWNJ / bidi mark an imported layout may produce.
+    static func holdsObject(_ text: String) -> Bool {
+        if text.unicodeScalars.contains(where: { $0.value == 0xFFFC || $0.value == 0xFFFD }) { return true }
+        return text.contains { c in
+            let s = c.unicodeScalars
+            if s.contains(where: { $0.properties.isEmojiPresentation || $0.value == 0xFE0F || $0.value == 0x20E3 }) {
+                return true
+            }
+            return s.contains { $0.value == 0x200D } && s.contains { $0.value >= 0x2100 && $0.properties.isEmoji }
+        }
+    }
+
     /// The last check before posting, repeated by the live poster: a marked Backspace, or a marked Unicode
     /// event whose text is 1…16 units with no Cc/Zl/Zp character. Nothing else may be posted.
     var isSafeToPost: Bool {
@@ -73,6 +87,10 @@ struct SyntheticKeyEvent: Sendable, Equatable {
             let text = String(decoding: unicode, as: UTF16.self)
             // A lone surrogate decodes to U+FFFD; refuse it rather than type a replacement character.
             guard Array(text.utf16) == unicode else { return false }
+            // P3-55 (owner, Slack: a typed copy of the box held a literal U+FFFC): never type an object (U+FFFC, U+FFFD,
+            // an emoji or a picture symbol): a conversion never produces one, so one here means the text came from a
+            // read of the box, not from the user's keys.
+            guard !Self.holdsObject(text) else { return false }
             return !ReplacementPlanner.containsUnsafeCharacter(text)
         default:
             return false

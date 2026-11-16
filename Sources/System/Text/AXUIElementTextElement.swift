@@ -238,6 +238,10 @@ final class AXUIElementTextElement: AXTextElement {
             nodes[i].own = own
             if let own, isAtomText(own), role == "AXLink" || own.hasPrefix("@") || own.hasPrefix("#") {
                 atoms.append(InlineAtom(text: own, role: role ?? "unknown"))
+            } else if role == "AXImage" {
+                // P3-55: an image in the box (an emoji Slack draws as a picture): no text, counted in the trace's
+                // `atomRoles=AXImage:n`; `BoxConversion` ignores an empty atom.
+                atoms.append(InlineAtom(text: "", role: "AXImage"))
             }
             let depth = nodes[i].depth
             if depth < 4, enqueueChildren(of: e, depth: depth + 1, parent: i) == .cannotComplete {

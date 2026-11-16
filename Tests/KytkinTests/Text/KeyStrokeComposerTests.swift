@@ -71,7 +71,31 @@ final class KeyStrokeComposerTests: XCTestCase {
             let chunks = KeyStrokeComposer.chunks(text)
             XCTAssertTrue(chunks.allSatisfy { (1...16).contains($0.count) })
             XCTAssertEqual(chunks.flatMap { $0 }, Array(text.utf16))
-            for c in chunks { XCTAssertNotNil(SyntheticKeyEvent.text(c, keyDown: true), "no split surrogates") }
+            for c in chunks {
+                // No chunk splits a surrogate pair (the chunk round-trips) …
+                XCTAssertEqual(Array(String(decoding: c, as: UTF16.self).utf16), c, "no split surrogates")
+                // … and P3-55: an emoji is never typed at all.
+                XCTAssertNil(SyntheticKeyEvent.text(c, keyDown: true), "P3-55: objects are never posted")
+            }
+        }
+    }
+
+    func testObjectsAreNeverPosted() {
+        // P3-55: the owner's Slack box got a typed copy holding a literal U+FFFC.
+        for text in ["שלום \u{FFFC} שלום", "😄", "a\u{FFFD}b", "👍🏽"] {
+            XCTAssertNil(SyntheticKeyEvent.text(Array(text.utf16), keyDown: true), text)
+        }
+        XCTAssertNotNil(SyntheticKeyEvent.text(Array("שלום akuo".utf16), keyDown: true))
+    }
+
+    func testTextSymbolsALayoutTypesAreStillPosted() {
+        // P3-55 QA: the object guard refuses emoji, not text symbols a layout types or invisible marks it produces.
+        for text in ["\u{2122}", "\u{263A}", "\u{2194}", "\u{200F}", "\u{200E}", "\u{200C}", "\u{200D}",
+                     "\u{05E9}\u{05C1}\u{05BC}", "\u{20AA}", "\u{00A9}"] {
+            XCTAssertNotNil(SyntheticKeyEvent.text(Array(text.utf16), keyDown: true), text)
+        }
+        for text in ["\u{2764}\u{FE0F}", "1\u{FE0F}\u{20E3}", "\u{1F468}\u{200D}\u{1F469}", "\u{1F600}"] {
+            XCTAssertNil(SyntheticKeyEvent.text(Array(text.utf16), keyDown: true), text)
         }
     }
 }
