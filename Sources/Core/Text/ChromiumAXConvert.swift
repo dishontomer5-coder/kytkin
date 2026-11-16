@@ -328,7 +328,8 @@ import Foundation
             let windowText = String(decoding: current[window.location..<window.end], as: UTF16.self)
             // P3-44: where the window and the piece sit in the page's units (bounded tries; see `locate`).
             let d: Int
-            switch await locate(el, piece: piece, window: window, windowText: windowText, hint: hint, start: start) {
+            switch await locate(el, piece: piece, window: window, windowText: windowText, hint: hint,
+                                allowNegative: rawAnchor < anchor, start: start) {
             case .found(let shift): d = shift
             case .stop(let why): return stop(why)
             }
@@ -384,12 +385,15 @@ import Foundation
     ///   - anything else → the next `d`.
     /// An exact unique text can only sit at its own place, and a piece-length selection whose text is the piece's has
     /// no hidden unit in it, so a wrong place is never typed over. Every try is inside the budget.
+    /// P3-46 QA: `allowNegative` only when the caret was mapped through the prefix (the app's caret reads below the
+    /// value's): a negative shift is then proven to exist; otherwise an unchecked caret could reach a wrong word.
     private func locate(_ el: any AXTextElement, piece: Piece, window: TextRange, windowText: String, hint: Int,
-                        start: UInt64) async -> Located {
+                        allowNegative: Bool, start: UInt64) async -> Located {
         let windowUnits = Array(windowText.utf16)
         let bound = Self.maxHiddenUnits
         // P3-46: both sides of the hint, nearest first; never a range before the box's start.
-        let candidates = Self.shiftCandidates(hint: hint, lower: max(-Self.maxNegativeShift, -window.location),
+        let lower = allowNegative ? max(-Self.maxNegativeShift, -window.location) : 0
+        let candidates = Self.shiftCandidates(hint: hint, lower: lower,
                                               upper: bound).prefix(Self.maxShiftTries)
         for d in candidates {   // bounded: ≤ maxShiftTries
             if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
@@ -560,6 +564,8 @@ import Foundation
             switch track(el.string(in: TextRange(location: 0, length: sel.end))) {
             case .success(let prefix):
                 let expected = String(decoding: units[..<sel.end], as: UTF16.self)
+                // P3-46 QA: an empty answer proves nothing when the box holds a pill (see `.failure` below).
+                if prefix.isEmpty, source == .box, !atoms.isEmpty { return fail(.prefix, .inconsistent) }
                 if !prefix.isEmpty, !ReplacementExecutor.readsBackAs(prefix, expected) {
                     lastDiagnostic.prefixMismatch = Self.mismatch(Array(prefix.utf16), Array(expected.utf16))
                     guard source == .box, let c = Self.valueOffset(matching: prefix, in: units, atoms: atoms),
@@ -571,6 +577,10 @@ import Foundation
                 }
             case .failure:
                 if timedOut { return fail(.prefix, .readFailed) }
+                // P3-46 QA: with a pill in the box the app's offsets may count it as one unit, so an unchecked caret
+                // can sit lines early in `AXValue` (and the plan then picks the wrong direction: a bold Hebrew word was
+                // retyped while the typed English line stayed). No prefix to map it through → stop (fall back).
+                if source == .box, !atoms.isEmpty { return fail(.prefix, .inconsistent) }
             }
         }
         return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))

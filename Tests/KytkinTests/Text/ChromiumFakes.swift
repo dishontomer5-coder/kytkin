@@ -36,6 +36,8 @@ final class FakeChromiumField: AXTextElement {
     var selectedTextDropsLineBreaks = false
     /// Slack: `AXStringForRange` fails (-25212) for a range that reaches the end of the value.
     var stringForRangeFailsAtEnd = false
+    /// P3-46 QA: `AXStringForRange` fails for every range (Slack's -25212, here also for the range up to the caret).
+    var stringForRangeFails = false
     /// `AXStringForRange` answers this instead (an app whose offsets disagree with `AXValue`).
     var stringForRangeOverride: String?
     /// `AXNumberOfCharacters` answers this instead of the value's length.
@@ -245,6 +247,7 @@ final class FakeChromiumField: AXTextElement {
         sync()
         let u = axUnits
         guard r.location >= 0, r.length >= 0, r.end <= u.count else { return .failure(.failed) }
+        if stringForRangeFails { return .failure(.failed) }
         if stringForRangeFailsAtEnd, r.end == u.count { return .failure(.failed) }
         if let stringForRangeOverride { return .success(stringForRangeOverride) }
         if let p = pill {

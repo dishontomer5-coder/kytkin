@@ -263,4 +263,26 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertTrue(line.contains("prefixMismatch=ax"), line)
         XCTAssertFalse(line.contains("Tomer"))
     }
+
+    @TextActor func testPlainTextOnlyCopyOutsideChatAppsIsStillPasted() async {
+        // P3-46 QA: the fake now adds a plain HTML flavour by default; a plain-text-only copy in a browser (no token in
+        // it) must still paste as before P3-46, and one with a private type must not.
+        let rig = rig("akuo vh")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "שלום הי")
+        XCTAssertEqual(sink.traces.first?.copy?.reason, .plainText)
+    }
+
+    @TextActor func testBrowserCopyWithAWebAddressIsNotPasted() async {
+        let rig = rig("akuo https://example.com vh")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
 }

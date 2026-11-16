@@ -576,6 +576,47 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty)
     }
 
+    @TextActor func testRepeatedWordsAroundAOneUnitPillNeverTypeOverTheWrongOccurrence() async {
+        // P3-46 QA: the same word before and after the pill, the caret mapped through the pill (negative shifts). Each
+        // piece is typed only after its unique window reads back exactly, so every vh converts once and the pill's name
+        // is never touched, with either way the app reports the pill.
+        for objectCharacter in [true, false] {
+            clock = FakeClock(nowNanos: 1_000_000_000)
+            poster = RecordingPoster()
+            let f = field("vh @Tomer Dishon vh vh")
+            f.pill = 3..<16
+            f.pillAsObjectCharacter = objectCharacter
+            f.inlineAtoms = ["@Tomer Dishon"]
+            let (result, _) = await runWithAtoms(f)
+            XCTAssertTrue(f.text.contains("@Tomer Dishon"), "objectCharacter \(objectCharacter): \(f.text)")
+            if case .converted = result {
+                XCTAssertEqual(f.text, "הי @Tomer Dishon הי הי")
+            } else {
+                // Anything short of a full convert must leave only whole, correctly placed words.
+                XCTAssertTrue(["vh @Tomer Dishon vh vh", "vh @Tomer Dishon vh הי", "vh @Tomer Dishon הי הי"]
+                    .contains(f.text), "\(result): \(f.text)")
+            }
+        }
+    }
+
+    @TextActor func testPillWithAnUnreadablePrefixNeverConvertsTheWrongWord() async {
+        // P3-46 QA: Slack can fail `AXStringForRange` up to the caret (-25212). With the pill `@Alon` counted as one unit,
+        // the caret at the end reads 9 = in AXValue inside the bold "תומר": the plan took Hebrew as the direction and the
+        // shift search (−4, within reach) retyped "תומר" as ",uni" (bold lost) while "vh" stayed. With a pill in the box
+        // and no prefix to check the caret against, the offsets can't be trusted: nothing is typed.
+        let f = field("@Alon תומר\nvh", bold: 6..<10)
+        f.pill = 0..<5
+        f.pillAsObjectCharacter = true
+        f.inlineAtoms = ["@Alon"]
+        f.stringForRangeFails = true
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(f.text, "@Alon תומר\nvh", "nothing typed over")
+        XCTAssertEqual(f.boldText, "תומר")
+        XCTAssertEqual(result, .unavailable(.inconsistent))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .prefix)
+        XCTAssertTrue(poster.events.isEmpty, "nothing typed")
+    }
+
     func testValueOffsetMapping() {
         let v = Array("@Tomer Dishon תומר\nakuo".utf16)
         let atoms = ["@Tomer Dishon"]
