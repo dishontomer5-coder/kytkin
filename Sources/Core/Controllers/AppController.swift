@@ -502,7 +502,7 @@ import Observation
         } else {
             return finish(gen)
         }
-        convert.convert(ConvertRequest(snapshot: snapshot, gen: gen, bundleID: c.bundleID, mode: mode,
+        var request = ConvertRequest(snapshot: snapshot, gen: gen, bundleID: c.bundleID, mode: mode,
                                        pair: prefs.languagePair, currentSource: switcher.current,
                                        switchAfterConvert: prefs.convert.switchLanguageAfterConvert,
                                        // P3-37; QA: never on whole-document web apps (Google Docs / Sheets…)
@@ -517,7 +517,9 @@ import Observation
                                            && c.pageState != .editingAddress && c.pageState != .editingBrowserField,
                                        // P3-47 QA: a browser page whose host isn't known (yet) may be Google Docs
                                        browserSiteUnknown: BrowserCatalog.known[c.bundleID] != nil
-                                           && (c.host ?? "").isEmpty))
+                                           && (c.host ?? "").isEmpty)
+        request.pageState = c.pageState   // P3-49: for the DEBUG trace only
+        convert.convert(request)
     }
 
     /// P2-52 item 7: true only for the notification of our own buffer-keeping after-convert switch.

@@ -92,4 +92,11 @@ final class HTMLTextConvertTests: XCTestCase {
     func testABareAmpersandIsText() {
         XCTAssertEqual(html("<div>akuo & vh</div>", "akuo & vh"), "<div>שלום & הי</div>")
     }
+
+    func testControlCharactersInTheHTMLTextAreRefusedAndGeckosNULIsTrimmed() {
+        XCTAssertEqual(convert("<div>akuo\u{0}</div>", "akuo"), .failure(.controlCharacter))
+        let item = [PasteboardEntry(type: "public.utf8-plain-text", data: Data("akuo".utf8)),
+                    PasteboardEntry(type: "public.html", data: Data("<div>akuo</div>".utf8) + Data([0, 0]))]
+        XCTAssertEqual(CopiedContent.htmlForFormattingPaste([item]), "<div>akuo</div>")
+    }
 }

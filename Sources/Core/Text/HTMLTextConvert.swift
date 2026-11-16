@@ -34,6 +34,9 @@ enum HTMLTextConvert {
     enum Refusal: String, Error, Sendable, Equatable {
         case tooBig, parse, unsupportedTag, unsafeAttribute, marker, textMismatch, nothingToConvert, splitGrapheme,
              resultMismatch, notEligible
+        /// P3-49: a control character (other than tab / line breaks) in the HTML's text: it would bound what converts
+        /// (a `BoxConversion` hard stop) where the plain text has none, so the two conversions could differ.
+        case controlCharacter
     }
 
     struct Output: Sendable, Equatable {
@@ -94,7 +97,8 @@ enum HTMLTextConvert {
         }
         guard ConvertController.sameVisibleText(parsed.t, plain) else { return .failure(.textMismatch) }
         let atoms = parsed.linkTexts.filter { $0.count >= 2 }
-        guard let tChanges = planner(parsed.t, atoms), let pChanges = planner(plain, atoms) else {
+        // P3-49: the plain text first, so a planner that fixes the direction on its first call uses the plain text's.
+        guard let pChanges = planner(plain, atoms), let tChanges = planner(parsed.t, atoms) else {
             return .failure(.nothingToConvert)
         }
         guard !tChanges.isEmpty, !pChanges.isEmpty else { return .failure(.nothingToConvert) }
@@ -155,6 +159,9 @@ enum HTMLTextConvert {
             textStart = nil
             let raw = String(decoding: u[s..<end], as: UTF8.self)
             guard let decoded = decode(raw) else { return .parse }
+            if decoded.text.unicodeScalars.contains(where: { u in
+                u.properties.generalCategory == .control && !ReplacementPlanner.isLineBreak(u) && u != "\t"
+            }) { return .controlCharacter }
             // Graphemes of the decoded node, each with its raw source.
             var graphemes: [(raw: String, text: String, offset: Int)] = []
             var scalarIndex = 0

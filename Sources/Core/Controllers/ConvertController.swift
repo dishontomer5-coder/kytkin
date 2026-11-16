@@ -187,6 +187,11 @@ import Foundation
 
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
+        // P3-49: for browsers, whether the page's host was known for this request.
+        if BrowserCatalog.known[request.bundleID] != nil {
+            trace?.siteKnown = !request.browserSiteUnknown
+            trace?.pageState = request.pageState.map { "\($0)" } ?? "none"
+        }
         var finish = Finish()
         defer {
             // P2-59c (X5): a kept, re-rendered buffer is the whole buffer, never new strokes for the current word.
@@ -671,13 +676,22 @@ import Foundation
         // P3-47: the formatting-preserving paste's planner: the same box rule (direction: the remembered buffer's
         // language, else the last letter) or, for a selection, the guessed layout, keeping `atoms` (link texts) whole.
         // Used on the HTML's text and on the copied plain text alike, so the two conversions agree.
+        // P3-49: the direction is decided once, on the first text planned (HTMLTextConvert plans the copied plain
+        // text first), and kept for the HTML's text, so the two can never go different ways.
+        var plannedSide: PairSide?
         let htmlPlanner: HTMLTextConvert.Planner = { text, atoms in
             let direction: PairSide?
-            switch job.source {
-            case .box: direction = job.direction
-            case .copiedSelection:
-                guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else { return [] }
-                direction = side
+            if let plannedSide {
+                direction = plannedSide
+            } else {
+                switch job.source {
+                case .box: direction = job.direction
+                case .copiedSelection:
+                    guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else {
+                        return []
+                    }
+                    direction = side
+                }
             }
             let w = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
                                 reachesFieldEnd: true)
@@ -689,6 +703,7 @@ import Foundation
             case .nothing: return []
             case .tooLong: return nil
             case .convert(let p):
+                plannedSide = p.side
                 target = layouts.source(of: p.side.other)
                 return p.changes
             }

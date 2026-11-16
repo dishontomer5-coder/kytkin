@@ -42,6 +42,8 @@ struct ConvertRequest: Sendable, Equatable {
     /// P3-47 QA: the front app is a known browser whose page host Kytkin hasn't read (yet): a whole-document site
     /// (Google Docs…) can't be ruled out, so the clipboard never copies the whole box, and pastes no line breaks.
     let browserSiteUnknown: Bool
+    /// P3-49: the browser page state for this request (nil = not a watched browser), for the DEBUG trace only.
+    var pageState: BrowserPageState?
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
          currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
@@ -64,10 +66,13 @@ struct ConvertRequest: Sendable, Equatable {
     /// The same request with other values for the fields that change on the way (the dispatcher's resolved pair; the
     /// controller's emptied snapshot, P3-37).
     func with(snapshot: WordSnapshot? = nil, pair: LanguagePair? = nil) -> ConvertRequest {
-        ConvertRequest(snapshot: snapshot ?? self.snapshot, gen: gen, bundleID: bundleID, mode: mode,
-                       pair: pair ?? self.pair, currentSource: currentSource, switchAfterConvert: switchAfterConvert,
-                       useClipboard: useClipboard, inAddressBar: inAddressBar, processID: processID,
-                       allowsChromiumAX: allowsChromiumAX, browserSiteUnknown: browserSiteUnknown)
+        var copy = ConvertRequest(snapshot: snapshot ?? self.snapshot, gen: gen, bundleID: bundleID, mode: mode,
+                                  pair: pair ?? self.pair, currentSource: currentSource,
+                                  switchAfterConvert: switchAfterConvert, useClipboard: useClipboard,
+                                  inAddressBar: inAddressBar, processID: processID, allowsChromiumAX: allowsChromiumAX,
+                                  browserSiteUnknown: browserSiteUnknown)
+        copy.pageState = pageState
+        return copy
     }
 }
 
