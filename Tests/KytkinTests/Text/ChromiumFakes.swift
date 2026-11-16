@@ -17,6 +17,12 @@ final class FakeChromiumField: AXTextElement {
     private(set) var domSelection: Range<Int>
     /// Units of `doc` that `AXValue` (and every AX offset) leaves out: Slack's emoji.
     var hidden: Range<Int>?
+    /// P3-46: a mention pill (units of `doc`) that every AX *offset* (selected range reads and writes, `AXStringForRange`)
+    /// counts as one unit, while `AXValue` holds its whole text (Chromium's hypertext: an embedded object). Not combined
+    /// with `hidden` in one test.
+    var pill: Range<Int>?
+    /// P3-46: `AXStringForRange` gives U+FFFC for the pill instead of its text.
+    var pillAsObjectCharacter = false
     /// Setting `AXSelectedTextRange` takes the AX offsets as DOM offsets (they drift after `hidden`).
     var setRangeDrifts = false
     /// P3-42 QA: after a range write, `AXSelectedTextRange` reads back exactly the range written (until typing moves the
@@ -30,6 +36,8 @@ final class FakeChromiumField: AXTextElement {
     var selectedTextDropsLineBreaks = false
     /// Slack: `AXStringForRange` fails (-25212) for a range that reaches the end of the value.
     var stringForRangeFailsAtEnd = false
+    /// P3-46 QA: `AXStringForRange` fails for every range (Slack's -25212, here also for the range up to the caret).
+    var stringForRangeFails = false
     /// `AXStringForRange` answers this instead (an app whose offsets disagree with `AXValue`).
     var stringForRangeOverride: String?
     /// `AXNumberOfCharacters` answers this instead of the value's length.
@@ -49,6 +57,8 @@ final class FakeChromiumField: AXTextElement {
     private var previousSelection: Range<Int> = 0..<0
     /// P3-44: the texts the AX tree shows as inline elements (mention pills, links). nil = the call is unsupported.
     var inlineAtoms: [String]? = []
+    /// P3-46: the role the fake reports for every inline atom.
+    var inlineAtomRole = "AXStaticText"
     /// P3-44 (shape B): the selected range is read in page (DOM) units, as written, so a caret after a hidden emoji reads
     /// past the end of `AXValue`.
     var readsInPageUnits = false
@@ -137,6 +147,7 @@ final class FakeChromiumField: AXTextElement {
         echoedRange = nil
         // The hidden emoji moves with a length change before it.
         if let h = hidden, lo < h.lowerBound { hidden = (h.lowerBound + delta)..<(h.upperBound + delta) }
+        if let p = pill, lo < p.lowerBound { pill = (p.lowerBound + delta)..<(p.upperBound + delta) }
     }
 
     // MARK: - AX offsets
@@ -152,6 +163,17 @@ final class FakeChromiumField: AXTextElement {
         guard let h = hidden else { return dom }
         if dom >= h.upperBound { return dom - h.count }
         return min(dom, h.lowerBound)
+    }
+
+    /// P3-46: a `doc` offset in pill-compressed units, and back.
+    private func toObject(_ dom: Int) -> Int {
+        guard let p = pill, dom > p.lowerBound else { return dom }
+        return dom >= p.upperBound ? dom - p.count + 1 : p.lowerBound
+    }
+
+    private func fromObject(_ obj: Int) -> Int {
+        guard let p = pill, obj > p.lowerBound else { return obj }
+        return obj + p.count - 1
     }
 
     private func toDOM(_ ax: Int, isEnd: Bool) -> Int {
@@ -206,6 +228,10 @@ final class FakeChromiumField: AXTextElement {
             }
             if rangeReadEchoesWrite, let echoedRange { return .success(echoedRange) }
             if readsInPageUnits { return .success(TextRange(location: sel.lowerBound, length: sel.count)) }
+            if pill != nil {
+                let lo = toObject(sel.lowerBound), hi = toObject(sel.upperBound)
+                return .success(TextRange(location: lo, length: hi - lo))
+            }
             let lo = toAX(sel.lowerBound), hi = toAX(sel.upperBound)
             return .success(TextRange(location: lo, length: hi - lo))
         case .markedTextRange: return .failure(.noValue)
@@ -221,15 +247,33 @@ final class FakeChromiumField: AXTextElement {
         sync()
         let u = axUnits
         guard r.location >= 0, r.length >= 0, r.end <= u.count else { return .failure(.failed) }
+        if stringForRangeFails { return .failure(.failed) }
         if stringForRangeFailsAtEnd, r.end == u.count { return .failure(.failed) }
         if let stringForRangeOverride { return .success(stringForRangeOverride) }
+        if let p = pill {
+            let lo = fromObject(r.location), hi = fromObject(r.end)
+            guard hi <= doc.count else { return .failure(.failed) }
+            var out: [UInt16] = []
+            var i = lo
+            while i < hi {
+                if pillAsObjectCharacter, i == p.lowerBound {
+                    out.append(0xFFFC)
+                    i = p.upperBound
+                } else {
+                    out.append(doc[i])
+                    i += 1
+                }
+            }
+            return .success(String(decoding: out, as: UTF16.self))
+        }
         return .success(String(decoding: u[r.location..<r.end], as: UTF16.self))
     }
 
     func supportsStringForRange() -> Result<Bool, AXAccessError> { .success(true) }
 
-    func inlineAtomTexts(maxNodes: Int) -> Result<[String], AXAccessError> {
-        inlineAtoms.map { .success(Array($0.prefix(maxNodes))) } ?? .failure(.unsupported)
+    func inlineAtoms(maxNodes: Int) -> Result<[InlineAtom], AXAccessError> {
+        inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) }) }
+            ?? .failure(.unsupported)
     }
 
     func setString(_ value: String, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
@@ -242,8 +286,9 @@ final class FakeChromiumField: AXTextElement {
     func setRange(_ value: TextRange, for a: AXTextAttribute) -> Result<Void, AXAccessError> {
         sync()
         guard a == .selectedTextRange, value.location >= 0, value.length >= 0 else { return .failure(.failed) }
-        let lo = toDOM(value.location, isEnd: false)
-        let hi = value.isCaret ? lo : toDOM(value.end, isEnd: true)
+        var lo = toDOM(value.location, isEnd: false)
+        var hi = value.isCaret ? lo : toDOM(value.end, isEnd: true)
+        if pill != nil { lo = fromObject(value.location); hi = fromObject(value.end) }
         guard lo <= hi, hi <= doc.count else { return .failure(.failed) }
         rangeWrites.append(value)
         previousSelection = domSelection

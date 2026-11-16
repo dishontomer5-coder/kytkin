@@ -178,9 +178,12 @@ final class ChromiumAXConvertTests: XCTestCase {
     }
 
     @TextActor func testShiftCandidates() async {
-        XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 2, upper: 4), [2, 1, 0, 3, 4])
+        // P3-46: nearest to the hint first, both sides (the smaller one first at the same distance).
+        XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 2, upper: 4), [2, 1, 3, 0, 4])
         XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 0, upper: 0), [0])
         XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: 9, upper: 3), [3, 2, 1, 0])
+        XCTAssertEqual(ChromiumAXConvert.shiftCandidates(hint: -12, lower: -14, upper: 1),
+                       [-12, -13, -11, -14, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1])
     }
 
     @TextActor func testPiecesBeforeTheEmojiAreUnaffectedByTheDrift() async {
@@ -519,5 +522,123 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertNil(w("ab", 1, 5))
         XCTAssertTrue(ChromiumAXConvert.occursOnce(Array("ab".utf16)[...], in: Array("xaby".utf16)))
         XCTAssertFalse(ChromiumAXConvert.occursOnce(Array("ab".utf16)[...], in: Array("abab".utf16)))
+    }
+
+    // MARK: - P3-46: a mention pill the app's offsets count as one unit (owner retest, `readCheck=prefix`)
+
+    /// The owner's retest box without the emoji: pill `@Tomer Dishon`, bold `תומר`, line 2 typed on EN.
+    @TextActor private func pillBox(objectCharacter: Bool, atoms: [String]? = ["@Tomer Dishon"]) -> FakeChromiumField {
+        let f = field("@Tomer Dishon תומר\nakuo vh", bold: 14..<18)
+        f.pill = 0..<13
+        f.pillAsObjectCharacter = objectCharacter
+        f.inlineAtoms = atoms
+        return f
+    }
+
+    @TextActor private func runWithAtoms(_ f: FakeChromiumField) async -> (ChromiumAXConvert.Result, ChromiumAXConvert) {
+        let ax = sut(SwitchableFocusProvider(f))
+        let result = await ax.run(.box, expected: f, plan: { read in
+            let w = FieldWindow(text: read.text, location: 0, caret: read.selection.location, reachesFieldStart: true,
+                                reachesFieldEnd: true)
+            guard case .convert(let p) = BoxConversion.plan(w, classify: self.layouts.runClass,
+                                                             atomicTexts: read.atoms, convert: { side, g in
+                self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
+            }) else { return .nothing }
+            return .changes(p.changes)
+        }, mayWrite: { true })
+        return (result, ax)
+    }
+
+    @TextActor func testPillCountedAsOneUnitMapsTheCaretAndConvertsOnlyLineTwo() async {
+        for objectCharacter in [true, false] {
+            clock = FakeClock(nowNanos: 1_000_000_000)
+            poster = RecordingPoster()
+            let f = pillBox(objectCharacter: objectCharacter)
+            let (result, ax) = await runWithAtoms(f)
+            XCTAssertEqual(result, .converted(pieces: 2), "objectCharacter \(objectCharacter)")
+            XCTAssertEqual(f.text, "@Tomer Dishon תומר\nשלום הי", "the pill's name never converted")
+            XCTAssertEqual(f.boldText, "תומר")
+            XCTAssertTrue(ax.lastDiagnostic.caretMapped)
+            XCTAssertNotNil(ax.lastDiagnostic.prefixMismatch)
+            XCTAssertEqual(ax.lastDiagnostic.maxShift, -12, "the pill: 13 units in AXValue, 1 in the offsets")
+            XCTAssertEqual(ax.lastDiagnostic.atomRoles, ["AXStaticText"])
+            XCTAssertEqual(f.rangeWrites.last, TextRange(location: 14, length: 0), "caret back at the end (offset units)")
+        }
+    }
+
+    @TextActor func testPillAsObjectCharacterWithoutKnownAtomsStillStops() async {
+        // U+FFFC with no atom text to stand for: the offsets can't be mapped, nothing is typed (the caller falls back).
+        let f = pillBox(objectCharacter: true, atoms: nil)
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .unavailable(.inconsistent))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .prefix)
+        XCTAssertFalse(ax.lastDiagnostic.caretMapped)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testRepeatedWordsAroundAOneUnitPillNeverTypeOverTheWrongOccurrence() async {
+        // P3-46 QA: the same word before and after the pill, the caret mapped through the pill (negative shifts). Each
+        // piece is typed only after its unique window reads back exactly, so every vh converts once and the pill's name
+        // is never touched, with either way the app reports the pill.
+        for objectCharacter in [true, false] {
+            clock = FakeClock(nowNanos: 1_000_000_000)
+            poster = RecordingPoster()
+            let f = field("vh @Tomer Dishon vh vh")
+            f.pill = 3..<16
+            f.pillAsObjectCharacter = objectCharacter
+            f.inlineAtoms = ["@Tomer Dishon"]
+            let (result, _) = await runWithAtoms(f)
+            XCTAssertTrue(f.text.contains("@Tomer Dishon"), "objectCharacter \(objectCharacter): \(f.text)")
+            if case .converted = result {
+                XCTAssertEqual(f.text, "הי @Tomer Dishon הי הי")
+            } else {
+                // Anything short of a full convert must leave only whole, correctly placed words.
+                XCTAssertTrue(["vh @Tomer Dishon vh vh", "vh @Tomer Dishon vh הי", "vh @Tomer Dishon הי הי"]
+                    .contains(f.text), "\(result): \(f.text)")
+            }
+        }
+    }
+
+    @TextActor func testPillWithAnUnreadablePrefixNeverConvertsTheWrongWord() async {
+        // P3-46 QA: Slack can fail `AXStringForRange` up to the caret (-25212). With the pill `@Alon` counted as one unit,
+        // the caret at the end reads 9 = in AXValue inside the bold "תומר": the plan took Hebrew as the direction and the
+        // shift search (−4, within reach) retyped "תומר" as ",uni" (bold lost) while "vh" stayed. With a pill in the box
+        // and no prefix to check the caret against, the offsets can't be trusted: nothing is typed.
+        let f = field("@Alon תומר\nvh", bold: 6..<10)
+        f.pill = 0..<5
+        f.pillAsObjectCharacter = true
+        f.inlineAtoms = ["@Alon"]
+        f.stringForRangeFails = true
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(f.text, "@Alon תומר\nvh", "nothing typed over")
+        XCTAssertEqual(f.boldText, "תומר")
+        XCTAssertEqual(result, .unavailable(.inconsistent))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .prefix)
+        XCTAssertTrue(poster.events.isEmpty, "nothing typed")
+    }
+
+    func testValueOffsetMapping() {
+        let v = Array("@Tomer Dishon תומר\nakuo".utf16)
+        let atoms = ["@Tomer Dishon"]
+        func off(_ p: String, _ a: [String] = atoms) -> Int? { ChromiumAXConvert.valueOffset(matching: p, in: v, atoms: a) }
+        XCTAssertEqual(off("\u{FFFC} תומר\nakuo"), v.count, "the pill as an object character")
+        XCTAssertEqual(off(" תומר\nak"), v.count - 2, "the pill left out")
+        XCTAssertEqual(off("@Tomer Dishon תומר\nakuo"), v.count, "equal")
+        XCTAssertEqual(off("@Tomer"), 6, "a shorter prefix")
+        XCTAssertEqual(off("😂@Tomer Dishon"), 13, "an emoji AXValue leaves out")
+        XCTAssertEqual(off("@Tomer\u{00A0}Dishon"), 13, "NBSP = space")
+        XCTAssertNil(off("\u{FFFC} תומר", []), "an object character with no atom to stand for")
+        XCTAssertNil(off("@Tomer Dishon xyz"), "other text")
+    }
+
+    func testPrefixMismatchCountsAndRoleNames() {
+        let m = ChromiumAXConvert.mismatch(Array("ab\u{FFFC}cd".utf16), Array("ab@Tomercd".utf16))
+        XCTAssertEqual(m, .init(axUnits: 5, valueUnits: 10, commonPrefix: 2, commonSuffix: 2))
+        XCTAssertEqual(m.axSpan, 1)
+        XCTAssertEqual(m.valueSpan, 6)
+        XCTAssertEqual("\(m)", "ax5/value10/common2+2/span1~6")
+        XCTAssertEqual(ChromiumAXConvert.roleName("AXStaticText"), "AXStaticText")
+        XCTAssertEqual(ChromiumAXConvert.roleName("@Tomer"), "other", "never text")
+        XCTAssertEqual(ChromiumAXConvert.roleName("AX Link"), "other")
     }
 }

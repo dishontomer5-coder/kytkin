@@ -215,4 +215,74 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(sink.traces.first?.chromiumSkipped, "disabled")
         XCTAssertEqual(sink.traces.first?.steps.first?.path, .clipboard)
     }
+
+    // MARK: - P3-46 (owner retest: Slack pill + emoji + bold pasted back as plain text)
+
+    @TextActor func testSlackCopyWithoutHTMLIsNeverPasted() async {
+        let rig = rig("@Tomer Dishon :joy: תומר\nakuo vh", bold: 20..<24)
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []   // Slack: plain text only (its rich data is not HTML)
+        let out = await rig.sut.handle(request(buffer("vh")), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 2), switched: true),
+                       "only the typed run, by keys")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+        guard let t = sink.traces.first else { return XCTFail("no trace") }
+        XCTAssertEqual(t.copy?.reason, .noHTMLInChatApp)
+        XCTAssertEqual(t.copy?.types?.html, 0)
+        XCTAssertTrue(t.line.contains("copyVerdict=noHTMLInChatApp"))
+        XCTAssertTrue(t.line.contains("copiedTypes{items=1 html=0 rtf=0 plain=1"))
+        for text in ["Tomer", "Dishon", "תומר", "akuo", "joy"] { XCTAssertFalse(t.line.contains(text), text) }
+    }
+
+    @TextActor func testSlackCustomDataCopyIsNeverPasted() async {
+        let rig = rig("akuo vh")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = [.html("<span>akuo vh</span>"),
+                                       PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1, 2]))]
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertEqual(sink.traces.first?.copy?.reason, .unknownType)
+        XCTAssertEqual(sink.traces.first?.copy?.types?.chromiumCustom, 1)
+    }
+
+    @TextActor func testOwnersRetestBoxConvertsThroughAXWithThePillCountedAsOneUnit() async {
+        let rig = rig("@Tomer Dishon תומר\nakuo vh", bold: 14..<18)
+        rig.field.pill = 0..<13
+        rig.field.pillAsObjectCharacter = true
+        rig.field.inlineAtoms = ["@Tomer Dishon"]
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "@Tomer Dishon תומר\nשלום הי")
+        XCTAssertEqual(rig.field.boldText, "תומר")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("caretMapped=true"), line)
+        XCTAssertTrue(line.contains("atomRoles=AXStaticText"), line)
+        XCTAssertTrue(line.contains("prefixMismatch=ax"), line)
+        XCTAssertFalse(line.contains("Tomer"))
+    }
+
+    @TextActor func testPlainTextOnlyCopyOutsideChatAppsIsStillPasted() async {
+        // P3-46 QA: the fake now adds a plain HTML flavour by default; a plain-text-only copy in a browser (no token in
+        // it) must still paste as before P3-46, and one with a private type must not.
+        let rig = rig("akuo vh")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "שלום הי")
+        XCTAssertEqual(sink.traces.first?.copy?.reason, .plainText)
+    }
+
+    @TextActor func testBrowserCopyWithAWebAddressIsNotPasted() async {
+        let rig = rig("akuo https://example.com vh")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
 }

@@ -38,6 +38,8 @@ struct ConvertTrace: Sendable, Equatable {
     var chromium: ChromiumAXConvert.Diagnostic?
     /// P3-44: the clipboard copy was rich (nothing pasted).
     var richCopy: Bool?
+    /// P3-46: the clipboard copy's type categories (counts) and the rich / plain verdict's reason (an enum name).
+    var copy: ClipboardConvert.CopyDiagnostic?
     /// The final outcome, as an enum case name.
     var outcome: String = ""
 
@@ -49,9 +51,15 @@ struct ConvertTrace: Sendable, Equatable {
         if let c = chromium {
             parts.append("chromium{readCheck=\(c.readCheck?.rawValue ?? "-") caretPastValue=\(c.caretPastValue) "
                          + "pieces=\(c.pieces) atoms=\(c.atoms) maxShift=\(c.maxShift) "
-                         + "otherTextTries=\(c.otherTextTries) readSpace=\(c.readSpace.rawValue)}")
+                         + "otherTextTries=\(c.otherTextTries) readSpace=\(c.readSpace.rawValue) "
+                         + "caretMapped=\(c.caretMapped) prefixMismatch=\(c.prefixMismatch.map { "\($0)" } ?? "-") "
+                         + "atomRoles=\(c.atomRoles.isEmpty ? "-" : c.atomRoles.joined(separator: ","))}")
         }
         if let richCopy { parts.append("richCopy=\(richCopy)") }
+        if let copy {
+            parts.append("copiedTypes{\(copy.types.map { "\($0)" } ?? "unreadable")} "
+                         + "copyVerdict=\(copy.reason?.rawValue ?? "-")")
+        }
         parts.append("outcome=\(outcome)")
         return parts.joined(separator: " ")
     }

@@ -37,7 +37,9 @@ import Foundation
     /// ⌘C copies this instead of the box (e.g. "" for an app that copies nothing).
     var copiesInstead: String?
     /// P3-44: what else ⌘C puts in the copied item next to the plain text (e.g. `public.html` from Slack / Chrome).
-    var copiedExtras: [PasteboardEntry] = []
+    /// P3-46: by default a plain HTML flavour (positive evidence the copy is plain, which chat apps now need); `[]` =
+    /// a copy with plain text only.
+    var copiedExtras: [PasteboardEntry] = [.html("<span style=\"font-weight: 400\">copied</span>")]
     private(set) var selectedAll = false
     /// P3-40: the user's selection in the box (its text, found in `box`), nil = a caret.
     var userSelection: String?

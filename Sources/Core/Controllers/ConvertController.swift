@@ -661,10 +661,12 @@ import Foundation
             replacer.currentFocusedElement(timeout: ReplacementExecutor.axTimeout)?.isSameElement(as: element) ?? false
         }
         let gen = r.gen
-        let (result, pending) = await cb.run(job.source, typedTail: job.typedTail, convert: convert,
+        let (result, pending) = await cb.run(job.source, typedTail: job.typedTail,
+                                             app: CopiedContent.appKind(bundleID: r.bundleID), convert: convert,
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
         note(.clipboard, "\(result)")
+        trace?.copy = cb.lastCopy   // P3-46: type categories (counts) and the verdict's reason; no data
         switch result {
         case .pasted:
             guard let target else {   // can't happen: pasted after `convert`

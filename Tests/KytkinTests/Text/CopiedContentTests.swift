@@ -89,4 +89,51 @@ final class CopiedContentTests: XCTestCase {
         XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "akuo :joy:", typedTail: ":joy:"))
         XCTAssertFalse(ClipboardConvert.typedRunIsAtEnd(of: "akuo vh :)", typedTail: "vh :)"))
     }
+
+    // MARK: - P3-46: the strict verdict
+
+    private func entry(_ type: String, _ s: String = "x") -> PasteboardEntry {
+        PasteboardEntry(type: type, data: Data(s.utf8))
+    }
+
+    func testSlackPlainOnlyCopyIsRich() {
+        // P3-46 owner retest: Slack's copy of 😂 + pill + bold carried no HTML Kytkin can vouch for.
+        let v = CopiedContent.verdict([[plain]], text: "@Tomer Dishon :joy: תומר\nakuo vh", app: .chat)
+        XCTAssertEqual(v, .init(isRich: true, reason: .noHTMLInChatApp))
+        XCTAssertEqual(CopiedContent.verdict([[plain]], text: "akuo vh", app: .chat).reason, .noHTMLInChatApp,
+                       "no HTML in a chat app is never proof of plain text")
+    }
+
+    func testPrivateAndCustomTypesAreRich() {
+        XCTAssertEqual(CopiedContent.verdict([[plain, entry("org.chromium.web-custom-data")]], text: "akuo",
+                                             app: .other).reason, .unknownType)
+        XCTAssertEqual(CopiedContent.verdict([[plain, entry("com.tinyspeck.slack.texty")]], text: "akuo",
+                                             app: .other).reason, .unknownType)
+        XCTAssertEqual(CopiedContent.verdict([[plain, .html("<span>akuo</span>"), entry("org.chromium.source-url")]],
+                                             text: "akuo", app: .chat), .init(isRich: false, reason: .plainHTML),
+                       "Chromium's copy metadata is not content")
+    }
+
+    func testTokensInTheCopiedTextAreRich() {
+        let html = PasteboardEntry.html("<span>x</span>")
+        for text in ["@Tomer Dishon akuo", "akuo #general", "akuo :joy:", "see https://example.com", "www.example.com"] {
+            XCTAssertEqual(CopiedContent.verdict([[plain, html]], text: text, app: .chat).reason, .tokenInText, text)
+            XCTAssertEqual(CopiedContent.verdict([[plain]], text: text, app: .other).reason, .tokenInText, text)
+        }
+        for text in ["akuo vh", "a@b.com", "# heading", "12:30", ":: x", "@ x"] {
+            XCTAssertFalse(CopiedContent.verdict([[plain]], text: text, app: .other).isRich, text)
+        }
+        XCTAssertEqual(CopiedContent.verdict([[plain, html]], text: "akuo vh", app: .chat),
+                       .init(isRich: false, reason: .plainHTML), "proven plain in a chat app")
+    }
+
+    func testAppKindAndTypeCounts() {
+        XCTAssertEqual(CopiedContent.appKind(bundleID: "com.tinyspeck.slackmacgap"), .chat)
+        XCTAssertEqual(CopiedContent.appKind(bundleID: "com.hnc.Discord"), .chat)
+        XCTAssertEqual(CopiedContent.appKind(bundleID: "com.google.Chrome"), .other)
+        let c = CopiedContent.typeCounts([[plain, .html("x"), entry("public.rtf"), entry("org.chromium.web-custom-data"),
+                                           entry("org.chromium.source-url"), entry("com.tinyspeck.private"),
+                                           entry("public.png"), entry("public.utf16-plain-text")]])
+        XCTAssertEqual("\(c)", "items=1 html=1 rtf=1 plain=2 chromiumCustom=1 chromiumMeta=1 private=1 image=1 other=0")
+    }
 }

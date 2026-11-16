@@ -120,6 +120,13 @@ import Foundation
     }
 
     private let pasteboard: any PasteboardAccess
+    /// P3-46: what the last run's copy looked like, for the DEBUG trace: type categories as counts and the verdict's
+    /// reason (nil = no copy, or it couldn't be read). Never any data.
+    struct CopyDiagnostic: Sendable, Equatable {
+        let types: CopiedContent.TypeCounts?
+        let reason: CopiedContent.Reason?
+    }
+    private(set) var lastCopy: CopyDiagnostic?
     private let poster: any KeyEventPosting
     private let clock: any Clock
     private let sleep: @Sendable (UInt64) async -> Void
@@ -137,8 +144,11 @@ import Foundation
     /// Runs steps 1–5. `focusIsSame`: the focused element is still the one the convert started on (P2-49 item 3: keys
     /// go to whatever has focus). `mayWrite`: the B3 claim, asked once before the first post.
     /// P3-44: `typedTail`, the text the user typed last (the remembered buffer), for `.richContent(typedRunAtEnd:)`.
-    func run(_ source: Source, typedTail: String? = nil, convert: (String) -> Conversion, focusIsSame: () -> Bool,
+    /// P3-46: `app`: how strict the rich check is (chat apps: rich unless proven plain).
+    func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other,
+             convert: (String) -> Conversion, focusIsSame: () -> Bool,
              mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
+        lastCopy = nil
         let start = clock.nowNanos
         guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
         let before = pasteboard.changeCount
@@ -184,8 +194,11 @@ import Foundation
         }
 
         // P3-44: never paste plain text over rich content (an unreadable copy counts as rich).
+        // P3-46: the strict verdict (no HTML in a chat app, unknown types, mention / shortcode / URL tokens → rich).
         let copied = pasteboard.snapshot(maxBytes: Self.maxCopiedBytes)
-        if copied.map({ CopiedContent.isRich($0.items) }) ?? true {
+        let verdict = copied.map { CopiedContent.verdict($0.items, text: text, app: app) }
+        lastCopy = CopyDiagnostic(types: copied.map { CopiedContent.typeCounts($0.items) }, reason: verdict?.reason)
+        if verdict?.isRich ?? true {
             let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
             return stop(.richContent(typedRunAtEnd: atEnd))
         }
