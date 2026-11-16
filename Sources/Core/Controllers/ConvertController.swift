@@ -663,7 +663,13 @@ import Foundation
                 return .replace(c.text)
             case .box:
                 guard text.utf16.count <= ReplacementPlanner.maxFieldReadChars else { return .tooLong }
-                let window = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                // P3-48: a mail reply / forward copied as plain text: only what comes before the quoted thread, the
+                // forward header or the signature converts; the rest is pasted back as it was.
+                let all = Array(text.utf16)
+                let cut = QuotedReply.boundary(in: text) ?? all.count
+                let own = String(decoding: all[..<cut], as: UTF16.self)
+                let rest = String(decoding: all[cut...], as: UTF16.self)
+                let window = FieldWindow(text: own, location: 0, caret: own.utf16.count, reachesFieldStart: true,
                                          reachesFieldEnd: true)
                 let result = BoxConversion.plan(window, classify: layouts.runClass, direction: job.direction) {
                     side, grapheme in
@@ -673,11 +679,11 @@ import Foundation
                 case .nothing: return .nothing
                 case .tooLong: return .tooLong
                 case .convert(let p):
-                    let units = Array(text.utf16)
+                    let units = Array(own.utf16)
                     let head = String(decoding: units[..<p.edit.offset], as: UTF16.self)
                     let tail = String(decoding: units[(p.edit.offset + p.edit.length)...], as: UTF16.self)
                     target = layouts.source(of: p.side.other)
-                    return .replace(head + p.text + tail)
+                    return .replace(head + p.text + tail + rest)
                 }
             }
         }

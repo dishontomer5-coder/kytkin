@@ -238,7 +238,8 @@ import Foundation
                 case .mismatch: return stop(.selectionMismatch)
                 case .replace: break
                 }
-                switch HTMLTextConvert.convert(html: html, plain: text, planner: planner) {
+                // P3-48: a whole box leaves a quoted thread and a signature alone; a selection is the user's choice.
+                switch HTMLTextConvert.convert(html: html, plain: text, skipQuotes: source == .box, planner: planner) {
                 case .success(let out):
                     lastCopy?.htmlPaste = .ok
                     htmlOut = out

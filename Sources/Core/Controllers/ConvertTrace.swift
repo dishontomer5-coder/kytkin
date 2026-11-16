@@ -66,7 +66,7 @@ struct ConvertTrace: Sendable, Equatable {
                          + "pieces=\(c.pieces) atoms=\(c.atoms) maxShift=\(c.maxShift) "
                          + "otherTextTries=\(c.otherTextTries) readSpace=\(c.readSpace.rawValue) "
                          + "caretMapped=\(c.caretMapped) prefixMismatch=\(c.prefixMismatch.map { "\($0)" } ?? "-") "
-                         + "atomRoles=\(c.atomRoles.isEmpty ? "-" : c.atomRoles.joined(separator: ",")) "
+                         + "atomRoles=\(Self.roleCounts(c.atomRoles)) "
                          + "prefixObjects=\(c.prefixObjects ?? "-")}")
         }
         if let richCopy { parts.append("richCopy=\(richCopy)") }
@@ -77,5 +77,17 @@ struct ConvertTrace: Sendable, Equatable {
         }
         parts.append("outcome=\(outcome)")
         return parts.joined(separator: " ")
+    }
+
+    /// P3-48 QA: the atoms' roles as counts per role, in first-seen order (`AXStaticText:1,AXQuoteText:37`), `-` = none.
+    static func roleCounts(_ roles: [String]) -> String {
+        guard !roles.isEmpty else { return "-" }
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for r in roles {
+            if counts[r] == nil { order.append(r) }
+            counts[r, default: 0] += 1
+        }
+        return order.map { "\($0):\(counts[$0]!)" }.joined(separator: ",")
     }
 }
