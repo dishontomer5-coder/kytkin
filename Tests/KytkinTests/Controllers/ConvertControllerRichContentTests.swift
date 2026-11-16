@@ -39,9 +39,10 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     @TextActor private func rig(_ text: String, bold: Range<Int>? = nil, selection: Range<Int>? = nil,
-                                chromium: Bool = true, axWritesSelection: Bool = true) -> Rig {
+                                chromium: Bool = true, axWritesSelection: Bool = true, caret: Int? = nil) -> Rig {
         let poster = RecordingPoster()
-        let field = FakeChromiumField(text, selection: selection, poster: poster, clock: clock, boldUnits: bold)
+        let field = FakeChromiumField(text, caret: caret, selection: selection, poster: poster, clock: clock,
+                                      boldUnits: bold)
         let r = ScriptedReplacer(log: log)
         let selText = selection.map { s in String(decoding: Array(text.utf16)[s], as: UTF16.self) }
         r.focus = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: axWritesSelection,
@@ -501,6 +502,70 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 2), switched: true))
         XCTAssertEqual(backspaces(rig.poster), 0, "no Backspace after the budget")
         XCTAssertTrue(rig.poster.events.allSatisfy { $0.keyCode != KeyCode.delete }, "no key after the budget")
+    }
+
+    // MARK: - P3-54 QA (Coordinator 2026-11-16): a webmail whole box where no quote was seen
+
+    @TextActor func testAWebmailBoxWithNoQuoteSeenConvertsOnlyTheCaretsBlockThroughAX() async {
+        // A reply whose header no pattern knows and whose AX tree shows no quote: the caret's paragraph block, up to the
+        // caret, is all that converts; the unrecognised thread below it (and any text above the empty line) stays.
+        let box = "nv nmc\n\nakuo vh\n\nIl Lun X ha scritto:\nnv nmc"
+        let rig = rig(box, caret: 15)
+        var r = request(empty(), app: chrome)
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "nv nmc\n\nשלום הי\n\nIl Lun X ha scritto:\nnv nmc")
+    }
+
+    @TextActor func testANonWebmailBoxStillConvertsWhole() async {
+        let rig = rig("nv nmc\n\nakuo vh", caret: 15)
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "מה מצב\n\nשלום הי")
+    }
+
+    @TextActor func testAWebmailPlainCopyWithNoQuoteHeaderIsNotPasted() async {
+        let rig = rig("akuo vh\n\nIl Lun X ha scritto:\nnv nmc")
+        axNeverSelects(rig)
+        rig.pasteboard.copiedExtras = []
+        var r = request(buffer("vh"), app: "app.zen-browser.zen")
+        r.webmailPage = true
+        _ = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0, "no whole-box paste: the thread could be anywhere")
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .refused(.noQuoteSignal))
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    @TextActor func testAWebmailHTMLCopyWithNoQuoteSeenIsNotPasted() async {
+        let rig = rig("akuo vh\nIl Lun X ha scritto:\nnv nmc")
+        rig.pasteboard.copiedExtras = [.html("<div><b>akuo</b> vh</div><div>Il Lun X ha scritto:</div><div>nv nmc</div>")]
+        var r = request(empty(), app: "app.zen-browser.zen")
+        r.webmailPage = true
+        _ = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .refused(.noQuoteSignal))
+    }
+
+    @TextActor func testAWebmailHTMLCopyWithAGmailQuoteIsStillPasted() async {
+        let html = HTMLTextConvertTests.reply
+        let rig = rig(HTMLTextConvertTests.replyPlain)
+        rig.pasteboard.copiedExtras = [.html(html)]
+        var r = request(empty(), app: "app.zen-browser.zen")
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
+    }
+
+    func testTheCaretsBlockStartsAfterTheLastEmptyLine() {
+        func b(_ s: String, _ caret: Int) -> Int { ConvertController.blockStart(before: caret, in: Array(s.utf16)) }
+        XCTAssertEqual(b("akuo vh", 7), 0)
+        XCTAssertEqual(b("a\n\nakuo", 7), 3)
+        XCTAssertEqual(b("a\n \u{00A0}\nakuo\nvh", 12), 5, "a line of spaces / NBSP is empty")
+        XCTAssertEqual(b("a\nb\nakuo", 8), 0, "no empty line: the whole text before the caret")
+        XCTAssertEqual(b("a\n\n", 3), 3, "the caret on an empty line")
+        XCTAssertEqual(b("", 0), 0)
     }
 
     private func clipboardKeysWithoutSelectAll(_ poster: RecordingPoster) -> Bool {

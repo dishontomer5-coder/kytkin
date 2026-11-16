@@ -144,6 +144,8 @@ import Foundation
         /// P3-54: a box convert: where a mail's quoted thread / forward / signature starts in `text`
         /// (`QuotedReply.boundary`); the plan converts only what comes before it.
         var quoteBoundary: Int?
+        /// P3-54 QA: a quoted thread / signature was seen at all (a text boundary, or quote lines from the AX walk).
+        var quoteFound = false
     }
 
     /// The caller's conversion of a `Read`.
@@ -674,12 +676,14 @@ import Foundation
         // and the quote isn't walked at all. Not found → the P3-48 container walk as before.
         let quoteBoundary = source == .box ? QuotedReply.boundary(in: value) : nil
         lastDiagnostic.quoteBoundary = quoteBoundary != nil
+        var quoteFound = quoteBoundary != nil   // P3-54 QA
         switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed,
                                     quoteSearchMustComplete: quoteSearchMustComplete && quoteBoundary == nil,
                                     searchQuotes: quoteBoundary == nil)) {
         case .success(let a):
             atoms = a.map(\.text)
             lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
+            if a.contains(where: { $0.role == "AXQuoteText" }) { quoteFound = true }
         case .failure: if timedOut { return fail(.atomRead, .readFailed) }
         }
         // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
@@ -710,7 +714,7 @@ import Foundation
                         guard alignment.narrower == 0, c == sel.end else { return fail(.prefix, .inconsistent) }
                         lastDiagnostic.caretMapped = true
                         return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw,
-                                    quoteBoundary: quoteBoundary))
+                                    quoteBoundary: quoteBoundary, quoteFound: quoteFound))
                     }
                     // P3-51: the app's text for the range up to its caret may be in other units than the caret: wider
                     // (an emoji's two units where `AXValue` and the caret count one U+FFFC, or none) → it ends *before*
@@ -730,7 +734,7 @@ import Foundation
             }
         }
         return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw,
-                                    quoteBoundary: quoteBoundary))
+                                    quoteBoundary: quoteBoundary, quoteFound: quoteFound))
     }
 
     /// P3-46: an AX role for the DEBUG trace: kept only when it looks like an AX role name (`AX` + letters, ≤ 40),

@@ -658,6 +658,30 @@ import Foundation
                        mayPasteLineBreaks: lineBreaks, typedTail: typedTail)
     }
 
+    /// P3-53 QA / P3-54 QA: the request's page is a webmail page (the context's host, or this request's page check).
+    private func isWebmail(_ r: ConvertRequest) -> Bool {
+        r.webmailPage || (requestPage.map { $0.gen == r.gen && $0.category == .webmail } ?? false)
+    }
+
+    /// P3-54 QA: where the paragraph block holding `caret` starts: right after the last empty line (only spaces, NBSP or
+    /// nothing) before it, else 0. UTF-16 offsets.
+    nonisolated static func blockStart(before caret: Int, in units: [UInt16]) -> Int {
+        let end = max(0, min(caret, units.count))
+        // Line starts up to the caret; the last one is the caret's own line.
+        var starts = [0]
+        for k in 0..<end where units[k] == 0x0A { starts.append(k + 1) }
+        func isBlank(_ line: Int) -> Bool {
+            let lo = starts[line], hi = starts[line + 1] - 1   // without its LF
+            return units[lo..<hi].allSatisfy { $0 == 0x20 || $0 == 0xA0 || $0 == 0x09 || $0 == 0x0D }
+        }
+        var line = starts.count - 2
+        while line >= 0 {   // bounded by the number of lines
+            if isBlank(line) { return starts[line + 1] }
+            line -= 1
+        }
+        return 0
+    }
+
     /// P3-50 / P3-53: the focused box's page category, asked at most once per request, inside what is left of the
     /// B5 budget (none left → `.unknown`, nothing asked).
     private func pageCategory(for r: ConvertRequest) -> PageCategory {
@@ -770,6 +794,7 @@ import Foundation
                                              app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
                                              convert: convert,
                                              htmlPlanner: htmlPlanner,
+                                             requireQuoteSignal: job.source == .box && isWebmail(r),
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
         note(.clipboard, "\(result)")
@@ -904,6 +929,7 @@ import Foundation
                                finish: inout Finish) async -> ConvertOutcome {
         guard let ax = currentChromiumAX() else { return await fallBackFromChromium(r, layouts: layouts, finish: &finish) }
         var target: InputSourceID?
+        let webmail = isWebmail(r)
         let plan: (ChromiumAXConvert.Read) -> ChromiumAXConvert.Planned = { read in
             switch job.source {
             case .selection:
@@ -933,9 +959,20 @@ import Foundation
                 // P3-54: a mail reply / forward: only the text before the quoted thread (or signature) is planned.
                 var text = read.text
                 var caret = read.selection.location
+                /// P3-54 QA: the planned text starts here in `read.text` (changes are moved by it).
+                var base = 0
+                let units = Array(read.text.utf16)
                 if let b = read.quoteBoundary {
-                    text = String(decoding: Array(read.text.utf16)[..<b], as: UTF16.self)
+                    // P3-54: the caret clamped to the boundary (the quote itself is never planned).
+                    text = String(decoding: units[..<b], as: UTF16.self)
                     caret = min(caret, b)
+                } else if webmail, !read.quoteFound {
+                    // P3-54 QA (Coordinator 2026-11-16): a webmail box with no quote seen (no Gmail class, blockquote or
+                    // header matched): a reply's thread could be anywhere after the caret, so only the paragraph block
+                    // holding the caret, from the previous empty line up to the caret, converts.
+                    base = Self.blockStart(before: caret, in: units)
+                    text = String(decoding: units[base..<caret], as: UTF16.self)
+                    caret -= base
                 }
                 let window = FieldWindow(text: text, location: 0, caret: caret,
                                          reachesFieldStart: true, reachesFieldEnd: true)
@@ -949,14 +986,13 @@ import Foundation
                 case .tooLong: return .tooLong
                 case .convert(let p):
                     target = layouts.source(of: p.side.other)
-                    return .changes(p.changes)
+                    return .changes(p.changes.map { TextChange(offset: $0.offset + base, length: $0.length, text: $0.text) })
                 }
             }
         }
         let gen = r.gen
         // P3-53 QA (Coordinator 2026-11-16): on a webmail page a whole-box convert needs the quote search complete (a
         // search cut short by the tighter clock could miss the quoted thread and convert it); elsewhere (Slack) not.
-        let webmail = r.webmailPage || (requestPage.map { $0.gen == r.gen && $0.category == .webmail } ?? false)
         let result = await ax.run(job.source, expected: job.element, startedAt: requestStart,
                                   quoteSearchMustComplete: job.source == .box && webmail, plan: plan,
                                   mayWrite: { self.claim(gen) })

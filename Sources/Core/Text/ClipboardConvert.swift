@@ -178,6 +178,7 @@ import Foundation
     /// and the page check counts against the same budget. nil = now.
     func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other, startedAt: UInt64? = nil,
              convert: (String) -> Conversion, htmlPlanner: HTMLTextConvert.Planner? = nil,
+             requireQuoteSignal: Bool = false,
              focusIsSame: () -> Bool, mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         lastCopy = nil
         let start = startedAt ?? clock.nowNanos
@@ -254,6 +255,12 @@ import Foundation
                                                         planner: planner, stats: &stats)
                 lastCopy?.htmlStats = stats
                 switch converted {
+                case .success(let out) where requireQuoteSignal && stats.skippedRegions == 0 && !stats.htmlBoundary:
+                    // P3-54 QA (Coordinator 2026-11-16): a webmail whole box where no quote was seen (no Gmail class,
+                    // blockquote or header matched): a reply's thread could still be in it. ⌘A left no caret to
+                    // narrow it down, so no paste: the typed run (keys) or just switch.
+                    _ = out
+                    lastCopy?.htmlPaste = .refused(.noQuoteSignal)
                 case .success(let out):
                     lastCopy?.htmlPaste = .ok
                     htmlOut = out
@@ -265,6 +272,12 @@ import Foundation
                 let atEnd = source == .box && Self.typedRunIsAtEnd(of: text, typedTail: typedTail)
                 return stop(.richContent(typedRunAtEnd: atEnd))
             }
+        }
+
+        // P3-54 QA: the same for a plain copy of a webmail box: no quote header found → no whole-box paste.
+        if htmlOut == nil, requireQuoteSignal, QuotedReply.boundary(in: text) == nil {
+            lastCopy?.htmlPaste = .refused(.noQuoteSignal)
+            return stop(.richContent(typedRunAtEnd: Self.typedRunIsAtEnd(of: text, typedTail: typedTail)))
         }
 
         let new: String
