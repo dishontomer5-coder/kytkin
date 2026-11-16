@@ -845,9 +845,13 @@ import Foundation
             if r.snapshot.hasRun { finish.bufferAfter = [] }
             return await toggle(r, because: .richContent)
         case .boxEmpty where job.source == .copiedSelection:
-            // P3-40 (b): ⌘C copied nothing; only ⌘C was posted, so the selection is still there. Convert it the old way
-            // (AX write / type over the AX text, one line only), all Kytkin can do without a copy.
-            return await fallBack(r, layouts: layouts, finish: &finish)
+            // P3-40 (b): ⌘C copied nothing; only ⌘C was posted. P3-55 QA: the old way (type over the AX text) is what
+            // wrote a copy of the box at the end in Slack: AX can report a selection that is no longer there (right
+            // after Kytkin's own ⌘A / Right arrow / ⌘V, e.g. a second double-Shift), and a real selection would have
+            // been copied. The clipboard path only runs where AX can't write the selection, so the old way is always
+            // typing AX's text: never. Just switch; the buffer is forgotten (a selection may be there).
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
         case .boxEmpty where r.snapshot.hasRun:
             // P3-37 QA: ⌘A (and the Right arrow that dropped its selection) were posted, so the caret is at the end of
             // the box, or one character further right if ⌘A did nothing: not where the remembered buffer ends. Typing
@@ -855,7 +859,11 @@ import Foundation
             finish.bufferAfter = []
             beep()
             return .noop(.replacement(.exhausted))
-        case .boxEmpty, .unavailable:
+        case .boxEmpty:
+            // P3-55 QA: ⌘A and the Right arrow were posted (nothing copied, nothing remembered): a fallback would read
+            // the focus again while AX may still report the ⌘A selection, and type the box over it. Just switch.
+            return await toggle(r, because: .nothingToConvert)
+        case .unavailable:
             // `.unavailable`: nothing was posted (no snapshot, the first event refused), so the caret is where it was.
             return await fallBack(r, layouts: layouts, finish: &finish)
         case .abandoned:
@@ -893,9 +901,14 @@ import Foundation
               f.role != FocusInfo.secureTextFieldRole else { return justSwitch() }
         var caps = capabilities
         let count = old.count
+        // P3-55 QA: inside what is left of the request's B5 budget (P3-53 QA), after the copy wait: late → just switch.
+        let elapsed = clock.nowNanos &- requestStart
+        guard ReplacementChain.defaultBudgetNanos > elapsed else { return justSwitch() }
         let outcome = ReplacementChain.run(.steps([.backspaceAndType(count: count)]), on: replacer,
                                            bundleID: r.bundleID, old: old, convert: { _ in rendered.text },
-                                           capabilities: &caps, clock: clock, mayWrite: { self.claim(r.gen) })
+                                           capabilities: &caps, clock: clock,
+                                           budgetNanos: ReplacementChain.defaultBudgetNanos - elapsed,
+                                           mayWrite: { self.claim(r.gen) })
         capabilities = caps
         note(.keys, "\(outcome.result)")
         guard case .replaced(let step) = outcome.result else {

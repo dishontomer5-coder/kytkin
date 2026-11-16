@@ -54,10 +54,18 @@ struct SyntheticKeyEvent: Sendable, Equatable {
         return e.isSafeToPost ? e : nil
     }
 
-    /// P3-55: U+FFFC, U+FFFD, or an emoji / pictographic grapheme (`ChromiumAXConvert.isObject`).
+    /// P3-55: U+FFFC, U+FFFD, or an emoji grapheme: one with an emoji-presentation scalar, VS16, a keycap, or a ZWJ
+    /// joining emoji. P3-55 QA: *not* text symbols a layout types (`™` ⌥2, `☺`, arrows: emoji-capable but text-presented
+    /// by default), nor a lone ZWJ / ZWNJ / bidi mark an imported layout may produce.
     static func holdsObject(_ text: String) -> Bool {
-        text.unicodeScalars.contains { $0.value == 0xFFFC || $0.value == 0xFFFD }
-            || text.contains(where: ChromiumAXConvert.isObject)
+        if text.unicodeScalars.contains(where: { $0.value == 0xFFFC || $0.value == 0xFFFD }) { return true }
+        return text.contains { c in
+            let s = c.unicodeScalars
+            if s.contains(where: { $0.properties.isEmojiPresentation || $0.value == 0xFE0F || $0.value == 0x20E3 }) {
+                return true
+            }
+            return s.contains { $0.value == 0x200D } && s.contains { $0.value >= 0x2100 && $0.properties.isEmoji }
+        }
     }
 
     /// The last check before posting, repeated by the live poster: a marked Backspace, or a marked Unicode

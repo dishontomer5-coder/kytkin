@@ -829,4 +829,34 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertTrue(sink.traces.first?.line.contains("prefixUnexplained=true") == true)
         XCTAssertTrue(sink.traces.first?.line.contains("valueUnits=12") == true)
     }
+
+    // MARK: - P3-55 QA: nothing acts on a selection AX may still report after Kytkin's own select-all / arrows
+
+    @TextActor func testAnEmptyBoxCopyWithNothingRememberedNeverFallsBackToTheStaleSelection() async {
+        // Select-all + copy copied nothing (and the Right arrow was posted); AX still reports the select-all
+        // selection. The old fallback read it and typed the box over it. Now: just switch.
+        let box = "akuo \u{FFFC} akuo"
+        let rig = rig(box)
+        axNeverSelects(rig)
+        rig.pasteboard.copiesInstead = ""
+        // Read 1: the double-Shift; read 2: the fallback after the AX path (no selection yet); read 3 on: stale.
+        rig.replacer?.focusFromRead = (3, FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false,
+                                                    selTextSettable: true, selRangeSettable: true, selection: box))
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
+        XCTAssertTrue(rig.pasteboard.selectedAll, "the box path ran (select-all posted)")
+        XCTAssertTrue(log.performs.isEmpty, "nothing typed over a selection")
+        XCTAssertEqual(rig.replacer?.typedTexts ?? [], [])
+    }
+
+    @TextActor func testRichCopyKeysAreNeverPostedPastTheBudget() async {
+        // The copy wait (and the restore) used the budget up: the typed run is not typed, the language just switches.
+        let rig = rig("akuo vh", chromium: false)
+        rig.pasteboard.copiedExtras = [PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
+        let clock = self.clock!
+        rig.pasteboard.onRestore = { clock.advance(byMilliseconds: 450) }
+        let out = await rig.sut.handle(request(buffer("vh"), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
+        XCTAssertTrue(log.performs.isEmpty, "no Backspace after the budget")
+    }
 }
