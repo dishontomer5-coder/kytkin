@@ -389,14 +389,42 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
     }
 
-    @TextActor func testAMultiLineSelectionIsNotPastedWhileTheSiteIsUnknown() async {
-        // A selection AX can't write (so the clipboard would copy it): with a line break, never pasted on an unknown site.
+    @TextActor func testAMultiLineSelectionIsPastedAsHTMLWhileTheSiteIsUnknown() async {
+        // P3-49 (Coordinator decision 2026-11-16; replaces the P3-47 QA rule "no line breaks on an unknown site"): the
+        // unknown-site gate stops the ⌘A whole-box copy only. A selection is the user's own and the paste replaces only
+        // it, so a multi-line one goes through the formatting-preserving HTML path (line breaks kept as structure).
         let rig = rig("ok akuo\nvh ok", selection: 3..<10, chromium: false, axWritesSelection: false)
         rig.pasteboard.userSelection = "akuo\nvh"
-        rig.pasteboard.copiedExtras = [.html("<div>akuo</div><div>vh</div>")]
+        rig.pasteboard.copiedExtras = [.html("<div><b>akuo</b></div><div>vh</div>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
+                       "<meta charset='utf-8'><div><b>שלום</b></div><div>הי</div>")
+        XCTAssertEqual(rig.pasteboard.box, "ok שלום\nהי ok", "only the selection replaced")
+        XCTAssertFalse(rig.pasteboard.selectedAll, "no ⌘A")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    @TextActor func testAMultiLinePlainSelectionIsPastedWhileTheSiteIsUnknown() async {
+        // P3-49: the plain path too, the copy checked against the selection AX reported (P3-40).
+        let rig = rig("ok akuo\nvh ok", selection: 3..<10, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo\nvh"
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "ok שלום\nהי ok")
+        XCTAssertFalse(rig.pasteboard.selectedAll)
+    }
+
+    @TextActor func testAMultiLineSelectionThatIsNotTheAXSelectionIsNeverPasted() async {
+        // P3-49: the copy is not what AX reported selected (P3-40 mismatch): nothing pasted, unknown site or not.
+        let rig = rig("ok akuo\nvh ok", selection: 3..<10, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo\nvh"
+        rig.pasteboard.copiesInstead = "something\nelse"
+        rig.pasteboard.copiedExtras = []
         _ = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
-        XCTAssertEqual(pastes(rig.poster), 0, "a line break is never pasted on an unknown site")
-        XCTAssertEqual(rig.pasteboard.box, "ok akuo\nvh ok")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 
     @TextActor func testAOneLineSelectionIsStillPastedWhileTheSiteIsUnknown() async {
@@ -420,5 +448,67 @@ final class ConvertControllerRichContentTests: XCTestCase {
     private func clipboardKeysWithoutSelectAll(_ poster: RecordingPoster) -> Bool {
         let downs = poster.events.filter { $0.isKeyDown && $0.modifierFlags != 0 }.map(\.keyCode)
         return downs == [ClipboardShortcut.copy.keyCode, ClipboardShortcut.paste.keyCode]
+    }
+
+    // MARK: - P3-49 (owner retest in Zen: the unselected box only switched; a multi-line selection beeped)
+
+    /// Gecko writes its HTML flavour as a C string: a NUL after `</html>`.
+    private func geckoHTML(_ body: String) -> PasteboardEntry {
+        PasteboardEntry(type: "public.html", data: Data("""
+            <html><body>
+            <!--StartFragment-->\(body)<!--EndFragment-->
+            </body>
+            </html>
+            """.utf8) + Data([0]))
+    }
+
+    @TextActor func testZenBoxWithGeckosTrailingNULIsPastedAsConvertedHTML() async {
+        // Root cause: the NUL was a control character in the HTML's text, a `BoxConversion` hard stop right at the
+        // "caret" (the end), so the HTML planner found nothing (`htmlPaste=refused(nothingToConvert)`).
+        let rig = rig("שלום akuo vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [geckoHTML("<div dir=\"ltr\"><b>שלום</b> akuo vh</div>")]
+        let out = await rig.sut.handle(request(buffer("vh"), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        let html = rig.pasteboard.transientHTMLWrites.last ?? nil
+        XCTAssertTrue(html?.contains("<div dir=\"ltr\"><b>שלום</b> שלום הי</div>") == true, html ?? "nil")
+        XCTAssertFalse(html?.contains("\u{0}") == true, "the NUL is not written back")
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום הי")
+        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
+        XCTAssertTrue(sink.traces.first?.line.contains("siteKnown=true") == true)
+    }
+
+    @TextActor func testZenTwoLineBoxWithTrailingNULAndAnEmptyLine() async {
+        let rig = rig("שלום akuo\nnv vh", bold: 0..<4)
+        rig.pasteboard.copiedExtras = [
+            geckoHTML("<div dir=\"ltr\"><div><b>שלום</b> akuo</div><div>nv vh</div><div><br></div></div>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום\nמה הי")
+    }
+
+    @TextActor func testZenMultiLineSelectionWithTheSiteKnownIsPastedAsConvertedHTML() async {
+        let rig = rig("ok akuo\nvh ok", selection: 3..<10, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo\nvh"
+        rig.pasteboard.copiedExtras = [geckoHTML("<div><b>akuo</b></div><div>vh</div>")]
+        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "ok שלום\nהי ok", "line break kept")
+        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains("<div><b>שלום</b></div><div>הי</div>")
+                      == true)
+        XCTAssertEqual(log.beeps, 0)
+    }
+
+    @TextActor func testTheTraceSaysWhetherTheSiteWasKnown() async {
+        let rig = rig("ok akuo\nvh ok", selection: 3..<10, chromium: false, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo\nvh"
+        var r = request(empty(), app: "app.zen-browser.zen", siteUnknown: true)
+        r.pageState = .page
+        _ = await rig.sut.handle(r, layouts: layouts)
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("siteKnown=false"), line)
+        XCTAssertTrue(line.contains("pageState=page"), line)
+        // P3-49 (Coordinator decision 2026-11-16): a multi-line selection is pasted on an unknown site too.
+        XCTAssertTrue(line.contains("clipboard:pasted"), line)
+        for text in ["akuo", "vh", "שלום", "הי"] { XCTAssertFalse(line.contains(text), text) }
     }
 }

@@ -187,6 +187,11 @@ import Foundation
 
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
+        // P3-49: for browsers, whether the page's host was known for this request.
+        if BrowserCatalog.known[request.bundleID] != nil {
+            trace?.siteKnown = !request.browserSiteUnknown
+            trace?.pageState = request.pageState.map { "\($0)" } ?? "none"
+        }
         var finish = Finish()
         defer {
             // P2-59c (X5): a kept, re-rendered buffer is the whole buffer, never new strokes for the current word.
@@ -603,17 +608,20 @@ import Foundation
         case .terminal, .noUnicode, .disabled: return nil
         }
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
-        // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): never the
-        // whole box, and a selection only without line breaks.
-        if r.browserSiteUnknown {
-            if source == .box { return nil }
-            return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
-                           mayPasteLineBreaks: false, typedTail: typedTail)
-        }
         // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
+        var lineBreaks = mayPasteLineBreaks
+        if r.browserSiteUnknown {
+            // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): the
+            // whole box (⌘A) is never copied there.
+            if source == .box { return nil }
+            // P3-49 (Coordinator 2026-11-16): a selection is the user's own and the paste replaces only it, so it may
+            // hold line breaks (HTML path: kept as structure; plain path: the copy must match the selection AX
+            // reported, P3-40) as in any page of this app. Without AX's selection to check the copy against: none.
+            if axSelection == nil { lineBreaks = false }
+        }
         return ClipJob(source: source, element: element, direction: direction, axSelection: axSelection,
-                       mayPasteLineBreaks: mayPasteLineBreaks, typedTail: typedTail)
+                       mayPasteLineBreaks: lineBreaks, typedTail: typedTail)
     }
 
     /// P3-37 (c): the AX roles of a text box, for apps not seeded as keys-only.
@@ -671,13 +679,22 @@ import Foundation
         // P3-47: the formatting-preserving paste's planner: the same box rule (direction: the remembered buffer's
         // language, else the last letter) or, for a selection, the guessed layout, keeping `atoms` (link texts) whole.
         // Used on the HTML's text and on the copied plain text alike, so the two conversions agree.
+        // P3-49: the direction is decided once, on the first text planned (HTMLTextConvert plans the copied plain
+        // text first), and kept for the HTML's text, so the two can never go different ways.
+        var plannedSide: PairSide?
         let htmlPlanner: HTMLTextConvert.Planner = { text, atoms in
             let direction: PairSide?
-            switch job.source {
-            case .box: direction = job.direction
-            case .copiedSelection:
-                guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else { return [] }
-                direction = side
+            if let plannedSide {
+                direction = plannedSide
+            } else {
+                switch job.source {
+                case .box: direction = job.direction
+                case .copiedSelection:
+                    guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else {
+                        return []
+                    }
+                    direction = side
+                }
             }
             let w = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
                                 reachesFieldEnd: true)
@@ -689,6 +706,7 @@ import Foundation
             case .nothing: return []
             case .tooLong: return nil
             case .convert(let p):
+                plannedSide = p.side
                 target = layouts.source(of: p.side.other)
                 return p.changes
             }

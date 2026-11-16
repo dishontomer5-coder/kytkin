@@ -179,7 +179,13 @@ enum CopiedContent {
                 guard html == nil, e.data.count <= maxAnalyzedBytes, let s = String(data: e.data, encoding: .utf8) else {
                     return nil
                 }
-                html = s
+                // P3-49 (owner: Gmail in Zen, `htmlPaste=refused(nothingToConvert)`): Gecko writes its HTML flavour as a
+                // C string, with a terminating NUL. In the HTML's text that NUL is a control character, which
+                // `BoxConversion` treats as a hard stop: the segment holding the "caret" (the end) was empty, so
+                // nothing converted. Trailing NULs are not content: dropped here.
+                var trimmed = Substring(s)
+                while trimmed.last == "\u{0}" { trimmed = trimmed.dropLast() }
+                html = String(trimmed)
             } else if plainTypes.contains(e.type) || markerTypes.contains(e.type) || rtfTypes.contains(e.type)
                         || alternateTypes.contains(e.type) || chromiumMetaTypes.contains(e.type)
                         || (e.type.hasPrefix("org.mozilla.") && e.type != "org.mozilla.custom-clipdata") {
