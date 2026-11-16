@@ -111,4 +111,23 @@ final class HTMLTextConvertTests: XCTestCase {
         XCTAssertEqual(PageCategory.of(url: ""), .unknown)
     }
 
+
+    func testPageCategoryOfTheWebAreaChain() {
+        // P3-50 QA: innermost first.
+        let gmail = "https://mail.google.com/mail/u/0/"
+        let docs = "https://docs.google.com/document/d/x/edit"
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [gmail], reachedTop: true), .ordinary)
+        XCTAssertEqual(PageCategory.of(webAreaURLs: ["about:blank", gmail], reachedTop: true), .ordinary,
+                       "an about:blank editor iframe inside an ordinary page")
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [gmail, "chrome://browser/content/browser.xhtml"], reachedTop: true),
+                       .ordinary, "a browser's own UI web area says nothing")
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [docs, "https://example.com/blog"], reachedTop: true),
+                       .wholeDocument, "Docs in an iframe of an ordinary page")
+        XCTAssertEqual(PageCategory.of(webAreaURLs: ["https://example.com", docs], reachedTop: true), .wholeDocument)
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [nil, gmail], reachedTop: true), .unknown, "an unreadable area")
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [gmail], reachedTop: false), .unknown, "the top wasn't reached")
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [docs], reachedTop: false), .wholeDocument)
+        XCTAssertEqual(PageCategory.of(webAreaURLs: [], reachedTop: true), .unknown)
+        XCTAssertEqual(PageCategory.of(webAreaURLs: ["about:blank"], reachedTop: true), .unknown)
+    }
 }

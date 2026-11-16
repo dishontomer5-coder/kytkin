@@ -25,4 +25,26 @@ enum PageCategory: String, Sendable, Equatable {
               let host = components.host?.lowercased(), !host.isEmpty else { return .unknown }
         return ReplacementCapabilities.blocksClipboard(bundleID: "", host: host) ? .wholeDocument : .ordinary
     }
+
+    /// P3-50 QA: the category of the focused box's page from every `AXWebArea` on the way up (innermost first): each
+    /// address (nil = its `AXURL` couldn't be read), and whether the walk reached the top (no parent left).
+    ///   - any whole-document web area (Docs in an iframe, an Office doc embedded in a page) → `.wholeDocument`;
+    ///   - an unreadable address, or a walk that stopped early (timeout, step or time cap), → `.unknown` (an outer area
+    ///     not seen could be a whole-document one);
+    ///   - else the outermost http(s) area decides (`.ordinary`); areas of other schemes (`about:blank` iframes, a
+    ///     browser's own `chrome://` UI) say nothing. None → `.unknown`.
+    /// The addresses are dropped on return.
+    static func of(webAreaURLs urls: [String?], reachedTop: Bool) -> PageCategory {
+        var outermostWeb: PageCategory?
+        for url in urls {
+            guard let url else { return .unknown }
+            switch of(url: url) {
+            case .wholeDocument: return .wholeDocument
+            case .ordinary: outermostWeb = .ordinary
+            case .unknown: continue
+            }
+        }
+        guard reachedTop else { return .unknown }
+        return outermostWeb ?? .unknown
+    }
 }
