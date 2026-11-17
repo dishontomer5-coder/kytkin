@@ -196,6 +196,8 @@ import SwiftUI
             try shot("settings-\(tab.rawValue)", w, tab: tab, r, full: true)
         }
 
+        try aboutAcknowledgements(w, r)
+
         // Websites with Automation on and Chrome allowed.
         var auto = Sample.preferences()
         auto.browsers.useAutomation = true
@@ -231,6 +233,30 @@ import SwiftUI
         let wb = try world(prefs: badPair)
         try shot("settings-general-pair-warning", wb, tab: .general, r, full: true)
     }
+
+    /// P6-0l: About with "Acknowledgements…" open. The popover is window chrome (it can't be drawn offscreen), so
+    /// `PopoverMock` hangs the real `AcknowledgementsView` under the link, as the window shows it (arrowEdge .bottom).
+    private func aboutAcknowledgements(_ w: World, _ r: Renderer) throws {
+        let natural = try naturalHeight(w, tab: .about, r)
+        let height = SettingsMetrics.height(for: natural)
+        let size = settingsSize(height: height)
+        let popover = PopoverMock { AcknowledgementsView(acknowledgements: w.about.acknowledgements) }
+        let linkBottom = size.height - Self.acknowledgementsLinkFromBottom
+        try r.render("settings-about-acknowledgements",
+                     size: CGSize(width: size.width, height: linkBottom + 260),
+                     backdrop: .underPageBackgroundColor) {
+            ZStack(alignment: .top) {
+                settingsView(w, tab: .about, height: height)
+                    .frame(width: size.width, height: size.height)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .frame(maxHeight: .infinity, alignment: .top)
+                popover.offset(y: linkBottom)
+            }
+        }
+    }
+
+    /// The bottom of the "Acknowledgements…" link, measured from the window's bottom edge in the About shot.
+    static let acknowledgementsLinkFromBottom: CGFloat = 40
 
     private func renderSheets(_ r: Renderer) throws {
         let w = try world()

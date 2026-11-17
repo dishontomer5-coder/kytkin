@@ -358,10 +358,20 @@ final class AboutAcknowledgementsTests: XCTestCase {
         let about = AboutInfo(infoDictionary: [:], suffixListVersion: "2026-11-06_09-01-47_UTC")
         let psl = try XCTUnwrap(about.acknowledgements.first)
         XCTAssertEqual(psl.title, "Public Suffix List")
-        XCTAssertEqual(psl.license, "Mozilla Public License 2.0 (MPL-2.0)")
+        XCTAssertEqual(psl.license, "Mozilla Public License 2.0")
         XCTAssertEqual(psl.licenseURL.absoluteString, "https://mozilla.org/MPL/2.0/")
+        XCTAssertTrue(psl.detail.hasPrefix("Public Suffix List (publicsuffix.org), used unmodified to group website "
+                                           + "addresses into sites."))
         XCTAssertTrue(psl.detail.hasSuffix("Version 2026-11-06."))
         XCTAssertFalse(AboutInfo(infoDictionary: [:]).acknowledgements[0].detail.contains("Version"))
+    }
+
+    /// P6-0l: the owner's dedication, word for word, above the third-party credit.
+    func testDedication() {
+        XCTAssertEqual(AboutInfo.acknowledgementsTitle, "Acknowledgements")
+        XCTAssertEqual(AboutInfo.dedication, "Kytkin was built by Tomer Dishon for Ofir W.\n"
+                       + "So she would never have to pay for a keyboard switcher again — and get a better one.")
+        XCTAssertEqual(AboutInfo.thirdPartyTitle, "Third-party software")
     }
 
     func testDisplayVersion() {
