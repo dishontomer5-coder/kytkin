@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# P6-0a: Build and run the headless UI renderer (Tools/render-ui). Draws every Settings tab, the Add Website sheet,
+# the welcome window's steps, the status-bar menu and the menu-bar label to PNG (2x, light and dark) with fake data.
+#   ./scripts/render-ui                       write to docs/design/p6-0-snapshots/
+#   ./scripts/render-ui OUT_DIR [FILTER]      another folder; only names containing FILTER
+# Dev-only: compiled here with swiftc into build/tools/, never part of the Kytkin app target (project.yml).
+# Safe on a live Mac: no window is created, the process can't activate (activation policy .prohibited), and no
+# preferences file, permission, clipboard, Apple Event or other app is touched (see Tools/render-ui/main.swift).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+BIN="build/tools/render-ui"
+OUT="${1:-docs/design/p6-0-snapshots}"
+FILTER="${2:-}"
+mkdir -p "$(dirname "$BIN")"
+
+# The app's Core (pure models) plus the SwiftUI views only: no window controllers, no StatusItemController,
+# WindowPresenter or anything in Sources/System or Sources/App.
+SOURCES=(
+  Tools/render-ui/*.swift
+  $(find Sources/Core -name '*.swift' | sort)
+  Sources/UI/Settings/AboutSettingsView.swift
+  Sources/UI/Settings/AddWebsiteSheet.swift
+  Sources/UI/Settings/AppsSettingsView.swift
+  Sources/UI/Settings/BrowsersSettingsView.swift
+  Sources/UI/Settings/ConvertSettingsView.swift
+  Sources/UI/Settings/GeneralSettingsView.swift
+  Sources/UI/Settings/LanguagePairPickers.swift
+  Sources/UI/Settings/LanguagesSettingsView.swift
+  Sources/UI/Settings/PermissionsSettingsView.swift
+  Sources/UI/Settings/PlaceholderSettingsView.swift
+  Sources/UI/Settings/RulesSettingsView.swift
+  Sources/UI/Settings/SearchField.swift
+  Sources/UI/Settings/SettingsNoticeList.swift
+  Sources/UI/Settings/SettingsView.swift
+  Sources/UI/Onboarding/OnboardingView.swift
+)
+
+xcrun swiftc -swift-version 6 -O -target "$(uname -m)-apple-macos14.0" -module-name KytkinRenderUI \
+  -o "$BIN" "${SOURCES[@]}"
+mkdir -p "$OUT"
+exec "$BIN" "$PWD" "$OUT" ${FILTER:+"$FILTER"}
