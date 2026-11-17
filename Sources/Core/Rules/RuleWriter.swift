@@ -2,7 +2,8 @@
 // rules of the same normalized scope (the same normalization RuleEngine matches with), so a duplicate that a hand
 // edit created heals on the first write, and no tie is ever left to `updatedAt` precision.
 //
-//   learn  → like `RuleLearner.upsert`: a pinned rule for the scope is never touched (and then nothing is written);
+//   learn  → a pinned rule for the scope is never touched (and then nothing is written) (P3-19: the old
+//            `RuleLearner.upsert` is gone; every write comes here);
 //            a learned one is updated in place (same id); otherwise a new learned rule is added.
 //   pin    → the winning rule for the scope (any origin) becomes pinned with the new source (same id, label kept);
 //            otherwise a new pinned rule is added.

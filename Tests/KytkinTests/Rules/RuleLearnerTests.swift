@@ -1,6 +1,6 @@
 // P2-10: RuleLearner: the 500 ms settle window, confirm by words, confirm by dwell, cancel on context
 // change / switch back / our switch, the pin guard, private windows, the empty bundle ID, learning off,
-// and upsert (learn new, update learned, never touch pinned) (001 §3 (b), §10 P2-10).
+// and writing a .learn through RuleWriter (learn new, update learned, never touch pinned) (001 §3 (b), §10 P2-10).
 
 import XCTest
 
@@ -257,16 +257,16 @@ final class RuleLearnerTests: XCTestCase {
         XCTAssertEqual(words(2, &l), .discard(.pinned))
     }
 
-    func testUpsertNeverChangesPinnedRule() {
+    func testWriterLearnNeverChangesPinnedRule() {
         let pinned = Rule(scope: .app(bundleID: slack), inputSource: abc, origin: .pinned, updatedAt: t0)
-        let out = RuleLearner.upsert(.learn(.app(bundleID: slack), hebrew), into: [pinned], now: t0.addingTimeInterval(60))
+        let out = RuleWriter.learn(.learn(.app(bundleID: slack), hebrew), into: [pinned], now: t0.addingTimeInterval(60))
         XCTAssertEqual(out, [pinned])
     }
 
-    func testUpsertWithPinnedAndLearnedDuplicatesChangesNothing() {
+    func testWriterLearnWithPinnedAndLearnedDuplicatesChangesNothing() {
         let pinned = Rule(scope: .app(bundleID: slack), inputSource: abc, origin: .pinned, updatedAt: t0)
         let learned = Rule(scope: .app(bundleID: slack), inputSource: russian, origin: .learned, updatedAt: t0.addingTimeInterval(5))
-        let out = RuleLearner.upsert(.learn(.app(bundleID: slack), hebrew), into: [pinned, learned], now: t0.addingTimeInterval(60))
+        let out = RuleWriter.learn(.learn(.app(bundleID: slack), hebrew), into: [pinned, learned], now: t0.addingTimeInterval(60))
         XCTAssertEqual(out, [pinned, learned])
     }
 
@@ -319,20 +319,20 @@ final class RuleLearnerTests: XCTestCase {
         XCTAssertEqual(words(2, &l), .discard(.learningDisabled))
     }
 
-    // MARK: - Upsert
+    // MARK: - Writing a .learn (P3-19: through RuleWriter, the one writer)
 
-    func testUpsertAppendsNewLearnedRule() {
+    func testWriterLearnAppendsNewLearnedRule() {
         let id = UUID()
         let now = t0.addingTimeInterval(60)
-        let out = RuleLearner.upsert(.learn(.app(bundleID: slack), hebrew), into: [], now: now, newID: id)
+        let out = RuleWriter.learn(.learn(.app(bundleID: slack), hebrew), into: [], now: now, newID: id)
         XCTAssertEqual(out, [Rule(id: id, scope: .app(bundleID: slack), inputSource: hebrew, origin: .learned, updatedAt: now)])
     }
 
-    func testUpsertUpdatesLearnedRuleInPlace() {
+    func testWriterLearnUpdatesLearnedRuleInPlace() {
         let other = Rule(scope: .app(bundleID: chrome), inputSource: abc, origin: .learned, updatedAt: t0)
         let learned = Rule(scope: .app(bundleID: slack), inputSource: abc, origin: .learned, label: "Slack", updatedAt: t0)
         let now = t0.addingTimeInterval(60)
-        let out = RuleLearner.upsert(.learn(.app(bundleID: slack), hebrew), into: [other, learned], now: now)
+        let out = RuleWriter.learn(.learn(.app(bundleID: slack), hebrew), into: [other, learned], now: now)
         XCTAssertEqual(out.count, 2)
         XCTAssertEqual(out[0], other)
         XCTAssertEqual(out[1].id, learned.id, "same rule, updated")
@@ -342,16 +342,16 @@ final class RuleLearnerTests: XCTestCase {
         XCTAssertEqual(out[1].label, "Slack")
     }
 
-    func testUpsertMatchesNormalizedHost() {
+    func testWriterLearnMatchesNormalizedHost() {
         let learned = Rule(scope: .site(domain: "Ynet.co.il."), inputSource: abc, origin: .learned, updatedAt: t0)
-        let out = RuleLearner.upsert(.learn(.site(domain: "ynet.co.il"), hebrew), into: [learned], now: t0)
+        let out = RuleWriter.learn(.learn(.site(domain: "ynet.co.il"), hebrew), into: [learned], now: t0)
         XCTAssertEqual(out.count, 1)
         XCTAssertEqual(out[0].inputSource, hebrew)
     }
 
-    func testUpsertIgnoresDiscard() {
+    func testWriterLearnIgnoresDiscard() {
         let rules = [Rule(scope: .app(bundleID: slack), inputSource: abc, origin: .learned, updatedAt: t0)]
-        XCTAssertEqual(RuleLearner.upsert(.discard(.pinned), into: rules, now: t0), rules)
+        XCTAssertEqual(RuleWriter.learn(.discard(.pinned), into: rules, now: t0), rules)
     }
 
     // MARK: - End to end with the attributor

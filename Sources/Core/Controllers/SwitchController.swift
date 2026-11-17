@@ -204,10 +204,8 @@ import Foundation
               (aInBar ?? engine.usesBrowserLanguage(a)) == (bInBar ?? engine.usesBrowserLanguage(b)) else {
             return false
         }
-        let oldHost = HostNormalizer.normalized(a.host), newHost = HostNormalizer.normalized(b.host)
-        guard oldHost != newHost else { return true }
-        let hasOverride = { (h: String?) in h.map { engine.rule(for: .siteHost(host: $0)) != nil } ?? false }
-        return !hasOverride(oldHost) && !hasOverride(newHost)
+        // P3-19: the same host rule as ContextAssembler.
+        return !HostNormalizer.hostChangeMatters(a.host, b.host) { engine.rule(for: .siteHost(host: $0)) != nil }
     }
 
     private func applyRule(for c: Context) {

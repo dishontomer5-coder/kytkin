@@ -259,9 +259,10 @@ struct ContextAssembler {
         return bundleID.lowercased().hasPrefix(KnownSwitchers.ownBundleIDPrefix)
     }
 
-    /// A host change inside one registrable domain matters only when the old or the new host has an override.
+    /// A host change inside one registrable domain matters only when the old or the new host has an override
+    /// (P3-19: the rule shared with SwitchController).
     private func hostMatters(_ oldHost: String?, _ newHost: String?) -> Bool {
-        oldHost != newHost && [oldHost, newHost].contains { $0.map(hostsWithOverrides.contains) ?? false }
+        HostNormalizer.hostChangeMatters(oldHost, newHost, hasOverride: hostsWithOverrides.contains)
     }
 
     /// `activation`: a new app; its grace replaces any earlier one (after the burst check, which still sees it).
