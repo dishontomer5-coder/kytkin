@@ -251,7 +251,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertTrue(log.performs.isEmpty, "no keys in Slack")
         guard let t = sink.traces.first else { return XCTFail("no trace") }
         XCTAssertEqual(t.chromiumSkipped, "chatAppClipboard")
-        XCTAssertTrue(t.line.contains("slackClipboard=box"), t.line)
+        XCTAssertTrue(t.line.contains("chatClipboard=box"), t.line)
         for text in ["Tomer", "Dishon", "תומר", "akuo", "joy"] { XCTAssertFalse(t.line.contains(text), text) }
     }
 
@@ -905,7 +905,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.pasteboard.box, "ok שלום :fire: ok")
         XCTAssertTrue(rig.field.rangeWrites.isEmpty)
-        XCTAssertTrue(sink.traces.first?.line.contains("slackClipboard=selection") == true)
+        XCTAssertTrue(sink.traces.first?.line.contains("chatClipboard=selection") == true)
     }
 
     @TextActor func testSlackNothingCopiedJustSwitches() async {

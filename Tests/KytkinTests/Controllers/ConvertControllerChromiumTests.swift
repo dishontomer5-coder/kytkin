@@ -279,7 +279,7 @@ final class ConvertControllerChromiumTests: XCTestCase {
 
     func testFamilyHint() {
         var caps = ReplacementCapabilities()
-        XCTAssertEqual(caps.family(for: slack), .chromiumAX)
+        XCTAssertNil(caps.family(for: slack), "P3-60: chat apps use the clipboard only")
         XCTAssertEqual(caps.family(for: "COM.GOOGLE.CHROME"), .chromiumAX)
         XCTAssertNil(caps.family(for: vscode))
         XCTAssertNil(caps.family(for: "com.apple.Terminal"))

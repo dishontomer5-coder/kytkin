@@ -27,8 +27,7 @@ extension ReplacementCapabilities {
             "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser",
             // P2-36 (001 §12 T7): the other Chromium browsers.
             "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium",
-            "com.tinyspeck.slackmacgap", "com.hnc.Discord", "com.microsoft.teams2",
-        ]
+        ] + chatAppBundleIDs.sorted()   // P3-60: the one chat-app list
         // Remote desktops and VMs read key codes only and ignore the Unicode string (R4/R5).
         let noUnicode = [
             "com.microsoft.rdc.macos", "com.parallels.desktop.console", "com.vmware.fusion",
@@ -52,6 +51,17 @@ extension ReplacementCapabilities {
         "app.zen-browser.zen", "org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly",
         "org.mozilla.librewolf", "net.waterfox.waterfox", "one.ablaze.floorp",
     ]
+
+    /// P3-58 / P3-60: the chat apps (lowercased bundle IDs): Slack, Discord, Teams (the new `teams2` and classic
+    /// `teams`). Seeded `.keysOnly`; their double-Shift is copy → convert → paste only (no Chromium AX path, no keys over
+    /// anything); their copies are rich unless proven plain (`CopiedContent.AppKind.chat`). The one list used everywhere.
+    static let chatAppBundleIDs: Set<String> = ["com.tinyspeck.slackmacgap", "com.hnc.discord", "com.microsoft.teams2",
+                                                "com.microsoft.teams"]
+
+    /// P3-58 / P3-60: `bundleID` is one of the chat apps.
+    static func isChatApp(_ bundleID: String) -> Bool {
+        chatAppBundleIDs.contains(bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
 
     /// P3-37 (c): code editors and IDEs, where ⌘A selects the whole file (a whole-box convert would turn every English
     /// identifier into Hebrew) and the same window hosts a terminal (a pasted box with line breaks could run commands at

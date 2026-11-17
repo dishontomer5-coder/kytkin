@@ -1,5 +1,6 @@
-// P3-50: the live `TextReplacing.focusedPageCategory`: from the system-wide focused element, walk `AXParent` (≤ 40
-// steps, every element with the 0.25 s messaging timeout; P3-50 QA: ≤ 300 ms in all) and read the `AXURL` of every
+// P3-50: the live `TextReplacing.focusedPageCategory`: from the system-wide focused element, walk `AXParent` (≤ 128
+// steps since P3-54; every call's messaging timeout ≤ 0.25 s and ≤ what is left; the whole walk within the caller's
+// budget, ≤ 100 ms from `ConvertController` (P3-53), never more than 300 ms) and read the `AXURL` of every
 // `AXWebArea` on the way. The addresses go straight to `PageCategory.of(webAreaURLs:reachedTop:)` (any whole-document
 // area wins; a walk that didn't reach the top is unknown); only the category leaves this function, the addresses and
 // their hosts are dropped here (design.md: a browser address is reduced inside the one function that reads it). Reads

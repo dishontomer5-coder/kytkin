@@ -1162,13 +1162,6 @@ import Foundation
             // typed; beep instead.
             beep()
             return .noop(.replacement(.timedOut))
-        case .unavailable(.inconsistent) where ax.lastDiagnostic.readCheck == .prefix
-                && ax.lastDiagnostic.prefixUnexplained && CopiedContent.appKind(bundleID: r.bundleID) == .chat:
-            // P3-55 (owner: a Slack box with a `:smile:`-entered emoji): the prefix disagreed with nothing the walk can
-            // explain (no U+FFFC, no emoji on either side), and in chat apps the next paths (clipboard → keys) once
-            // wrote a wrong copy of the box. Until that shape is understood: just switch, forget the buffer.
-            if r.snapshot.hasRun { finish.bufferAfter = [] }
-            return await toggle(r, because: .fieldUnreadable)
         case .unavailable:
             return await fallBackFromChromium(r, layouts: layouts, finish: &finish)
         case .partial, .failed:
