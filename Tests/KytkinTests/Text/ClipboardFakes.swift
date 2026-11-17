@@ -72,7 +72,12 @@ import Foundation
 
     /// Someone else (the user, another app) copies now.
     func externalCopy(_ text: String) {
-        items = [[PasteboardEntry(type: Self.plain, data: Data(text.utf8))]]
+        externalCopy([[PasteboardEntry(type: Self.plain, data: Data(text.utf8))]])
+    }
+
+    /// P3-65: another app (a password manager) put these items on the clipboard.
+    func externalCopy(_ newItems: [[PasteboardEntry]]) {
+        items = newItems
         count += 1
     }
 
@@ -81,7 +86,16 @@ import Foundation
     var changeCount: Int { sync(); return count }
     var transientReads: Int { sync(); return reads }
 
+    /// P3-65 QA: how many times the data was read (`snapshot`), so tests can see the secret check reads names only.
+    private(set) var snapshotReads = 0
+
+    func currentTypes() -> [String]? {
+        sync()
+        return snapshotFails ? nil : items.flatMap { $0.map(\.type) }
+    }
+
     func snapshot(maxBytes: Int) -> PasteboardSnapshot? {
+        snapshotReads += 1
         sync()
         let s = PasteboardSnapshot(items: items)
         return snapshotFails || s.byteCount > maxBytes ? nil : s

@@ -535,8 +535,10 @@ final class ChromiumAXConvertTests: XCTestCase {
         return f
     }
 
-    @TextActor private func runWithAtoms(_ f: FakeChromiumField) async -> (ChromiumAXConvert.Result, ChromiumAXConvert) {
+    @TextActor private func runWithAtoms(_ f: FakeChromiumField, diagnostics: Bool = true) async
+        -> (ChromiumAXConvert.Result, ChromiumAXConvert) {
         let ax = sut(SwitchableFocusProvider(f))
+        ax.diagnostics = diagnostics
         let result = await ax.run(.box, expected: f, plan: { read in
             // As the controller: P3-62, only the text from the box's start up to the caret is planned.
             let b = read.selection.location
@@ -864,6 +866,16 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(ax.lastDiagnostic.valueUnits, 11)
         XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 1)
         XCTAssertEqual(ax.lastDiagnostic.oddUnits, "2:U+E000,U+E001")
+    }
+
+    @TextActor func testWithDiagnosticsOffTheBoxSummariesAreNeverBuilt() async {
+        // P3-65 (P3-18 audit L1): Release has no trace reader, so no code-point summary of the box is built or kept.
+        let f = imageBox("vh  vh vh", at: 3, odd: [0xE000, 0xE001])
+        let (result, ax) = await runWithAtoms(f, diagnostics: false)
+        XCTAssertEqual(result, .converted(pieces: 3), "behaviour unchanged")
+        XCTAssertEqual(f.text, "הי  הי הי")
+        XCTAssertNil(ax.lastDiagnostic.oddUnits)
+        XCTAssertTrue(ax.lastDiagnostic.atomRoles.isEmpty)
     }
 
     @TextActor func testAZeroWidthSpacePairAndAVS16OnlyShape() async {

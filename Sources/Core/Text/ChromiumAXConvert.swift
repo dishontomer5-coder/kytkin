@@ -262,6 +262,10 @@ import Foundation
         }
     }
     private(set) var lastDiagnostic = Diagnostic()
+    /// P3-65 (audit L1): build the code-point summaries of the box (`oddUnits`, `prefixObjects`, `spanShape`,
+    /// `prefixMismatch`, `atomRoles`) only when someone reads them (the DEBUG trace). Release: off, nothing derived
+    /// from the box is kept. Counts are still kept (they steer nothing either).
+    var diagnostics = true
     /// P3-51 QA: `AXValue` holds an emoji as text (not only U+FFFC): window read-backs must then match exactly.
     private var valueHasLiteralObjects = false
     /// P3-57: this convert's `AXValue` holds one run of odd units (Cf / Co / Cn / non-emoji So / variation selectors) per
@@ -735,7 +739,7 @@ import Foundation
         }
         // P3-57: the odd units (counts and code points only) for the trace, whatever happens next.
         let odd = Self.oddRuns(in: value)
-        lastDiagnostic.oddUnits = Self.oddUnitsSummary(value)
+        if diagnostics { lastDiagnostic.oddUnits = Self.oddUnitsSummary(value) }
         // P3-44: mention pills / links the AX tree shows as their own elements, for the plan to keep whole. Best
         // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
         // P3-46: read before the prefix check (it uses them, and the trace counts them even when the check fails).
@@ -748,7 +752,7 @@ import Foundation
         case .success(let a):
             atoms = a.map(\.text).filter { !$0.isEmpty }   // P3-55: images come as empty atoms (trace count only)
             images = a.filter { $0.role == "AXImage" }.count   // P3-57
-            lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
+            if diagnostics { lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) } }
         case .failure: if timedOut { return fail(.atomRead, .readFailed) }
         }
         // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
@@ -810,11 +814,14 @@ import Foundation
                 // P3-46 QA: an empty answer proves nothing when the box holds a pill (see `.failure` below).
                 if prefix.isEmpty, source == .box, !atoms.isEmpty { return fail(.prefix, .inconsistent) }
                 if !prefix.isEmpty, !ReplacementExecutor.readsBackAs(prefix, expected) {
-                    lastDiagnostic.prefixMismatch = Self.mismatch(Array(prefix.utf16), Array(expected.utf16))
-                    let ax = Self.objectCounts(prefix), val = Self.objectCounts(expected)
-                    lastDiagnostic.prefixObjects = "ax\(ax.fffc)fffc+\(ax.emoji)emoji/value\(val.fffc)fffc+\(val.emoji)emoji"
-                    lastDiagnostic.prefixUnexplained = ax.fffc + ax.emoji + val.fffc + val.emoji == 0
-                    lastDiagnostic.spanShape = Self.spanShape(ax: prefix, value: expected)   // P3-57
+                    if diagnostics {   // P3-65 (audit L1)
+                        lastDiagnostic.prefixMismatch = Self.mismatch(Array(prefix.utf16), Array(expected.utf16))
+                        let ax = Self.objectCounts(prefix), val = Self.objectCounts(expected)
+                        lastDiagnostic.prefixObjects =
+                            "ax\(ax.fffc)fffc+\(ax.emoji)emoji/value\(val.fffc)fffc+\(val.emoji)emoji"
+                        lastDiagnostic.prefixUnexplained = ax.fffc + ax.emoji + val.fffc + val.emoji == 0
+                        lastDiagnostic.spanShape = Self.spanShape(ax: prefix, value: expected)   // P3-57
+                    }
                     guard let alignment = Self.prefixAlignment(prefix, in: units, atoms: atoms),
                           alignment.end <= n, let c = Self.caret(fromPrefix: alignment, appCaret: sel.end), c <= n
                     else { return fail(.prefix, .inconsistent) }

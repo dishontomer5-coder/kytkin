@@ -153,6 +153,10 @@ import Foundation
         }
     }
     private(set) var lastCopy: CopyDiagnostic?
+    /// P3-65 (audit H1): the last run stopped because the user's clipboard is Concealed / Transient (`.unavailable`).
+    private(set) var refusedSecretClipboard = false
+    /// P3-65 (audit L1): fill `lastCopy` only when someone reads it (the DEBUG trace). Release: off.
+    var diagnostics = true
     private let poster: any KeyEventPosting
     private let clock: any Clock
     private let sleep: @Sendable (UInt64) async -> Void
@@ -183,10 +187,25 @@ import Foundation
              selectionShows: () -> Bool? = { nil },
              focusIsSame: () -> Bool, mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         lastCopy = nil
+        refusedSecretClipboard = false
         let start = startedAt ?? clock.nowNanos
         // P3-53: too late to copy and still paste inside the budget: nothing is posted.
         if clock.nowNanos &- start > timing.copyStartBudgetNanos { return (.timedOut, nil) }
+        // P3-65 (audit H1): a password manager's concealed / transient item is never snapshotted, copied over or put
+        // back (that would stop its auto-clear). Nothing is posted; the caller falls back (a chat app just switches).
+        // P3-65 QA: decided from the type names alone, before any data is read (reading would make the manager deliver
+        // the secret); a pasteboard whose types can't be listed is not used either.
+        guard let types = pasteboard.currentTypes() else { return (.unavailable, nil) }
+        if types.contains(where: PasteboardSnapshot.secretMarkers.contains) {
+            refusedSecretClipboard = true
+            return (.unavailable, nil)
+        }
         guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
+        // Belt and braces: the same check on what was read (a marker added in between).
+        if snapshot.isConcealedOrTransient {
+            refusedSecretClipboard = true
+            return (.unavailable, nil)
+        }
         let before = pasteboard.changeCount
         guard mayWrite() else { return (.abandoned, nil) }
 
@@ -236,7 +255,9 @@ import Foundation
         // P3-46: the strict verdict (no HTML in a chat app, unknown types, mention / shortcode / URL tokens → rich).
         let copied = pasteboard.snapshot(maxBytes: Self.maxCopiedBytes)
         let verdict = copied.map { CopiedContent.verdict($0.items, text: text, app: app) }
-        lastCopy = CopyDiagnostic(types: copied.map { CopiedContent.typeCounts($0.items) }, reason: verdict?.reason)
+        if diagnostics {   // P3-65 (audit L1)
+            lastCopy = CopyDiagnostic(types: copied.map { CopiedContent.typeCounts($0.items) }, reason: verdict?.reason)
+        }
         var htmlOut: HTMLTextConvert.Output?
         if !pasteRichAsPlain, verdict?.isRich ?? true {
             // P3-47: formatting only (not a chat app) → convert inside the HTML and paste it.

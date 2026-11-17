@@ -16,4 +16,13 @@ struct PasteboardSnapshot: Sendable, Equatable {
     let items: [[PasteboardEntry]]
 
     var byteCount: Int { items.reduce(0) { $0 + $1.reduce(0) { $0 + $1.data.count } } }
+
+    /// P3-65 (P3-18 audit H1): the user's clipboard is a secret or a short-lived value (a password manager's copied
+    /// password waiting for its auto-clear, nspasteboard.org markers). Restoring it would make a new `changeCount`,
+    /// so the manager would think the user copied something else and never clear it: no clipboard convert then.
+    var isConcealedOrTransient: Bool {
+        items.contains { $0.contains { Self.secretMarkers.contains($0.type) } }
+    }
+
+    static let secretMarkers: Set<String> = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"]
 }

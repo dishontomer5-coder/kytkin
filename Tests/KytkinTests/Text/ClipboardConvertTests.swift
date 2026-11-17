@@ -12,9 +12,10 @@ final class ClipboardConvertTests: XCTestCase {
         clock = FakeClock(nowNanos: 1_000_000_000)
     }
 
-    @TextActor private func make(box: String) -> (ClipboardConvert, FakePasteboard, RecordingPoster) {
+    @TextActor private func make(box: String, clipboard: [[PasteboardEntry]] = FakePasteboard.user)
+        -> (ClipboardConvert, FakePasteboard, RecordingPoster) {
         let poster = RecordingPoster()
-        let pb = FakePasteboard(poster: poster, clock: clock, box: box)
+        let pb = FakePasteboard(poster: poster, clock: clock, box: box, clipboard: clipboard)
         let clock = self.clock!
         let sut = ClipboardConvert(pasteboard: pb, poster: poster, clock: clock,
                                    sleep: { nanos in clock.advance(byNanos: nanos) })
@@ -214,6 +215,62 @@ final class ClipboardConvertTests: XCTestCase {
         let (result, _) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
         XCTAssertEqual(result, .unavailable)
         XCTAssertTrue(pb.holdsUserClipboard)
+    }
+
+    // MARK: - P3-65 (P3-18 audit H1): a password manager's secret on the clipboard
+
+    private static func secret(_ marker: String) -> [[PasteboardEntry]] {
+        [[PasteboardEntry(type: "public.utf8-plain-text", data: Data("hunter2".utf8)),
+          PasteboardEntry(type: marker, data: Data())]]
+    }
+
+    @TextActor func testAConcealedClipboardIsNeverTouched() async {
+        let clipboard = Self.secret("org.nspasteboard.ConcealedType")
+        let (sut, pb, poster) = make(box: "akuo", clipboard: clipboard)
+        let (result, pending) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(result, .unavailable, "the caller falls back")
+        XCTAssertNil(pending)
+        XCTAssertTrue(poster.events.isEmpty, "no ⇧⌘↑, no ⌘C")
+        XCTAssertEqual(pb.items, clipboard, "untouched")
+        XCTAssertEqual(pb.restores, 0, "never written back (that would stop its auto-clear)")
+        XCTAssertTrue(sut.refusedSecretClipboard)
+        XCTAssertEqual(pb.snapshotReads, 0, "P3-65 QA: decided from type names; the secret's data is never read")
+    }
+
+    @TextActor func testATransientClipboardIsNeverTouched() async {
+        let clipboard = Self.secret("org.nspasteboard.TransientType")
+        let (sut, pb, poster) = make(box: "akuo", clipboard: clipboard)
+        let (result, _) = await sut.run(.copiedSelection, convert: upper, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertTrue(poster.events.isEmpty)
+        XCTAssertEqual(pb.items, clipboard)
+        XCTAssertEqual(pb.restores, 0)
+    }
+
+    @TextActor func testAMarkerOnASecondItemCountsToo() async {
+        var clipboard = FakePasteboard.user
+        clipboard.append([PasteboardEntry(type: "org.nspasteboard.ConcealedType", data: Data())])
+        let (sut, _, poster) = make(box: "akuo", clipboard: clipboard)
+        let (result, _) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    @TextActor func testAnOrdinaryClipboardStillConvertsAndTheFlagIsClear() async {
+        let (sut, _, _) = make(box: "akuo")
+        let (result, _) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(result, .pasted)
+        XCTAssertFalse(sut.refusedSecretClipboard)
+    }
+
+    // MARK: - P3-65 (audit L1): no diagnostics without a reader
+
+    @TextActor func testWithDiagnosticsOffNothingIsKeptForTheTrace() async {
+        let (sut, _, _) = make(box: "akuo")
+        sut.diagnostics = false
+        let (result, _) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(result, .pasted, "behaviour unchanged")
+        XCTAssertNil(sut.lastCopy)
     }
 
     // MARK: - The restore

@@ -22,6 +22,10 @@ import AppKit
 
     var transientReads: Int { 0 }
 
+    func currentTypes() -> [String]? {   // P3-65 QA: names only, no data read
+        pasteboard.pasteboardItems.map { items in items.flatMap { $0.types.map(\.rawValue) } }
+    }
+
     func snapshot(maxBytes: Int) -> PasteboardSnapshot? {
         var total = 0
         var items: [[PasteboardEntry]] = []

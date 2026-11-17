@@ -246,8 +246,10 @@ import Foundation
     }
 
     /// P3-44: notes one path tried and why it stopped (an enum's description: never text).
-    private func note(_ path: ConvertTrace.Path, _ reason: String) {
-        trace?.steps.append(.init(path: path, reason: reason))
+    /// P3-65 (audit L1): the reason is built only when there is a trace (DEBUG with the hook).
+    private func note(_ path: ConvertTrace.Path, _ reason: @autoclosure () -> String) {
+        guard trace != nil else { return }
+        trace?.steps.append(.init(path: path, reason: reason()))
     }
 
     /// Settings → Apps (§12 T5): replaces the user's overrides; removed apps fall back to the seeds.
@@ -710,6 +712,7 @@ import Foundation
     private func currentClipboard() -> ClipboardConvert? {
         if let clipboard { return clipboard }
         clipboard = makeClipboard?()
+        clipboard?.diagnostics = diagnose != nil   // P3-65 (audit L1)
         return clipboard
     }
 
@@ -842,7 +845,8 @@ import Foundation
                                              },
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
-        note(.clipboard, "\(result)")
+        // P3-65 (audit H1): say why the clipboard path stood aside (enum names only).
+        note(.clipboard, cb.refusedSecretClipboard ? "unavailable(secretClipboard)" : "\(result)")
         trace?.copy = cb.lastCopy   // P3-46: type categories (counts) and the verdict's reason; no data
         switch result {
         case .pasted:
@@ -1050,6 +1054,7 @@ import Foundation
     private func currentChromiumAX() -> ChromiumAXConvert? {
         if let chromiumAX { return chromiumAX }
         chromiumAX = makeChromiumAX?()
+        chromiumAX?.diagnostics = diagnose != nil   // P3-65 (audit L1)
         return chromiumAX
     }
 
