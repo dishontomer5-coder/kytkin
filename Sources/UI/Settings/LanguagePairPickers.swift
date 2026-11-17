@@ -138,7 +138,7 @@ struct LanguagePairKey: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.system(size: SettingsMetrics.secondarySize))
-                        .foregroundStyle(onTeal ? Color.white.opacity(0.75) : Color.secondary)
+                        .foregroundStyle(onTeal ? Color.white.opacity(0.9) : Color.secondary)   // QA: 4.6:1 on teal (0.75: 3.7)
                     Text(value).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.tail)
                         .foregroundStyle(onTeal ? Color.white : Color.primary)
                 }
@@ -184,7 +184,15 @@ struct LanguagePairKey: View {
                 menu.addItem(item)
             }
         }
-        menu.popUp(positioning: checked, at: NSEvent.mouseLocation, in: nil)
+        // QA (P6-0h): opened from the keyboard or VoiceOver, the pointer may be anywhere (even another screen), so the
+        // list then opens over the middle of the key window instead of at the pointer.
+        let byMouse = NSApp.currentEvent.map { [.leftMouseUp, .leftMouseDown].contains($0.type) } ?? false
+        if !byMouse, let content = NSApp.keyWindow?.contentView {
+            menu.popUp(positioning: checked, at: NSPoint(x: content.bounds.midX - 100, y: content.bounds.midY),
+                       in: content)
+        } else {
+            menu.popUp(positioning: checked, at: NSEvent.mouseLocation, in: nil)
+        }
     }
 }
 
