@@ -84,6 +84,7 @@ final class OnboardingModelTests: XCTestCase {
     /// P6-0c: the wall clock the "waiting long" hint reads.
     private final class TestClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000) }
     private let clock = TestClock()
+    private var selected: [InputSourceID] = []
 
     private func make(_ prefs: Preferences = Preferences(), store custom: PreferencesStore? = nil,
                       layouts: FakeSystemLayouts = .standard(),
@@ -104,7 +105,8 @@ final class OnboardingModelTests: XCTestCase {
         sut = OnboardingModel(store: store, permissions: permissions, polling: polling, general: general,
                               languages: languages, appName: "Kytkin Dev", bundlePath: bundlePath,
                               now: { clock.now }, layouts: { ConvertFixtures.layouts },
-                              sourceName: { $0 == IDs.hebrew ? "Hebrew" : "English" })
+                              sourceName: { $0 == IDs.hebrew ? "Hebrew" : "English" },
+                              selectSource: { [unowned self] in self.selected.append($0) })
     }
 
     private func seen(_ value: Bool) -> Preferences {
@@ -408,5 +410,63 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(sut.practiceHint,
                        "With the English keyboard on, type akuo and press Shift twice. It becomes \u{2068}שלום\u{2069}.")
         XCTAssertEqual(PracticeConvert.hint(layouts: nil, name: { $0.rawValue }), PracticeConvert.genericHint)
+    }
+
+    // MARK: - P6-0i: the ghost word
+
+    func testThePracticeStepShowsTheGhostWordAndSwitchesToTheTypingLanguage() {
+        make()
+        sut.begin(firstLaunch: true)
+        XCTAssertNil(sut.practiceSample)
+        XCTAssertTrue(selected.isEmpty, "nothing switches before the practice step")
+        sut.next(); sut.next()
+        XCTAssertEqual(sut.practiceSample?.typed, "akuo")
+        XCTAssertEqual(selected, [IDs.abc], "typing gives akuo: the first language")
+        XCTAssertEqual(sut.practicePhase, .typing(filled: 0))
+        sut.back()
+        sut.begin(firstLaunch: false, startAt: .practice)
+        XCTAssertEqual(selected, [IDs.abc, IDs.abc], "also when the window opens on the practice step")
+    }
+
+    func testAWrongKeyIsTurnedAwayAndTheWordConverts() {
+        make()
+        sut.begin(firstLaunch: true, startAt: .practice)
+        sut.practiceText = "ak"
+        sut.practiceTextChanged()
+        XCTAssertEqual(sut.practicePhase, .typing(filled: 2))
+        sut.practiceText = "akz"
+        sut.practiceTextChanged()
+        XCTAssertEqual(sut.practiceText, "ak")
+        XCTAssertEqual(sut.practiceRejected, "z")
+        XCTAssertEqual(sut.practiceRejectCount, 1)
+        sut.practiceTextChanged()   // the view reports the corrected text: nothing more
+        XCTAssertEqual(sut.practiceRejectCount, 1)
+        sut.practiceText = "akuo"
+        sut.practiceTextChanged()
+        XCTAssertEqual(sut.practicePhase, .wrongLanguage)
+        sut.practiceFocused = true
+        XCTAssertEqual(sut.practiceDoubleShift(), IDs.hebrew)
+        XCTAssertEqual(sut.practicePhase, .converted)
+        sut.practiceTextChanged()
+        XCTAssertEqual(sut.practiceText, "שלום", "the converted word isn't taken for an edit")
+    }
+
+    func testTheShiftCapsLightUpOneByOne() {
+        make()
+        sut.begin(firstLaunch: true, startAt: .practice)
+        sut.noteShiftPressed()
+        XCTAssertEqual(sut.practiceShiftPresses, 0, "only once the word waits for its double-Shift")
+        sut.practiceText = "akuo"
+        sut.practiceTextChanged()
+        sut.noteShiftPressed()
+        XCTAssertEqual(sut.practiceShiftPresses, 1)
+        sut.noteShiftPressed()
+        XCTAssertEqual(sut.practiceShiftPresses, 2)
+        clock.now += 5
+        sut.noteShiftPressed()
+        XCTAssertEqual(sut.practiceShiftPresses, 1, "a long pause starts over")
+        sut.practiceFocused = true
+        _ = sut.practiceDoubleShift()
+        XCTAssertEqual(sut.practiceShiftPresses, 0, "dark again once converted")
     }
 }

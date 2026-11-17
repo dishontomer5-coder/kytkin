@@ -81,6 +81,16 @@ import Observation
     private(set) var practiceResult: PracticeResult = .none
     /// The text the last double-Shift wrote, so that write isn't taken for the user's own edit.
     @ObservationIgnored private var lastPracticeWrite: String?
+    /// P6-0i: the ghost word for the user's pair ("akuo" → "שלום"); nil = the plain practice box.
+    private(set) var practiceSample: PracticeGhost.Sample?
+    /// P6-0i: the last letter turned away (a wrong key), and a counter so the view shakes once per rejection.
+    private(set) var practiceRejected: Character?
+    private(set) var practiceRejectCount = 0
+    /// P6-0i: Shift presses in a row while the word waits ("Now press Shift twice": the two key caps light up).
+    private(set) var practiceShiftPresses = 0
+    @ObservationIgnored private var lastShiftAt: Date?
+    /// P6-0i: switches the keyboard to the typing side's language when the practice step opens (the app's own switch).
+    @ObservationIgnored private let selectSource: @MainActor (InputSourceID) -> Void
     /// "Open Kytkin when I log in" (owner 2026-11-17: on by default); applied on Done.
     var openAtLogin = true
     /// P6-3: "Check for updates": off until the user ticks it (the only network call); applied on Done.
@@ -92,7 +102,9 @@ import Observation
          bundlePath: String = "/Applications/Kytkin.app", updates: UpdateChecker? = nil,
          now: @escaping () -> Date = Date.init,
          layouts: @escaping @MainActor () -> LayoutSnapshot? = { nil },
-         sourceName: @escaping @MainActor (InputSourceID) -> String = { $0.rawValue }) {
+         sourceName: @escaping @MainActor (InputSourceID) -> String = { $0.rawValue },
+         selectSource: @escaping @MainActor (InputSourceID) -> Void = { _ in }) {
+        self.selectSource = selectSource
         self.store = store
         self.permissions = permissions
         self.polling = polling
@@ -133,6 +145,7 @@ import Observation
         checkForUpdates = updates?.isOn ?? false   // P6-3: never ticked for the user
         if firstLaunch { pickDefaultPairIfNeeded() }
         reload()
+        if step == .practice { enterPractice() }
     }
     /// The window became visible or closed: the 1 s permission poll runs while it is visible.
     func setVisible(_ visible: Bool) {
@@ -165,6 +178,7 @@ import Observation
         if step == .practice { clearPractice() }
         step = following
         reload()
+        if step == .practice { enterPractice() }
     }
 
     func back() {
@@ -202,6 +216,8 @@ import Observation
         }
         practiceText = result.text
         lastPracticeWrite = result.text
+        lastAcceptedPractice = result.text
+        practiceShiftPresses = 0   // P6-0i: the key caps go dark again
         if case .converted = practiceResult {
             practiceResult = .convertedBack
         } else {
@@ -211,17 +227,64 @@ import Observation
     }
 
     /// The text is edited by hand: the next double-Shift is a fresh convert.
+    /// P6-0i: with a ghost word, only its next letter is taken (`PracticeGhost.accept`); a wrong key is turned away.
     func practiceTextChanged() {
         guard practiceText != lastPracticeWrite else { return }
+        if let sample = practiceSample {
+            let edit = PracticeGhost.accept(old: lastAcceptedPractice, new: practiceText, sample: sample)
+            if let rejected = edit.rejected {
+                practiceRejected = rejected
+                practiceRejectCount += 1
+            }
+            lastAcceptedPractice = edit.text
+            if edit.text != practiceText {
+                practiceText = edit.text   // the view's onChange calls back here; that call changes nothing
+                return
+            }
+        }
         lastPracticeWrite = nil
         if practiceResult != .none { practiceResult = .none }
     }
 
+    /// P6-0i: where the ghost word stands (nil without one).
+    var practicePhase: PracticeGhost.Phase? {
+        practiceSample.map { PracticeGhost.phase(of: practiceText, sample: $0) }
+    }
+
+    /// P6-0i: a Shift key went down in the setup window (the view's local key monitor; no key is read or kept). The
+    /// two key caps light up one by one; a pause longer than the double-Shift window starts over.
+    func noteShiftPressed() {
+        guard practicePhase == .wrongLanguage else { return }
+        let at = now()
+        let window = Double(store.prefs.convert.doubleShiftWindowMs) / 1000
+        if let last = lastShiftAt, at.timeIntervalSince(last) <= window, practiceShiftPresses == 1 {
+            practiceShiftPresses = 2
+        } else {
+            practiceShiftPresses = 1
+        }
+        lastShiftAt = at
+    }
+
+    /// P6-0i: the practice step opened: the ghost word for the pair, and the keyboard on the language it is typed in
+    /// (so typing gives "akuo"; the double-Shift then switches to the other one).
+    private func enterPractice() {
+        practiceSample = PracticeGhost.sample(layouts: layouts())
+        if let sample = practiceSample, let layouts = layouts() {
+            selectSource(layouts.source(of: sample.typingSide))
+        }
+    }
+
+    @ObservationIgnored private var lastAcceptedPractice = ""
+
     private func clearPractice() {
         practiceText = ""
         lastPracticeWrite = nil
+        lastAcceptedPractice = ""
         practiceResult = .none
         practiceFocused = false
+        practiceRejected = nil
+        practiceShiftPresses = 0
+        lastShiftAt = nil
     }
 
     // MARK: - Accessibility (user click only)

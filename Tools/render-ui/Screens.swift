@@ -282,10 +282,24 @@ import SwiftUI
         m.reload()
         try shot("onboarding-2-permissions-granted", m)
         m.next()
+        // P6-0i: the ghost word: empty, half typed, a wrong key, every letter (one Shift lit), converted, confetti.
         try shot("onboarding-3-practice", m)
+        m.practiceText = "ak"
+        m.practiceTextChanged()
+        try shot("onboarding-3-practice-half", m)
+        m.practiceText = "akx"
+        m.practiceTextChanged()
+        try shot("onboarding-3-practice-wrong-key", m)
         m.practiceText = "akuo"
+        m.practiceTextChanged()
+        m.noteShiftPressed()
+        OnboardingView.renderCelebrationAt = 0
+        try shot("onboarding-3-practice-wrong-language", m)
         m.practiceFocused = true
         _ = m.practiceDoubleShift()
+        OnboardingView.renderCelebrationAt = 0.35
+        try shot("onboarding-3-practice-confetti", m)
+        OnboardingView.renderCelebrationAt = nil
         try shot("onboarding-3-practice-converted", m)
         m.finish()
 

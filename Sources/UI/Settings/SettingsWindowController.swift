@@ -117,26 +117,9 @@ import SwiftUI
     /// the first key view when the window shows or a tab appears, and SwiftUI may do so a moment later, so the first
     /// responder is cleared now and a few times in the next 0.35 s. Tab still moves the focus as usual afterwards.
     /// QA (P6-0h): a late clear never undoes the user's own click or Tab in that time (`InitialFocusPolicy`, Core).
+    /// P6-0i: the same code now clears the setup window (`KytkinWindow.clearInitialFocus`).
     private func clearInitialFocus() {
-        guard let window else { return }
-        window.initialFirstResponder = nil
-        window.makeFirstResponder(nil)
-        let inputs = (window as? KytkinWindow)?.userInputCount ?? 0
-        for delay in InitialFocusPolicy.lateClearDelays {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak window] in
-                MainActor.assumeIsolated {
-                    guard let window else { return }
-                    let responder = window.firstResponder
-                    let text = responder as? NSTextView
-                    guard InitialFocusPolicy.shouldClear(
-                        hasFocus: responder != nil && responder !== window,
-                        editingText: text.map { $0.isFieldEditor && !$0.string.isEmpty } ?? false,
-                        inputsWhenScheduled: inputs,
-                        inputsNow: (window as? KytkinWindow)?.userInputCount ?? 0) else { return }
-                    window.makeFirstResponder(nil)
-                }
-            }
-        }
+        (window as? KytkinWindow)?.clearInitialFocus()
     }
 
     /// P6-0g: a pane reported its natural height.

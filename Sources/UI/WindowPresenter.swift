@@ -67,6 +67,31 @@ final class KytkinWindow: NSWindow {
     /// late focus clear can tell the user acted meanwhile (`InitialFocusPolicy`).
     private(set) var userInputCount = 0
 
+    /// P6-0h / P6-0i (owner): no control gets a focus ring just because the window opened or a tab/step appeared.
+    /// AppKit picks the first key view and SwiftUI may do so a moment later, so the first responder is cleared now and
+    /// a few times in the next 0.35 s, never undoing the user's own click or Tab in that time (`InitialFocusPolicy`).
+    /// `keep`: true skips the clears (the setup’s practice step, whose box should take the keyboard).
+    func clearInitialFocus(keep: @escaping @MainActor () -> Bool = { false }) {
+        guard !keep() else { return }
+        initialFirstResponder = nil
+        makeFirstResponder(nil)
+        let inputs = userInputCount
+        for delay in InitialFocusPolicy.lateClearDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, !keep() else { return }
+                    let responder = self.firstResponder
+                    let text = responder as? NSTextView
+                    guard InitialFocusPolicy.shouldClear(
+                        hasFocus: responder != nil && responder !== self,
+                        editingText: text.map { $0.isFieldEditor && !$0.string.isEmpty } ?? false,
+                        inputsWhenScheduled: inputs, inputsNow: self.userInputCount) else { return }
+                    self.makeFirstResponder(nil)
+                }
+            }
+        }
+    }
+
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown: userInputCount &+= 1
