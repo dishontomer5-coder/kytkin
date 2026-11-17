@@ -122,6 +122,8 @@ struct StatusLabelMock: View {
 /// highlighted as macOS does. Everything below it is the real tab pane.
 struct ToolbarTabsMock: View {
     let selected: SettingsTab
+    /// P6-0k: the Statistics item's title is the total, as the window sets it.
+    var statisticsTitle: String? = nil
     @Environment(\.colorScheme) private var scheme
     static let height: CGFloat = 78
 
@@ -132,7 +134,7 @@ struct ToolbarTabsMock: View {
                 ForEach(SettingsTab.allCases) { tab in
                     VStack(spacing: 3) {
                         Image(systemName: tab.symbolName).font(.system(size: 18)).frame(height: 22)
-                        Text(tab.title).font(.system(size: 11))
+                        Text(tab == .statistics ? statisticsTitle ?? tab.title : tab.title).font(.system(size: 11))
                     }
                     .foregroundStyle(tab == selected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.secondary))
                     .frame(minWidth: 64)

@@ -14,9 +14,10 @@ final class SettingsMappingTests: XCTestCase {
     func testSixTabsInOrderWithSymbols() {
         // P6-0c (owner 2026-11-17): 8 tabs became 6.
         XCTAssertEqual(SettingsTab.allCases.map(\.title),
-                       ["General", "Rules", "Double-Shift", "Websites", "Advanced", "About"])
+                       ["General", "Rules", "Double-Shift", "Websites", "Advanced", "Statistics", "About"])
         XCTAssertEqual(SettingsTab.allCases.map(\.symbolName),
-                       ["gearshape", "list.bullet.rectangle", "shift", "globe", "slider.horizontal.3", "info.circle"])
+                       ["gearshape", "list.bullet.rectangle", "shift", "globe", "slider.horizontal.3",
+                        "arrow.left.arrow.right", "info.circle"])   // P6-0k: Statistics before About
     }
 
     func testEveryMenuTargetLandsOnATab() {

@@ -13,14 +13,21 @@
 // Save: `update` applies the change at once and saves 0.5 s after the last change (debounced, measured
 // on the injected Clock), atomically with mode 0600. `flush()` saves now (on quit).
 // Read-only: changes still apply in memory for this session, but the file is never written.
+// P6-0k: the usage counts (`stats`, UsageStats.swift) are kept beside `prefs` and saved in the same file, but a count
+// waits up to 30 s (`statsDebounceNanos`) for its save instead of 0.5 s, so typing and switching never write the file
+// more than twice a minute; a settings change due sooner takes the counts with it, and `flush()` saves them on quit.
 
 import Foundation
 import Observation
 
 @MainActor @Observable final class PreferencesStore {
     static let debounceNanos: UInt64 = 500_000_000
+    /// P6-0k: a count is saved at most this long after it changed (and a burst of counts is one save).
+    static let statsDebounceNanos: UInt64 = 30_000_000_000
 
     private(set) var prefs: Preferences
+    /// P6-0k: Settings → Statistics. Not part of `prefs`, so counting never fires the preferences observers.
+    private(set) var stats = UsageStats()
     private(set) var loadIssue: PreferencesLoadIssue?
     /// True when the file must never be written (newer schema, or unreadable).
     private(set) var isReadOnly = false
@@ -40,6 +47,7 @@ import Observation
     @ObservationIgnored private let fileSystem: any PreferencesFileSystem
     @ObservationIgnored private let migrator: PreferencesMigrator
     @ObservationIgnored private let debounceNanos: UInt64
+    @ObservationIgnored private let statsDebounceNanos: UInt64
     @ObservationIgnored private var isDirty = false
     @ObservationIgnored private var saveDeadlineNanos: UInt64 = 0
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -59,12 +67,14 @@ import Observation
     /// `now` names a quarantined file and a lossy backup. `migrator` and `debounceNanos` exist for tests.
     init(fileURL: URL, clock: any Clock, fileSystem: any PreferencesFileSystem,
          migrator: PreferencesMigrator = .standard, debounceNanos: UInt64 = PreferencesStore.debounceNanos,
+         statsDebounceNanos: UInt64 = PreferencesStore.statsDebounceNanos,
          now: @escaping () -> Date = Date.init) {
         self.fileURL = fileURL
         self.clock = clock
         self.fileSystem = fileSystem
         self.migrator = migrator
         self.debounceNanos = debounceNanos
+        self.statsDebounceNanos = statsDebounceNanos
         self.now = now
         self.prefs = Preferences()
 
@@ -83,6 +93,7 @@ import Observation
         do {
             let decoded = try PreferencesCodec.decodeDetailed(data, migrator: migrator)
             prefs = decoded.prefs
+            stats = decoded.stats ?? UsageStats()   // P6-0k
             loadWasLossy = decoded.isLossy
             if decoded.newerSchemaVersion != nil {
                 loadIssue = .newerSchemaReadOnly
@@ -110,6 +121,27 @@ import Observation
         scheduleSave()
     }
 
+    /// P6-0k: one more `kind` (main actor: never on the tap thread). Saved within 30 s, or with the next settings save.
+    func recordStat(_ kind: UsageStats.Kind) {
+        stats.record(kind, now: now())
+        markStatsDirty()
+    }
+
+    /// P6-0k: Settings → Statistics → "Reset Statistics…": every count back to zero, counting again from now.
+    func resetStats() {
+        stats = UsageStats(since: now())
+        markStatsDirty()
+    }
+
+    /// A save is due within `statsDebounceNanos`; an earlier deadline (a settings change) is kept.
+    private func markStatsDirty() {
+        guard !isReadOnly else { return }   // read-only: counted in memory only
+        if isDirty, saveTask != nil { return }   // a save is already on its way, and takes the counts with it
+        isDirty = true
+        saveDeadlineNanos = clock.nowNanos &+ statsDebounceNanos
+        scheduleSave()
+    }
+
     /// Saves pending changes now (on quit).
     func flush() {
         saveTask?.cancel()
@@ -130,9 +162,11 @@ import Observation
 
     // MARK: - Private
 
+    /// Starts the wait for `saveDeadlineNanos` (P6-0k: a fresh one, since a settings change may now be due sooner than
+    /// a pending count's save).
     private func scheduleSave() {
-        guard saveTask == nil else { return }
-        let first = debounceNanos
+        saveTask?.cancel()
+        let first = max(1, saveDeadlineNanos &- min(saveDeadlineNanos, clock.nowNanos))
         saveTask = Task { [weak self] in
             var wait = first
             while !Task.isCancelled {
@@ -166,7 +200,9 @@ import Observation
                 break
             }
             pendingBackup = nil
-            let data = try PreferencesCodec.encode(prefs, schemaVersion: migrator.currentVersion)
+            // P6-0k: no `stats` key until something was counted (or reset).
+            let data = try PreferencesCodec.encode(prefs, schemaVersion: migrator.currentVersion,
+                                                   stats: stats == UsageStats() ? nil : stats)
             try fileSystem.writeAtomically(data, to: fileURL)
             isDirty = false
             lastSaveFailed = false

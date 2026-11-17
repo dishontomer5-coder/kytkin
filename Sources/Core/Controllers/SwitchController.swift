@@ -213,10 +213,17 @@ import Foundation
         // P2-41: the app quit (resign re-apply, resume, Kytkin on again): nothing to switch for. A new Context
         // clears the flag first, so a real app change always applies.
         guard !(context.currentAppIsGone && context.current?.pid == c.pid) else { return }
-        guard let target = engine.resolve(resolvable(c)).target, target != switcher.current else { return }
+        let resolution = engine.resolve(resolvable(c))
+        guard let target = resolution.target, target != switcher.current else { return }
         guard switcher.select(target, reason: .rule) else { return }
         conflicts.noteOurSwitch()
         lastRuleSelect = (target, clock.nowNanos, c.generation)
+        // P6-0k: Settings → Statistics counts a real change Kytkin made for an app or website rule (counts only).
+        switch resolution.level {
+        case .app: store.recordStat(.switchedByApp)
+        case .site, .siteHost: store.recordStat(.switchedByWebsite)
+        case .chat, .addressBar, .defaultRule, .none: break
+        }
     }
 
     // MARK: - Flow (b)

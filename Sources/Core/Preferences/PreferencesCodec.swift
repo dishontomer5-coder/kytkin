@@ -32,6 +32,8 @@ enum PreferencesCodec {
         /// Lenient decoding threw something stored away: a bad entry, a mistyped or unknown-valued
         /// field, a non-array `rules`, a clamped number. Unknown keys and missing fields don't count.
         let isLossy: Bool
+        /// P6-0k: the file's `stats` (nil = none, or one that didn't decode: counting starts again at zero).
+        var stats: UsageStats? = nil
     }
 
     /// The 001 §2.2 contract. Use `decodeDetailed` to also learn about a newer schema.
@@ -80,21 +82,26 @@ enum PreferencesCodec {
             let prefs = try PreferencesDecodingLoss.$current.withValue(recorder) {
                 try makeDecoder().decode(Preferences.self, from: body)
             }
+            // P6-0k: the counts live next to the preferences, not in them (UsageStats.swift).
+            struct StatsHolder: Decodable { let stats: UsageStats? }
+            let stats = (try? makeDecoder().decode(StatsHolder.self, from: body))?.stats
             return Decoded(prefs: prefs, migratedFrom: migratedFrom, newerSchemaVersion: newer,
-                           isLossy: recorder.count > 0)
+                           isLossy: recorder.count > 0, stats: stats)
         } catch {
             throw DecodeError.notAnObject
         }
     }
 
-    static func encode(_ p: Preferences, schemaVersion: Int = Preferences.currentSchemaVersion) throws -> Data {
+    /// P6-0k: `stats` nil = no `stats` key (nothing counted yet).
+    static func encode(_ p: Preferences, schemaVersion: Int = Preferences.currentSchemaVersion,
+                       stats: UsageStats? = nil) throws -> Data {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         e.dateEncodingStrategy = .custom { date, encoder in
             var c = encoder.singleValueContainer()
             try c.encode(date.formatted(.iso8601))
         }
-        return try e.encode(Envelope(schemaVersion: schemaVersion, prefs: p))
+        return try e.encode(Envelope(schemaVersion: schemaVersion, prefs: p, stats: stats))
     }
 
     // MARK: - Private
@@ -103,13 +110,15 @@ enum PreferencesCodec {
     private struct Envelope: Encodable {
         let schemaVersion: Int
         let prefs: Preferences
+        let stats: UsageStats?
 
-        private enum CodingKeys: String, CodingKey { case schemaVersion }
+        private enum CodingKeys: String, CodingKey { case schemaVersion, stats }
 
         func encode(to encoder: Encoder) throws {
             try prefs.encode(to: encoder)
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(schemaVersion, forKey: .schemaVersion)
+            try c.encodeIfPresent(stats, forKey: .stats)
         }
     }
 
