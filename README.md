@@ -82,8 +82,9 @@ Privacy & Security**.
 - **What is saved** (in `~/Library/Application Support/Kytkin/`): only your settings, the language for each app (by its
   ID), for each website domain (or an exact subdomain you add yourself), and any keyboard layouts you import. Never
   text, clipboard contents, page addresses or window titles.
-- **No network, no analytics, no telemetry, no account.** The only network request Kytkin will ever make is an
-  optional check for a new version on GitHub (coming in a later version, switchable off).
+- **No analytics, no telemetry, no account.** The only network request Kytkin ever makes is the optional update
+  check, **off by default** (Settings → General → Updates). When on, it asks GitHub once a day whether a newer version
+  is out, sending only Kytkin's version number. It never downloads or installs anything.
 
 ## Uninstall
 
