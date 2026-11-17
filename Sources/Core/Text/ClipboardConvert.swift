@@ -9,12 +9,13 @@
 //      nothing posted, the caller falls back to the remembered buffer.
 //   2. Take the hold-back claim (B3), re-check the focus, post ⇧⌘↑ (P3-62: from the cursor to the box's start; was
 //      ⌘A, the whole box), ⌘C.
-//   3. Wait for `changeCount` to move (≤ 250 ms, polled every 10 ms). It didn't, or the copy is empty → the box is
-//      empty or the app can't copy: drop the ⌘A selection (Right arrow), `.boxEmpty` (the caller falls back), and watch
+//   3. Wait for `changeCount` to move (≤ 250 ms, polled every 10 ms). It didn't, or the copy is empty → nothing before
+//      the cursor, or the app can't copy: P3-62 QA: drop the selection (Right arrow) only when AX shows one (else the
+//      arrow would move the cursor), `.boxEmpty` (the caller just switches), and watch
 //      ≤ 750 ms after the finish for a late copy, which is then undone (the user's clipboard put back).
 //   4. Convert the copied text (the caller's rule). Nothing changes / too long → restore the clipboard, Right arrow.
 //   5. Within the 400 ms budget and with the focus unchanged: write the converted text as plain text marked transient
-//      and concealed, post ⌘V (it replaces the ⌘A selection; the caret ends after it, at the end of the box).
+//      and concealed, post ⌘V (it replaces the ⇧⌘↑ selection; the caret ends after it, where the cursor was).
 //   6. After the caller's finish (held keys replayed): wait until the app read the pasted text (≥ 100 ms, ≤ 500 ms), then
 //      put the user's clipboard back, only if nobody wrote to it since (`changeCount` still ours).
 // P3-40 (owner 2026-11-11): a selection AX reported in an app whose box AX can't read (Slack, Chrome…) is copied with
@@ -180,6 +181,7 @@ import Foundation
     func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other, startedAt: UInt64? = nil,
              pasteRichAsPlain: Bool = false,
              convert: (String) -> Conversion, htmlPlanner: HTMLTextConvert.Planner? = nil,
+             selectionShows: () -> Bool? = { nil },
              focusIsSame: () -> Bool, mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         lastCopy = nil
         let start = startedAt ?? clock.nowNanos
@@ -209,14 +211,17 @@ import Foundation
             await sleep(timing.pollNanos)
             polls += 1
         }
+        // P3-62 QA: nothing (or nothing but "") was copied: usually ⇧⌘↑ selected nothing (the cursor at the box's
+        // start, an empty box, an app that ignores it), and a Right arrow would then move the cursor one character.
+        // The selection is dropped only when the app (AX) shows one (a slow copy after ⇧⌘↑ did select).
         guard pasteboard.changeCount != before else {
-            if all { collapse() }
+            if all, selectionShows() == true { collapse() }
             return (.boxEmpty, PendingRestore(snapshot: snapshot, kind: .lateCopy(baseline: before)))
         }
         let text = pasteboard.string() ?? ""
         guard !text.isEmpty else {
             pasteboard.restore(snapshot)
-            if all { collapse() }
+            if all, selectionShows() == true { collapse() }
             return (.boxEmpty, nil)
         }
 
@@ -250,7 +255,6 @@ import Foundation
                 case .mismatch: return stop(.selectionMismatch)
                 case .replace: break
                 }
-                // P3-48: a whole box leaves a quoted thread and a signature alone; a selection is the user's choice.
                 switch HTMLTextConvert.convert(html: html, plain: text, planner: planner) {
                 case .success(let out):
                     lastCopy?.htmlPaste = .ok

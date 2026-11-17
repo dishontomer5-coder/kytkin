@@ -834,6 +834,12 @@ import Foundation
                                              app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
                                              pasteRichAsPlain: chat, convert: convert,
                                              htmlPlanner: htmlPlanner,
+                                             selectionShows: {   // P3-62 QA: AX's selection now (nil = can't tell)
+                                                 defer { replacer.endReplacement() }   // nothing read is kept
+                                                 guard let f = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout)
+                                                 else { return nil }
+                                                 return !(f.selection ?? "").isEmpty
+                                             },
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
         note(.clipboard, "\(result)")

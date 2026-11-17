@@ -71,11 +71,32 @@ final class ClipboardConvertTests: XCTestCase {
         let (result, pending) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
         XCTAssertEqual(result, .boxEmpty)
         XCTAssertLessThanOrEqual(clock.nowNanos - start, sut.timing.copyWaitNanos + sut.timing.pollNanos)
-        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "→"], "the ⇧⌘↑ selection is dropped, nothing pasted")
+        // P3-62 QA: nothing copied and AX can't tell whether ⇧⌘↑ selected anything: no Right arrow (it would move the
+        // cursor one character when nothing was selected).
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"], "nothing pasted, the cursor left alone")
         XCTAssertTrue(pb.holdsUserClipboard)
         await sut.finish(pending!)
         XCTAssertTrue(pb.holdsUserClipboard)
         XCTAssertEqual(pb.restores, 0, "nothing to undo")
+    }
+
+    @TextActor func testANoCopyWithASelectionShowingDropsIt() async {
+        // P3-62 QA: ⇧⌘↑ did select (AX shows it) but the copy never came: the selection is dropped (Right arrow: the
+        // caret back at the cursor), so the user's next key can't replace it.
+        let (sut, pb, poster) = make(box: "akuo")
+        pb.copyDelayNanos = nil
+        _ = await sut.run(.box, convert: upper, selectionShows: { true }, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "→"])
+    }
+
+    @TextActor func testANoCopyWithNoSelectionShowingLeavesTheCursorAlone() async {
+        // The cursor at the box's start (or an app that ignores ⇧⌘↑): nothing selected, nothing copied, no arrow.
+        let (sut, pb, poster) = make(box: "akuo")
+        pb.copyDelayNanos = nil
+        let (result, _) = await sut.run(.box, convert: upper, selectionShows: { false }, focusIsSame: { true },
+                                        mayWrite: { true })
+        XCTAssertEqual(result, .boxEmpty)
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"])
     }
 
     @TextActor func testALateCopyIsUndone() async {
@@ -95,7 +116,7 @@ final class ClipboardConvertTests: XCTestCase {
         XCTAssertEqual(result, .boxEmpty)
         XCTAssertNil(pending)
         XCTAssertTrue(pb.holdsUserClipboard)
-        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "→"])
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"], "P3-62 QA: an empty copy selected nothing: no arrow")
     }
 
     @TextActor func testNothingToConvertRestoresAndDropsTheSelection() async {
