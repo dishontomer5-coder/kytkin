@@ -213,6 +213,7 @@ final class KeyTapEngine: @unchecked Sendable {
     func periodicCheck() {
         guard mode != .off else { return }
         checkSecureInput(publishing: true)
+        if let signal = processor.expireIfIdle() { sendSignal(signal) }   // P3-34 (3): forget typed text after 3 idle min
         pollTicks &+= 1
         if pollTicks % Self.healthCheckEveryPolls == 0, !backend.isEnabled {
             tapWasDisabled()

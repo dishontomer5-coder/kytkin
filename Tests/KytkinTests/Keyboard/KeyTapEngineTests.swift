@@ -471,6 +471,18 @@ final class KeyTapEngineTests: XCTestCase {
         XCTAssertEqual(backend.installs, [.active])
     }
 
+    func testThePollForgetsTheBufferAfterThreeIdleMinutes() {
+        // P3-34 (3)
+        makeEngine()
+        _ = deliver(T.key(a))
+        backend.firePoll()
+        XCTAssertFalse(engine.processor.buffer.isEmpty)
+        clock.advance(byNanos: KeyStreamProcessor.idleExpiryNanos)
+        backend.firePoll()
+        XCTAssertTrue(engine.processor.buffer.isEmpty)
+        XCTAssertEqual(signals.last, .bufferInvalidated)
+    }
+
     func testTheWatchdogPollReEnablesASilentlyDisabledTap() {
         makeEngine()
         backend.enabled = false
