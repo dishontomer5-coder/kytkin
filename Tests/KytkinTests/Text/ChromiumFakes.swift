@@ -308,22 +308,8 @@ final class FakeChromiumField: AXTextElement {
     /// P3-53: the budget the last atom walk was given, and a hook (to move the fake clock: a slow walk).
     private(set) var atomBudgets: [UInt64] = []
     var onInlineAtoms: (() -> Void)?
-    /// P3-53 QA: the quote-container search runs out of time (or elements) before it has looked everywhere.
-    var quoteSearchCutShort = false
-    /// P3-53 QA: what each walk was asked (`quoteSearchMustComplete`).
-    private(set) var quoteSearchMustCompleteAsks: [Bool] = []
-
-    /// P3-54: what each walk was asked (`searchQuotes`).
-    private(set) var searchQuotesAsks: [Bool] = []
-
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
-        -> Result<[InlineAtom], AXAccessError> {
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
         atomBudgets.append(budgetNanos)
-        searchQuotesAsks.append(searchQuotes)
-        // P3-54: quote lines come only from the quote walk.
-        if !searchQuotes, inlineAtomRole == "AXQuoteText" { return .success([]) }
-        quoteSearchMustCompleteAsks.append(quoteSearchMustComplete)
-        if quoteSearchCutShort, quoteSearchMustComplete { return .failure(.timeout) }
         onInlineAtoms?()
         let images = Array(repeating: InlineAtom(text: "", role: "AXImage"), count: imageCount)   // P3-57
         return inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) } + images) }

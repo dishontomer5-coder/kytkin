@@ -316,7 +316,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil, "<meta charset='utf-8'><b>שלום</b>")
         XCTAssertEqual(rig.pasteboard.box, "ok שלום ok", "the paste replaced the selection only")
-        XCTAssertEqual(clipboardKeysWithoutSelectAll(rig.poster), true, "⌘C and ⌘V, no ⌘A")
+        XCTAssertEqual(clipboardKeysWithoutSelectAll(rig.poster), true, "⌘C and ⌘V, no ⇧⌘↑")
     }
 
     @TextActor func testZenGmailBoldBoxIsPastedAsConvertedHTML() async {
@@ -378,7 +378,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let out = await rig.sut.handle(request(buffer("vh"), app: "app.zen-browser.zen", siteUnknown: true),
                                        layouts: layouts)
         XCTAssertEqual(pastes(rig.poster), 0, "no whole-box paste")
-        XCTAssertFalse(rig.pasteboard.selectedAll, "no ⌘A")
+        XCTAssertFalse(rig.pasteboard.selectedToStart, "no ⌘A")
         XCTAssertEqual(rig.pasteboard.transientWrites, [])
         XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
     }
@@ -388,7 +388,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         axNeverSelects(rig)
         let out = await rig.sut.handle(request(buffer("vh"), app: chrome, siteUnknown: true), layouts: layouts)
         XCTAssertEqual(pastes(rig.poster), 0)
-        XCTAssertFalse(rig.pasteboard.selectedAll)
+        XCTAssertFalse(rig.pasteboard.selectedToStart)
         XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
     }
 
@@ -404,7 +404,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
                        "<meta charset='utf-8'><div><b>שלום</b></div><div>הי</div>")
         XCTAssertEqual(rig.pasteboard.box, "ok שלום\nהי ok", "only the selection replaced")
-        XCTAssertFalse(rig.pasteboard.selectedAll, "no ⌘A")
+        XCTAssertFalse(rig.pasteboard.selectedToStart, "no ⌘A")
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 
@@ -416,7 +416,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen", siteUnknown: true), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.pasteboard.box, "ok שלום\nהי ok")
-        XCTAssertFalse(rig.pasteboard.selectedAll)
+        XCTAssertFalse(rig.pasteboard.selectedToStart)
     }
 
     @TextActor func testAMultiLineSelectionThatIsNotTheAXSelectionIsNeverPasted() async {
@@ -450,46 +450,6 @@ final class ConvertControllerRichContentTests: XCTestCase {
 
     // MARK: - P3-53 QA (Coordinator 2026-11-16): a cut-short quote search blocks a webmail whole box only
 
-    @TextActor func testAGmailWholeBoxWithACutShortQuoteSearchTypesNothing() async {
-        let rig = rig("akuo vh")
-        rig.field.quoteSearchCutShort = true
-        var r = request(empty(), app: chrome)
-        r.webmailPage = true
-        _ = await rig.sut.handle(r, layouts: layouts)
-        XCTAssertEqual(rig.field.text, "akuo vh", "the AX path never typed over the box (or a quote it couldn't see)")
-        // P3-61: a webmail page never gets the AX path at all: the clipboard (its HTML paste skips Gmail's quote).
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [])
-        XCTAssertEqual(sink.traces.first?.steps.first?.path, .clipboard)
-    }
-
-    @TextActor func testAGmailSelectionDoesNotNeedTheQuoteSearch() async {
-        let rig = rig("ok akuo ok", selection: 3..<7)
-        rig.field.quoteSearchCutShort = true
-        var r = request(empty(), app: chrome)
-        r.webmailPage = true
-        _ = await rig.sut.handle(r, layouts: layouts)
-        // P3-61: a webmail selection goes through the clipboard too (no AX walk at all).
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [])
-        XCTAssertTrue(rig.field.rangeWrites.isEmpty)
-    }
-
-    @TextActor func testSlackWithACutShortQuoteSearchStillConverts() async {
-        let rig = rig("akuo vh")
-        rig.field.quoteSearchCutShort = true
-        let out = await rig.sut.handle(request(empty()), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [false])
-    }
-
-    @TextActor func testAnUnknownSiteFoundToBeWebmailNeedsTheQuoteSearchToo() async {
-        let rig = rig("akuo vh")
-        rig.field.quoteSearchCutShort = true
-        rig.replacer?.pageCategory = .webmail
-        _ = await rig.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
-        XCTAssertEqual(rig.field.text, "akuo vh")
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [], "P3-61: webmail never gets the AX path")
-    }
-
     @TextActor func testKeysAfterASlowChromiumTryAreNeverPostedPastTheBudget() async {
         // P3-53 QA: the AX path spends the budget (each selection try waits; the app never shows it), then falls back
         // to the remembered buffer's keys: those run inside what is left of the same 400 ms, so here not at all.
@@ -516,8 +476,8 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     @TextActor func testAFreshZenGmailComposeWithNoQuoteSignalIsPastedWhole() async {
-        // Coordinator decision 2026-11-16 (keeps §P3-50 ✅): the clipboard path has no caret after ⌘A, and a fresh
-        // compose has no quote at all: bold + two lines convert whole, as an HTML paste.
+        // A fresh compose with the cursor at its end (P3-62: ⇧⌘↑ copies all of it): bold + two lines convert, as an
+        // HTML paste.
         let rig = rig("שלום akuo\nnv vh", bold: 0..<4)
         rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\"><div><b>שלום</b> akuo</div><div>nv vh</div></div>")]
         var r = request(empty(), app: "app.zen-browser.zen")
@@ -527,30 +487,6 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
                        "<meta charset='utf-8'><div dir=\"ltr\"><div><b>שלום</b> שלום</div><div>מה הי</div></div>")
         XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
-    }
-
-    @TextActor func testAWebmailReplyWithARecognisedHeaderStillCutsOnTheClipboardPath() async {
-        // No Gmail class, no blockquote (as in Gecko's copy), but the English header: only the text above it converts.
-        let html = "<div><b>akuo</b> vh</div><div>On Mon, Nov 16, 2026 at 10:00 AM X wrote:</div><div>nv nmc</div>"
-        let rig = rig("akuo vh\nOn Mon, Nov 16, 2026 at 10:00 AM X wrote:\nnv nmc")
-        rig.pasteboard.copiedExtras = [.html(html)]
-        var r = request(empty(), app: "app.zen-browser.zen")
-        r.webmailPage = true
-        let out = await rig.sut.handle(r, layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
-                       "<meta charset='utf-8'>" + html.replacingOccurrences(of: "<b>akuo</b> vh", with: "<b>שלום</b> הי"))
-        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום הי\nOn Mon, Nov 16, 2026 at 10:00 AM X wrote:\nnv nmc")
-    }
-
-    func testTheCaretsBlockStartsAfterTheLastEmptyLine() {
-        func b(_ s: String, _ caret: Int) -> Int { ConvertController.blockStart(before: caret, in: Array(s.utf16)) }
-        XCTAssertEqual(b("akuo vh", 7), 0)
-        XCTAssertEqual(b("a\n\nakuo", 7), 3)
-        XCTAssertEqual(b("a\n \u{00A0}\nakuo\nvh", 12), 5, "a line of spaces / NBSP is empty")
-        XCTAssertEqual(b("a\nb\nakuo", 8), 0, "no empty line: the whole text before the caret")
-        XCTAssertEqual(b("a\n\n", 3), 3, "the caret on an empty line")
-        XCTAssertEqual(b("", 0), 0)
     }
 
     private func clipboardKeysWithoutSelectAll(_ poster: RecordingPoster) -> Bool {
@@ -653,7 +589,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         rig.replacer?.pageCategory = .unknown
         let out = await rig.sut.handle(request(buffer("vh"), app: "app.zen-browser.zen", siteUnknown: true),
                                        layouts: layouts)
-        XCTAssertFalse(rig.pasteboard.selectedAll, "no ⌘A")
+        XCTAssertFalse(rig.pasteboard.selectedToStart, "no ⌘A")
         XCTAssertNotEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertTrue(sink.traces.first?.line.contains("pageCheck=unknown") == true)
     }
@@ -667,47 +603,6 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     // MARK: - P3-48: Gmail reply / forward: the quoted thread and the signature never convert
-
-    @TextActor func testAPlainReplyCopyConvertsOnlyWhatComesBeforeTheQuote() async {
-        let box = "akuo vh\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\n> nv nmc"
-        let rig = rig(box)
-        axNeverSelects(rig)
-        rig.pasteboard.copiedExtras = []   // plain text only
-        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.transientWrites.last,
-                       "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\n> nv nmc")
-    }
-
-    @TextActor func testAZenGmailReplyPastesTheQuoteBackUnchanged() async {
-        let html = HTMLTextConvertTests.reply
-        let rig = rig(HTMLTextConvertTests.replyPlain)
-        rig.pasteboard.copiedExtras = [.html(html)]
-        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? nil,
-                       "<meta charset='utf-8'>" + html.replacingOccurrences(of: ">akuo vh<", with: ">שלום הי<"))
-        XCTAssertEqual(sink.traces.first?.copy?.htmlPaste, .ok)
-    }
-
-    @TextActor func testAChromeGmailReplyThroughAXKeepsTheQuote() async {
-        // The AX tree shows the quote's lines (`AXQuoteText` atoms from the live walk): never typed over.
-        let rig = rig("akuo vh\nOn Mon X wrote:\nnv nmc")
-        rig.field.inlineAtoms = ["On Mon X wrote:", "nv nmc"]
-        rig.field.inlineAtomRole = "AXQuoteText"
-        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
-        XCTAssertEqual(rig.field.text, "שלום הי\nOn Mon X wrote:\nnv nmc")
-    }
-
-    @TextActor func testASelectionInsideTheQuoteStillConverts() async {
-        let rig = rig("ok\nnv nmc", selection: 3..<9, chromium: false, axWritesSelection: false)
-        rig.pasteboard.userSelection = "nv nmc"
-        rig.pasteboard.copiedExtras = [.html("<blockquote class=\"gmail_quote\"><div>nv nmc</div></blockquote>")]
-        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.box, "ok\nמה מצב")
-    }
 
     // MARK: - P3-53: the Chromium path on a browser page whose host is unknown (Google Docs right after load)
 
@@ -747,24 +642,6 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     // MARK: - P3-54: Gmail reply in Zen, Gecko's copy without classes
-
-    @TextActor func testAZenGmailReplyWithoutClassesKeepsTheQuote() async {
-        let rig = rig(HTMLTextConvertTests.geckoReplyPlain)
-        // Bold in the user's part makes the copy rich (the owner's case: `copyVerdict=richHTML htmlPaste=ok`).
-        let html = HTMLTextConvertTests.geckoReply.replacingOccurrences(of: ">akuo vh<", with: "><b>akuo</b> vh<")
-        rig.pasteboard.copiedExtras = [.html(html)]
-        let out = await rig.sut.handle(request(empty(), app: "app.zen-browser.zen"), layouts: layouts)
-        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains("><b>שלום</b> הי<") == true)
-        XCTAssertTrue((rig.pasteboard.transientHTMLWrites.last ?? nil)?.contains(">nv nmc</div><div dir=\"ltr\">nv nmc<")
-                      == true, "the quote byte for byte")
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
-        XCTAssertEqual(rig.pasteboard.transientWrites.last,
-                       "שלום הי\n\nOn Mon, Nov 16, 2026 at 10:00 AM X <x@y.com> wrote:\nnv nmc\nnv nmc")
-        let line = sink.traces.first?.line ?? ""
-        XCTAssertTrue(line.contains("html{blockquoteTags=0 classAttrs=0 gmailClassHits=0 skippedRegions=0 "
-                                    + "quoteBoundary=html/plain}"), line)
-        XCTAssertFalse(line.contains("akuo") || line.contains("wrote"), "no text in the trace")
-    }
 
     // MARK: - P3-55: the Slack wrong-text write
 
@@ -821,7 +698,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
                                                     selTextSettable: true, selRangeSettable: true, selection: box))
         let out = await rig.sut.handle(request(empty()), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
-        XCTAssertTrue(rig.pasteboard.selectedAll, "the box path ran (select-all posted)")
+        XCTAssertTrue(rig.pasteboard.selectedToStart, "the box path ran (select-all posted)")
         XCTAssertTrue(log.performs.isEmpty, "nothing typed over a selection")
         XCTAssertEqual(rig.replacer?.typedTexts ?? [], [])
     }
@@ -911,7 +788,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
     // MARK: - P3-58 QA (Coordinator 2026-11-16): no keys and no AX writes in chat apps, ever
 
     private func noKeys(_ poster: RecordingPoster, _ file: StaticString = #filePath, _ line: UInt = #line) {
-        let allowed: Set<UInt16> = [ClipboardShortcut.selectAll.keyCode, ClipboardShortcut.copy.keyCode,
+        let allowed: Set<UInt16> = [KeyCode.upArrow, ClipboardShortcut.copy.keyCode,
                                     ClipboardShortcut.paste.keyCode, KeyCode.rightArrow]
         for e in poster.events where e.isKeyDown && !(e.modifierFlags != 0 && allowed.contains(e.keyCode))
             && e.keyCode != KeyCode.rightArrow {
@@ -990,15 +867,17 @@ final class ConvertControllerRichContentTests: XCTestCase {
     static let chromeReplyPlain = "akuo vh\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc"
 
     @TextActor func testAChromeGmailReplyUsesTheClipboardHTMLPathNotAX() async {
+        // P3-62: ⇧⌘↑ copies only the user's line above the quote (the cursor is at its end); the quote is never copied.
         let rig = rig(Self.chromeReplyPlain)
-        rig.pasteboard.copiedExtras = [.html(Self.chromeReply)]
+        rig.pasteboard.caret = 7
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\">akuo vh</div>")]
         var r = request(empty(), app: chrome)
         r.webmailPage = true
         let out = await rig.sut.handle(r, layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertTrue(rig.field.rangeWrites.isEmpty, "no AX selection in the webmail box")
-        XCTAssertEqual(rig.pasteboard.transientWrites.last,
-                       "שלום הי\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc",
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום הי")
+        XCTAssertEqual(rig.pasteboard.box, "שלום הי\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc",
                        "the header keeps its case and its line, the quote unchanged")
         XCTAssertEqual(sink.traces.first?.chromiumSkipped, "webmailClipboard")
     }
@@ -1050,5 +929,65 @@ final class ConvertControllerRichContentTests: XCTestCase {
         _ = await rig.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
         XCTAssertTrue(rig.field.rangeWrites.isEmpty)
         XCTAssertEqual(rig.field.text, "akuo vh\nOn Tue X wrote:\nnv nmc")
+    }
+
+    // MARK: - P3-62 (owner 2026-11-17): a selection, or the box's start up to the cursor — nothing after it
+
+    private func keyNames(_ poster: RecordingPoster) -> [String] {
+        poster.events.filter { $0.isKeyDown && $0.modifierFlags != 0 }.map { e in
+            if e.keyCode == KeyCode.upArrow { return "⇧⌘↑" }
+            if e.keyCode == ClipboardShortcut.copy.keyCode { return "⌘C" }
+            if e.keyCode == ClipboardShortcut.paste.keyCode { return "⌘V" }
+            return "?"
+        }
+    }
+
+    @TextActor func testAZenGmailReplyWithOnTueInTheUsersOwnTextConvertsUpToTheCursorOnly() async {
+        // The old quote rules would have cut at the user's own "On Tue"; now only the cursor decides: the whole line
+        // before it converts by the usual per-word rules (formatting-free HTML is pasted as plain text).
+        let box = "akuo On Tue vh\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc"
+        let rig = rig(box)
+        rig.pasteboard.caret = 14
+        rig.pasteboard.copiedExtras = [.html("<div dir=\"ltr\">akuo On Tue vh</div>")]
+        var r = request(empty(), app: "app.zen-browser.zen")
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(keyNames(rig.poster), ["⇧⌘↑", "⌘C", "⌘V"])
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום םמ אוק הי", "no cut at the user's own \"On Tue\"")
+        XCTAssertEqual(rig.pasteboard.box,
+                       "שלום םמ אוק הי\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc",
+                       "everything after the cursor, the quote included, is never copied or changed")
+        XCTAssertEqual(rig.pasteboard.restores, 1)
+    }
+
+    @TextActor func testSlackWithTheCursorMidBoxLeavesTheTextAfterItAlone() async {
+        let rig = rig("@Tomer Dishon akuo vh :joy:\nnv nmc")
+        rig.replacer?.inlineAtomTexts = ["@Tomer Dishon"]
+        rig.pasteboard.caret = 27   // after `:joy:`
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(keyNames(rig.poster), ["⇧⌘↑", "⌘C", "⌘V"])
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "@Tomer Dishon שלום הי :joy:", "mention and shortcode kept")
+        XCTAssertEqual(rig.pasteboard.box, "@Tomer Dishon שלום הי :joy:\nnv nmc", "the line after the cursor is untouched")
+    }
+
+    @TextActor func testASelectionConvertsExactlyTheSelectionWithoutSelectToStart() async {
+        let rig = rig("akuo vh nv", selection: 5..<7, chromium: false)
+        rig.pasteboard.userSelection = "vh"
+        rig.pasteboard.copiedExtras = []
+        let out = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(keyNames(rig.poster), ["⌘C", "⌘V"], "a selection is never widened")
+        XCTAssertEqual(rig.pasteboard.box, "akuo הי nv")
+    }
+
+    @TextActor func testChromiumAXConvertsOnlyUpToTheCaret() async {
+        let rig = rig("akuo vh nv nmc", caret: 7)
+        let out = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "שלום הי nv nmc")
+        XCTAssertEqual(pastes(rig.poster), 0)
     }
 }

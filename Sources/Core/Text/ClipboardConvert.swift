@@ -7,7 +7,8 @@
 // The box flow, on @TextActor (off main), every wait bounded:
 //   1. Snapshot the whole pasteboard (every item, every type). Can't (too big, unreadable type) → `.unavailable`,
 //      nothing posted, the caller falls back to the remembered buffer.
-//   2. Take the hold-back claim (B3), re-check the focus, post ⌘A, ⌘C.
+//   2. Take the hold-back claim (B3), re-check the focus, post ⇧⌘↑ (P3-62: from the cursor to the box's start; was
+//      ⌘A, the whole box), ⌘C.
 //   3. Wait for `changeCount` to move (≤ 250 ms, polled every 10 ms). It didn't, or the copy is empty → the box is
 //      empty or the app can't copy: drop the ⌘A selection (Right arrow), `.boxEmpty` (the caller falls back), and watch
 //      ≤ 750 ms after the finish for a late copy, which is then undone (the user's clipboard put back).
@@ -138,8 +139,6 @@ import Foundation
         let reason: CopiedContent.Reason?
         /// P3-47: the formatting-preserving paste: nil = not tried (plain copy, chat app, no planner).
         var htmlPaste: HTMLPaste?
-        /// P3-54: the HTML's tag / attribute counts and the quote boundary (counts only).
-        var htmlStats: HTMLTextConvert.Stats?
     }
 
     /// P3-47: how the formatting-preserving paste went (for the DEBUG trace).
@@ -194,9 +193,9 @@ import Foundation
         // paste of AX's selected text without a copy is gone (AX's text is what lost the line breaks).
         let all = source == .box
         guard focusIsSame() else { return (.focusChanged, nil) }
-        let selectAll: [SyntheticKeyEvent] = all
-            ? [.shortcut(.selectAll, keyDown: true), .shortcut(.selectAll, keyDown: false)] : []
-        switch post(selectAll + [.shortcut(.copy, keyDown: true), .shortcut(.copy, keyDown: false)]) {
+        // P3-62: the box is the text from its start up to the cursor: ⇧⌘↑ selects it (the anchor stays at the cursor).
+        let selectToStart: [SyntheticKeyEvent] = all ? [.selectToStart(keyDown: true), .selectToStart(keyDown: false)] : []
+        switch post(selectToStart + [.shortcut(.copy, keyDown: true), .shortcut(.copy, keyDown: false)]) {
         case .none: return (.unavailable, nil)
         case .some(false):
             if all { collapse() }
@@ -252,11 +251,7 @@ import Foundation
                 case .replace: break
                 }
                 // P3-48: a whole box leaves a quoted thread and a signature alone; a selection is the user's choice.
-                var stats = HTMLTextConvert.Stats()
-                let converted = HTMLTextConvert.convert(html: html, plain: text, skipQuotes: source == .box,
-                                                        planner: planner, stats: &stats)
-                lastCopy?.htmlStats = stats
-                switch converted {
+                switch HTMLTextConvert.convert(html: html, plain: text, planner: planner) {
                 case .success(let out):
                     lastCopy?.htmlPaste = .ok
                     htmlOut = out

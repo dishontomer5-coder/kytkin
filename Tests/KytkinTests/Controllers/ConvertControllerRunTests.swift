@@ -409,7 +409,7 @@ final class ConvertControllerRunTests: XCTestCase {
         field.selection = TextRange(location: 4, length: 0)   // after the first word
         clock.advance(byNanos: 3_600_000_000_000)
         await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
-        XCTAssertEqual(field.text, "akuo akuo vh, nhv")
+        XCTAssertEqual(field.text, "akuo שלום הית מיה", "P3-62: only the text before the caret")
         XCTAssertEqual(field.selection, TextRange(location: 4, length: 0), "the caret stays where the user put it")
     }
 

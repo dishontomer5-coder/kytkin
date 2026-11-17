@@ -538,11 +538,10 @@ final class ChromiumAXConvertTests: XCTestCase {
     @TextActor private func runWithAtoms(_ f: FakeChromiumField) async -> (ChromiumAXConvert.Result, ChromiumAXConvert) {
         let ax = sut(SwitchableFocusProvider(f))
         let result = await ax.run(.box, expected: f, plan: { read in
-            // As the controller: P3-54, only the text before a mail quote boundary is planned.
-            let b = read.quoteBoundary ?? read.text.utf16.count
+            // As the controller: P3-62, only the text from the box's start up to the caret is planned.
+            let b = read.selection.location
             let text = String(decoding: Array(read.text.utf16)[..<b], as: UTF16.self)
-            let w = FieldWindow(text: text, location: 0, caret: min(read.selection.location, b),
-                                reachesFieldStart: true, reachesFieldEnd: true)
+            let w = FieldWindow(text: text, location: 0, caret: b, reachesFieldStart: true, reachesFieldEnd: true)
             guard case .convert(let p) = BoxConversion.plan(w, classify: self.layouts.runClass,
                                                              atomicTexts: read.atoms, convert: { side, g in
                 self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
@@ -668,8 +667,8 @@ final class ChromiumAXConvertTests: XCTestCase {
         let (result, ax) = await runWithAtoms(f)
         XCTAssertEqual(ax.lastDiagnostic.prefixMismatch,
                        .init(axUnits: 9, valueUnits: 9, commonPrefix: 3, commonSuffix: 0))
-        XCTAssertEqual(result, .converted(pieces: 4), "the caret splits the last word")
-        XCTAssertEqual(f.text, "הי 😄 הי הי")
+        XCTAssertEqual(result, .converted(pieces: 3), "P3-62: only before the caret")
+        XCTAssertEqual(f.text, "הי 😄 הי הh")
     }
 
     @TextActor func testOwnersTwoLineMentionBoxWithAnEmojiOnLineTwo() async {
@@ -820,25 +819,6 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertTrue(poster.events.isEmpty)
     }
 
-    @TextActor func testAQuoteSearchCutShortStopsOnlyWhereItMustComplete() async {
-        for mustComplete in [true, false] {
-            clock = FakeClock(nowNanos: 1_000_000_000)
-            poster = RecordingPoster()
-            let f = field("akuo")
-            f.quoteSearchCutShort = true
-            let ax = sut(SwitchableFocusProvider(f))
-            let result = await ax.run(.box, expected: f, quoteSearchMustComplete: mustComplete,
-                                      plan: { self.boxPlan($0) }, mayWrite: { true })
-            if mustComplete {
-                XCTAssertEqual(result, .unavailable(.readFailed), "a webmail whole box: nothing typed")
-                XCTAssertTrue(poster.events.isEmpty)
-                XCTAssertEqual(f.text, "akuo")
-            } else {
-                XCTAssertEqual(result, .converted(pieces: 1), "Slack: not an error")
-            }
-        }
-    }
-
     // MARK: - P3-54: an emoji mid-box when Slack writes ranges in page units
 
     @TextActor func testVhEmojiVhVhWhenWritesTakePageUnits() async {
@@ -864,20 +844,6 @@ final class ChromiumAXConvertTests: XCTestCase {
     func testObjectsAsFFFC() {
         XCTAssertEqual(ChromiumAXConvert.objectsAsFFFC("a 😄 b👍🏽"), "a \u{FFFC} b\u{FFFC}")
         XCTAssertEqual(ChromiumAXConvert.objectsAsFFFC("ab 12"), "ab 12")
-    }
-
-    // MARK: - P3-54: a mail reply in Chrome: the plan stops at the quote boundary, the quote isn't walked
-
-    @TextActor func testAChromeGmailReplyConvertsOnlyBeforeTheQuoteAndDoesNotWalkIt() async {
-        let f = field("akuo vh\n\nOn Mon, Nov 16 at 10:00 X <x@y.com> wrote:\nnv nmc\nnv nmc")
-        f.inlineAtoms = ["On Mon, Nov 16 at 10:00 X <x@y.com> wrote:", "nv nmc"]
-        f.inlineAtomRole = "AXQuoteText"
-        let (result, ax) = await runWithAtoms(f)
-        XCTAssertEqual(result, .converted(pieces: 2), "only the user's two words")
-        XCTAssertEqual(f.text, "שלום הי\n\nOn Mon, Nov 16 at 10:00 X <x@y.com> wrote:\nnv nmc\nnv nmc")
-        XCTAssertEqual(f.searchQuotesAsks, [false], "the quote container isn't walked")
-        XCTAssertTrue(ax.lastDiagnostic.quoteBoundary)
-        XCTAssertEqual(ax.lastDiagnostic.atoms, 0)
     }
 
     // MARK: - P3-57: Slack's image emoji: odd units in AXValue the app's offsets don't count
@@ -973,7 +939,7 @@ final class ChromiumAXConvertTests: XCTestCase {
     @TextActor func testAPieceSelectionThatSwallowsALineBreakTypesNothing() async {
         // Owner, Gmail reply in Chrome: `akuo vh` then the quote header; the selection of `vh` also took the line
         // break, `AXSelectedText` (line breaks dropped) still read `vh`, and typing joined the lines.
-        let f = field("akuo vh\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:")
+        let f = field("akuo vh\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:", caret: 7)
         f.selectedTextDropsLineBreaks = true
         f.rangeWriteExtendsBy = 1
         let (result, _) = await runWithAtoms(f)

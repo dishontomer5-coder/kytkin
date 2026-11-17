@@ -73,7 +73,7 @@ struct ConvertTrace: Sendable, Equatable {
                          + "otherTextTries=\(c.otherTextTries) readSpace=\(c.readSpace.rawValue) "
                          + "caretMapped=\(c.caretMapped) prefixMismatch=\(c.prefixMismatch.map { "\($0)" } ?? "-") "
                          + "atomRoles=\(Self.roleCounts(c.atomRoles)) "
-                         + "prefixObjects=\(c.prefixObjects ?? "-") quoteBoundary=\(c.quoteBoundary) "
+                         + "prefixObjects=\(c.prefixObjects ?? "-") "
                          + "valueUnits=\(c.valueUnits) prefixUnexplained=\(c.prefixUnexplained) "
                          + "spanShape=\(c.spanShape ?? "-") oddUnits=\(c.oddUnits ?? "-") "
                          + "oddRunsStripped=\(c.oddRunsStripped)}")
@@ -82,8 +82,7 @@ struct ConvertTrace: Sendable, Equatable {
         if let copy {
             parts.append("copiedTypes{\(copy.types.map { "\($0)" } ?? "unreadable")} "
                          + "copyVerdict=\(copy.reason?.rawValue ?? "-")"
-                         + (copy.htmlPaste.map { " htmlPaste=\($0)" } ?? "")
-                         + (copy.htmlStats.map { " html{\($0)}" } ?? ""))
+                         + (copy.htmlPaste.map { " htmlPaste=\($0)" } ?? ""))
         }
         parts.append("outcome=\(outcome)")
         return parts.joined(separator: " ")

@@ -18,7 +18,7 @@ enum PageCategory: String, Sendable, Equatable {
     /// No page, no address, another scheme, or it couldn't be read: the caller keeps refusing the whole box.
     case unknown
     /// P3-53 QA (Coordinator 2026-11-16): an ordinary page of a webmail app (Gmail, Outlook on the web), where a reply
-    /// holds a quoted thread: a whole-box Chromium convert needs its quote search complete (`webmailHosts`).
+    /// holds a quoted thread: P3-61 converts it through the clipboard's HTML path, never by AX (`webmailHosts`).
     case webmail
 
     /// P3-53 QA: an ordinary page for the clipboard and the Chromium path (a webmail page is one).

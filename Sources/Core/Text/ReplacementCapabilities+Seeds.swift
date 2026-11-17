@@ -63,7 +63,7 @@ extension ReplacementCapabilities {
         chatAppBundleIDs.contains(bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 
-    /// P3-37 (c): code editors and IDEs, where ⌘A selects the whole file (a whole-box convert would turn every English
+    /// P3-37 (c): code editors and IDEs, where a select-to-start (P3-62: ⇧⌘↑, was ⌘A) takes the file up to the cursor (a whole-box convert would turn every English
     /// identifier into Hebrew) and the same window hosts a terminal (a pasted box with line breaks could run commands at
     /// its prompt). The clipboard never converts a whole box there; the remembered buffer does, as before.
     static let editorBundleIDs: Set<String> = [

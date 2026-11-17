@@ -50,14 +50,15 @@ final class ConvertControllerBoxTests: XCTestCase {
 
     // MARK: - The whole box
 
-    @TextActor func testAMixedBoxConvertsTheWrongLanguageBeforeAndAfterTheCaretInOneWrite() async {
+    @TextActor func testAMixedBoxConvertsOnlyBeforeTheCaretInOneWrite() async {
+        // P3-62 (owner 2026-11-17): no selection → the box's start up to the caret; after it nothing changes.
         let before = "שלום, מה akuo vh."
         let field = FakeTextField(before + "\nnv תודה.\nhello", selection: TextRange(location: before.utf16.count,
                                                                                          length: 0))
         let (sut, poster) = real(field)
         let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axWrite, switched: true))
-        XCTAssertEqual(field.text, "שלום, מה שלום היץ\nמה תודה.\nיקךךם")
+        XCTAssertEqual(field.text, "שלום, מה שלום היץ\nnv תודה.\nhello")
         XCTAssertEqual(field.selection, TextRange(location: before.utf16.count, length: 0), "the caret stays put")
         XCTAssertEqual(field.writes.filter { $0 == .selectedText }.count, 1, "one AX write")
         XCTAssertTrue(poster.events.isEmpty)
@@ -78,7 +79,7 @@ final class ConvertControllerBoxTests: XCTestCase {
         let field = FakeTextField("akuo vh nv", selection: TextRange(location: 4, length: 0))
         let (sut, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום הי מה")
+        XCTAssertEqual(field.text, "שלום vh nv", "P3-62: only before the caret")
         XCTAssertEqual(field.selection, TextRange(location: 4, length: 0))
     }
 
@@ -90,12 +91,12 @@ final class ConvertControllerBoxTests: XCTestCase {
     }
 
     @TextActor func testTheCaretAtTheFieldStartUsesTheLetterAfterIt() async {
+        // P3-62: nothing before the caret → nothing to convert (double-Shift just switches).
         let field = FakeTextField("akuo", selection: TextRange(location: 0, length: 0))
         let (sut, _) = real(field)
         let out = await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: axWrite, switched: true))
-        XCTAssertEqual(field.text, "שלום")
-        XCTAssertEqual(field.selection, TextRange(location: 0, length: 0))
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
+        XCTAssertEqual(field.text, "akuo")
     }
 
     @TextActor func testABoxOverTheCapConvertsTheWindowAroundTheCaretOnWordBoundaries() async {
@@ -122,16 +123,14 @@ final class ConvertControllerBoxTests: XCTestCase {
         XCTAssertEqual(log.finishes, [.finish(gen: 1, newRendering: IDs.hebrew, bufferAfter: nil)])
     }
 
-    @TextActor func testNoKeyFallbackForARangeThatReachesPastTheCaret() async {
-        // The AX write does nothing; the buffer is "akuo" but the box's range is "akuo vh" around the caret.
+    @TextActor func testTextAfterTheCaretIsNeverTouchedEvenByAKeyFallback() async {
+        // P3-62: the range now always ends at the caret ("akuo"), so the buffer's keys may stand for it; " vh" after the
+        // caret is never part of any write.
         let field = FakeTextField("akuo vh", selection: TextRange(location: 4, length: 0))
         field.writeBehavior = .silentNoop
-        let (sut, poster) = real(field)
-        let out = await sut.handle(request(buffer("akuo"), gen: 1), layouts: layouts)
-        XCTAssertTrue(poster.events.isEmpty, "never Backspace from the caret over text after it")
-        XCTAssertEqual(field.text, "akuo vh")
-        XCTAssertEqual(log.beeps, 1)
-        XCTAssertTrue(out.shouldBeepForTest)
+        let (sut, _) = real(field)
+        _ = await sut.handle(request(buffer("akuo"), gen: 1), layouts: layouts)
+        XCTAssertTrue(field.text.hasSuffix(" vh"), field.text)
     }
 
     @TextActor func testASelectionStillConvertsOnlyTheSelection() async {
@@ -207,10 +206,9 @@ final class ConvertControllerBoxTests: XCTestCase {
         let field = FakeTextField("Akuo שלום, VH.\nnhv", selection: TextRange(location: 4, length: 0))
         let (sut, _) = real(field)
         await sut.handle(request(empty(), gen: 1), layouts: layouts)
-        XCTAssertEqual(field.text, "שלום שלום, היץ\nמיה")
+        XCTAssertEqual(field.text, "שלום שלום, VH.\nnhv", "P3-62: only before the caret")
         await sut.handle(request(empty(in: IDs.hebrew), gen: 2, current: IDs.hebrew), layouts: layouts)
-        // The comma after a Hebrew word converts with it (BoxConversion rule e: on Apple Hebrew `,` is the `'` key).
-        XCTAssertEqual(field.text, "akuo akuo' vh.\nnhv")
+        XCTAssertEqual(field.text, "akuo שלום, VH.\nnhv")
         XCTAssertEqual(field.selection, TextRange(location: 4, length: 0))
     }
 

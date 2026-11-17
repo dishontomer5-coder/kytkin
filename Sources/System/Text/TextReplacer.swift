@@ -50,8 +50,7 @@ import Foundation
 
     func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String] {   // P3-58
         guard case .success(let el) = AXFocusedElementProvider().focusedTextElement(timeout: ReplacementExecutor.axTimeout),
-              case .success(let atoms) = el.inlineAtoms(maxNodes: ChromiumAXConvert.maxAtomNodes, budgetNanos: budgetNanos,
-                                                        quoteSearchMustComplete: false, searchQuotes: false)
+              case .success(let atoms) = el.inlineAtoms(maxNodes: ChromiumAXConvert.maxAtomNodes, budgetNanos: budgetNanos)
         else { return [] }
         return atoms.map(\.text).filter { !$0.isEmpty }
     }
