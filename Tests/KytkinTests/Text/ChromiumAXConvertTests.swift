@@ -931,4 +931,40 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertEqual(ChromiumAXConvert.shapeCode("\u{200B}"), "U+200B/Cf")
         XCTAssertNil(ChromiumAXConvert.oddUnitsSummary("plain"))
     }
+
+    // MARK: - P3-57 QA
+
+    func testMarksPeopleTypeAreNeverOddUnits() {
+        for v: UInt32 in [0x200C, 0x200D, 0x200E, 0x200F, 0x061C, 0x202B, 0x2067, 0x2069] {
+            XCTAssertFalse(ChromiumAXConvert.isOddUnit(Unicode.Scalar(v)!), String(format: "U+%04X", v))
+        }
+        XCTAssertEqual(ChromiumAXConvert.oddRuns(in: "\u{05E9}\u{200F}\u{05DC}"), [], "an RLM in a Hebrew box")
+    }
+
+    @TextActor func testAHebrewBoxWithAnRLMAndOneImageIsNeverStripped() async {
+        // The image left no odd run in AXValue; the box's only format character is the user's RLM: counts must not
+        // "match" (1 run, 1 image), or every offset after the RLM would be off by one.
+        let f = field("akuo \u{200F}vh")
+        f.imageCount = 1
+        let (_, ax) = await runWithAtoms(f)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 0)
+        XCTAssertTrue(f.text.contains("\u{200F}"))
+    }
+
+    @TextActor func testAFalseStripStillNeverTypesAtTheWrongPlace() async {
+        // A user's own degree sign (a non-emoji other symbol the app counts) and one image with no odd run in AXValue:
+        // the counts match by accident and the sign is stripped, so every value offset after it is one unit short of
+        // the app's. Every piece is still typed only after an exact read-back: the sign stays, nothing lands wrong.
+        let f = field("vh \u{00B0} vh vh")
+        f.imageCount = 1
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 1, "the accidental match this test is about")
+        XCTAssertTrue(f.text.contains("\u{00B0}"), f.text)
+        if case .converted = result {
+            XCTAssertEqual(f.text, "הי \u{00B0} הי הי")
+        } else {
+            let ok = ["vh \u{00B0} vh vh", "vh \u{00B0} vh הי", "vh \u{00B0} הי הי", "הי \u{00B0} הי הי"]
+            XCTAssertTrue(ok.contains(f.text), "\(result): \(f.text)")
+        }
+    }
 }

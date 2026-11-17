@@ -631,6 +631,10 @@ import Foundation
     /// the app counts) nor an emoji.
     nonisolated static func isOddUnit(_ u: Unicode.Scalar) -> Bool {
         if u.value == 0xFFFC { return false }
+        // P3-57 QA: never the marks people type: bidi marks / embeddings / isolates (Hebrew users type RLM / LRM),
+        // ZWJ / ZWNJ (inside words of some scripts), the Arabic letter mark. Stripping one the app counts would shift
+        // every offset after it (the exact read-backs would still refuse to type, but the convert would be lost).
+        if userTypedMarks.contains(u.value) { return false }
         if (0xFE00...0xFE0F).contains(u.value) || (0xE0100...0xE01EF).contains(u.value) { return true }
         switch u.properties.generalCategory {
         case .format, .privateUse, .unassigned, .surrogate: return true
@@ -638,6 +642,10 @@ import Foundation
         default: return false
         }
     }
+
+    /// P3-57 QA: format characters a user's own text holds (never treated as an image's odd units).
+    nonisolated static let userTypedMarks: Set<UInt32> = [0x200C, 0x200D, 0x200E, 0x200F, 0x061C, 0x202A, 0x202B, 0x202C,
+                                                          0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069]
 
     /// P3-57: the runs of consecutive odd scalars in `text` (UTF-16 ranges).
     nonisolated static func oddRuns(in text: String) -> [Range<Int>] {
