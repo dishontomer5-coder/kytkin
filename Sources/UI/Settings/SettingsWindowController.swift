@@ -134,6 +134,7 @@ import SwiftUI
 
     func windowWillClose(_ notification: Notification) {
         tabs.permissions.setVisible(false)
+        tabs.rules.settingsClosed()   // P3-24
         if let window { WindowPresenter.willClose(window) }
     }
 }

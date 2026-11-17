@@ -78,10 +78,9 @@ final class KytkinWindow: NSWindow {
             break
         case .clearField:
             // Through the text system (not `string = ""`), so the field's binding hears it and ⌘Z can undo it.
+            // P3-24: only an editable search field gets here (P3-15), and it always takes the delete.
             editor?.selectAll(nil)
             editor?.delete(nil)
-            // P3-15 (P3-12 QA note): a field that refused the delete keeps its text; leave it instead of looping.
-            if editor?.string.isEmpty == false { makeFirstResponder(nil) }
         case .stopEditing:
             makeFirstResponder(nil)
         case .closeWindow:

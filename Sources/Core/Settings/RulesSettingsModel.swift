@@ -51,6 +51,12 @@ import Observation
         sources = readSources()
     }
 
+    /// P3-24: Settings closed. The kind filter goes back to All, so "Show in Rules" (Websites) doesn't leave the next
+    /// opening showing only websites with nothing to say why.
+    func settingsClosed() {
+        kindFilter = .all
+    }
+
     var isEditable: Bool { !store.isReadOnly }
     var notices: [SettingsNotice] { SettingsNotice.notices(for: store) }
 
@@ -147,9 +153,12 @@ import Observation
     func beginAddWebsite(subdomainOf site: String? = nil) {
         guard canAddWebsite, let extractor else { return }
         let options = LanguageOption.options(pair: store.prefs.languagePair, sources: sources)
+        // P3-24 (Coordinator): a subdomain sheet starts with the site rule's language, not the first option.
+        let siteLanguage = site.flatMap { RuleEngine(rules: store.prefs.rules).rule(for: .site(domain: $0))?.inputSource }
         addWebsite = AddWebsiteForm(
             extractor: extractor, text: site.map(HostNormalizer.unicodeForm) ?? "",
-            extent: site == nil ? .wholeSite : .onlyHost, languageOptions: options, subdomainOf: site,
+            extent: site == nil ? .wholeSite : .onlyHost, languageOptions: options, language: siteLanguage,
+            subdomainOf: site,
             existingRule: { [weak self] scope in self.flatMap { RuleEngine(rules: $0.store.prefs.rules).rule(for: scope) } },
             languageName: { [weak self] id in LanguageOption.name(of: id, in: self?.sources ?? []) })
     }

@@ -21,15 +21,18 @@ import Observation
     /// Opened from a site row's "Add Subdomain Rule…": the sheet says how to type a subdomain.
     let subdomainOf: String?
 
+    /// `language`: the starting choice when it is one of the options (P3-24: a subdomain sheet starts with the site
+    /// rule's language); else the first option.
     init(extractor: DomainExtractor, text: String = "", extent: WebsiteInput.Extent = .wholeSite,
-         languageOptions: [LanguageOption], subdomainOf: String? = nil,
+         languageOptions: [LanguageOption], language: InputSourceID? = nil, subdomainOf: String? = nil,
          existingRule: @escaping @MainActor (RuleScope) -> Rule?,
          languageName: @escaping @MainActor (InputSourceID) -> String) {
         self.extractor = extractor
         self.text = text
         self.extent = extent
         self.languageOptions = languageOptions
-        self.language = languageOptions.first?.id ?? InputSourceID("")
+        self.language = language.flatMap { l in languageOptions.first { $0.id == l }?.id }
+            ?? languageOptions.first?.id ?? InputSourceID("")
         self.subdomainOf = subdomainOf
         self.existingRule = existingRule
         self.languageName = languageName
