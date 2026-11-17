@@ -51,6 +51,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   expect fail "App/Other/ConvertDiagnosticsLog.swift" $'#if DEBUG\nlet l = Logger()\n#endif'
   expect pass "Core/Browser/A.swift" '// Logger( in a comment is fine'
   expect pass "Core/Browser/A.swift" 'struct SiteReader {}'
+  # P6-0c QA: a SwiftUI view interpolated into a string renders its debug description ("Image(provider: ...)").
+  expect fail "UI/A.swift" 'Text("Look for \(Image(systemName: "k")) " + "x")'
+  expect fail "UI/A.swift" 'let s = "a \(Text("b"))"'
+  expect pass "UI/A.swift" 'Text("Look for ") + Text(Image(systemName: "k"))'
   exit 0
 fi
 
@@ -105,6 +109,14 @@ if [[ -f "$LOG_ALLOWED" ]]; then
     /(^|[^.[:alnum:]_]|os\.)(os_log|os_signpost|Logger)[[:space:]]*\(/ { if (!debug) print NR }
   ' "$LOG_ALLOWED")
 fi
+
+# 3. P6-0c QA: never a SwiftUI view inside a string interpolation (`"\\(Image(...))"`, `"\\(Text(...))"`): in a plain
+#    String it renders the view's debug description. Use `Text(...) + Text(Image(...))`.
+VIEW_INTERP_RE='\\\((Image|Text|Label|Button|HStack|VStack|ZStack)[[:space:]]*\('
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): a SwiftUI view inside a string interpolation (use Text + Text(Image(...)))")
+done < <(scan "$SRC" "$VIEW_INTERP_RE")
 
 if (( ${#problems[@]} > 0 )); then
   echo "❌ Lint failed:" >&2

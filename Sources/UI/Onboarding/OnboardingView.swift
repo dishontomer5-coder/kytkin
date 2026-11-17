@@ -205,8 +205,10 @@ private struct PracticeStep: View {
                 .fixedSize(horizontal: false, vertical: true)
             result
             Spacer()
-            Text("Kytkin lives in the menu bar, at the top right of your screen. Look for \(Image(systemName: "keyboard")) "
-                 + "and the language letters, like HE or EN.")
+            // P6-0c QA: Text concatenation, not an Image interpolated into a String (that rendered "Image(provider: …)").
+            (Text("Kytkin lives in the menu bar, at the top right of your screen. Look for ")
+                + Text(Image(systemName: "keyboard"))
+                + Text(" and the language letters, like HE or EN."))
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
