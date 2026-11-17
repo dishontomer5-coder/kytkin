@@ -1027,4 +1027,28 @@ final class ConvertControllerRichContentTests: XCTestCase {
         _ = await rig.sut.handle(request(empty(), gen: 3, app: chrome), layouts: layouts)
         XCTAssertNil(sink.traces.first?.chromiumSkipped, "after the cooldown the AX path is tried again")
     }
+
+    // MARK: - P3-61 QA
+
+    @TextActor func testAGmailSelectionInChromeNeverUsesAXEditingEither() async {
+        // A selection in a webmail page: the clipboard (copy the selection, convert, paste), never AX selection writes.
+        let rig = rig("ok akuo ok", selection: 3..<7, axWritesSelection: false)
+        rig.pasteboard.userSelection = "akuo"
+        var r = request(empty(), app: chrome)
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty, "no AX selection set")
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "webmailClipboard")
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+    }
+
+    @TextActor func testAGmailPageWhoseCheckTimesOutNeverGetsAXEditingForTheBox() async {
+        // Site unknown and the page check can't tell (unknown, e.g. out of time): the whole box never goes to AX
+        // editing (P3-53), so a Gmail reply can't be edited piece by piece there either.
+        let rig = rig("akuo vh\nOn Tue X wrote:\nnv nmc")
+        rig.replacer?.pageCategory = .unknown
+        _ = await rig.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty)
+        XCTAssertEqual(rig.field.text, "akuo vh\nOn Tue X wrote:\nnv nmc")
+    }
 }
