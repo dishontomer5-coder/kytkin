@@ -63,6 +63,18 @@ extension NSApplication: LegacyActivating {}
 /// P3-12 (P2-63): but Esc in a text field first clears it, then leaves it; only then does it close the window, and
 /// never while a sheet is attached (`EscapeKeyAction`, Core).
 final class KytkinWindow: NSWindow {
+    /// QA (P6-0h): how many key and mouse-down events reached this window (a count only, never which keys), so a
+    /// late focus clear can tell the user acted meanwhile (`InitialFocusPolicy`).
+    private(set) var userInputCount = 0
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown: userInputCount &+= 1
+        default: break
+        }
+        super.sendEvent(event)
+    }
+
     override func cancelOperation(_ sender: Any?) {
         let editor = firstResponder as? NSTextView
         let focus: EscapeKeyAction.Focus = switch editor {
