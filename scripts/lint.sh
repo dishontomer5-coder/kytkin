@@ -9,6 +9,8 @@
 #        trace), and there every Logger( line must sit inside `#if DEBUG` (before its `#else` / `#endif`).
 #        Was: only Keyboard/, Text/ and Browser/ folders (P3-6); text and hosts also pass through Controllers/,
 #        Context/, App/ and UI/.
+#   3. P6-3: network (CLAUDE.md: the only network call is the optional update check): URLSession, NWConnection,
+#      CFNetwork / Network imports and raw sockets only in Sources/System/Network/.
 # `./scripts/lint.sh --self-test` checks that the rules still catch what they should (run by build.sh test).
 # Lines whose first non-blank characters are `//` or `*` (comments) are ignored.
 set -euo pipefail
@@ -49,6 +51,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
   expect fail "App/ConvertDiagnosticsLog.swift" 'let l = Logger(subsystem: "x", category: "y")'
   expect fail "App/ConvertDiagnosticsLog.swift" $'#if DEBUG\n#else\nlet l = Logger(subsystem: "x", category: "y")\n#endif'
   expect fail "App/Other/ConvertDiagnosticsLog.swift" $'#if DEBUG\nlet l = Logger()\n#endif'
+  # P6-3: the network only from System/Network/.
+  expect fail "Core/Updates/A.swift" 'let s = URLSession.shared'
+  expect fail "UI/A.swift" 'import Network'
+  expect fail "App/A.swift" 'let c = NWConnection(host: "x", port: 1, using: .tcp)'
+  expect pass "System/Network/A.swift" 'let s = URLSession(configuration: .ephemeral)'
+  expect fail "Core/A.swift" 'let c = NSURLConnection(request: r, delegate: nil)'
   expect pass "Core/Browser/A.swift" '// Logger( in a comment is fine'
   expect pass "Core/Browser/A.swift" 'struct SiteReader {}'
   # P6-0c QA: a SwiftUI view interpolated into a string renders its debug description ("Image(provider: ...)").
@@ -117,6 +125,14 @@ while IFS= read -r hit; do
   [[ -z "$hit" ]] && continue
   problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): a SwiftUI view inside a string interpolation (use Text + Text(Image(...)))")
 done < <(scan "$SRC" "$VIEW_INTERP_RE")
+
+# 3. P6-3: the network only from Sources/System/Network/ (the update check's one client).
+NET_RE='(^|[^.[:alnum:]_])(URLSession|NSURLConnection|NWConnection|NWPathMonitor|NWBrowser|NWListener|CFStream|CFSocket|CFHTTP)[[:alnum:]_]*[[:space:].(]|^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)*import[[:space:]]+(Network|CFNetwork)([[:space:].]|$)|(^|[^.[:alnum:]_])socket[[:space:]]*\('
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  [[ "${hit%%:*}" == "$SRC/System/Network/"* ]] && continue
+  problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): network code only in System/Network/ (the optional update check)")
+done < <(scan "$SRC" "$NET_RE")
 
 if (( ${#problems[@]} > 0 )); then
   echo "❌ Lint failed:" >&2

@@ -60,6 +60,8 @@ import Observation
     var practiceDoubleShift: (@MainActor () -> InputSourceID?)?
     /// P6-0e: the pair as input sources (AppEnvironment: the layout catalog's bases), for the menu-bar logo's half.
     var pairInputSources: (@MainActor () -> LanguagePair?)?
+    /// P6-3: the update check's notice (AppEnvironment), shown as one menu line.
+    var updateNotice: (@MainActor () -> UpdateNotice?)?
 
     private var lastPrefs: Preferences?
     private var lastConfig: KeyProcessorConfig?
@@ -418,6 +420,7 @@ import Observation
                 ?? false,
             menuBarDisplay: store.prefs.general.menuBarLabel,
             pairInputSources: pairInputSources?() ?? store.prefs.languagePair,
+            updateNotice: updateNotice?(),
             paused: switching.paused, enabled: store.prefs.general.enabled,
             tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
             degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,

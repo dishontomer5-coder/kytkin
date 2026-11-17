@@ -83,10 +83,14 @@ import Observation
     @ObservationIgnored private var lastPracticeWrite: String?
     /// "Open Kytkin when I log in" (owner 2026-11-17: on by default); applied on Done.
     var openAtLogin = true
+    /// P6-3: "Check for updates": off until the user ticks it (the only network call); applied on Done.
+    var checkForUpdates = false
+    @ObservationIgnored let updates: UpdateChecker?
 
     init(store: PreferencesStore, permissions: any PermissionsProviding, polling: PermissionPollingDemand,
          general: GeneralSettingsModel, languages: LanguagesSettingsModel, appName: String,
-         bundlePath: String = "/Applications/Kytkin.app", now: @escaping () -> Date = Date.init,
+         bundlePath: String = "/Applications/Kytkin.app", updates: UpdateChecker? = nil,
+         now: @escaping () -> Date = Date.init,
          layouts: @escaping @MainActor () -> LayoutSnapshot? = { nil },
          sourceName: @escaping @MainActor (InputSourceID) -> String = { $0.rawValue }) {
         self.store = store
@@ -96,6 +100,7 @@ import Observation
         self.languages = languages
         self.appName = appName
         self.bundlePath = bundlePath
+        self.updates = updates
         self.now = now
         self.layouts = layouts
         self.sourceName = sourceName
@@ -125,6 +130,7 @@ import Observation
         general.refresh()
         languages.refresh()
         openAtLogin = firstLaunch ? true : general.launchAtLogin
+        checkForUpdates = updates?.isOn ?? false   // P6-3: never ticked for the user
         if firstLaunch { pickDefaultPairIfNeeded() }
         reload()
     }
@@ -170,6 +176,7 @@ import Observation
     /// "Done": applies "Open Kytkin when I log in" (the user's click), then closes like Skip.
     func done() {
         if openAtLogin != general.launchAtLogin { general.setLaunchAtLogin(openAtLogin) }
+        if let updates, checkForUpdates != updates.isOn { updates.setOn(checkForUpdates) }   // P6-3
     }
 
     /// "Done", "Skip Setup" or the close button: the window is closing. The view closes it.

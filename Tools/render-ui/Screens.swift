@@ -71,7 +71,8 @@ import SwiftUI
         let extractor = DomainExtractor(suffixList: PublicSuffixList(datContents: suffixText))
 
         let general = GeneralSettingsModel(store: store, loginItems: FakeLoginItems(),
-                                           sources: { Sample.enabledSources }, currentLanguage: { Sample.hebrewInfo })
+                                           sources: { Sample.enabledSources }, currentLanguage: { Sample.hebrewInfo },
+                                           updates: UpdateChecker(store: store, http: NoNetwork(), appVersion: "1.0.0"))
         let languages = LanguagesSettingsModel(store: store, imported: imported, catalog: catalog,
                                                fileSystem: layoutFS, inputMethods: { Sample.enabledSources })
         let rules = RulesSettingsModel(store: store, appName: Sample.appName, sources: { Sample.allSources },
@@ -265,7 +266,7 @@ import SwiftUI
         } }
         func model(bundlePath: String = "/Applications/Kytkin.app") -> OnboardingModel {
             OnboardingModel(store: w.store, permissions: w.permissions, polling: w.polling, general: w.general,
-                            languages: w.languages, appName: "Kytkin", bundlePath: bundlePath,
+                            languages: w.languages, appName: "Kytkin", bundlePath: bundlePath, updates: w.general.updates,
                             layouts: { snapshot }, sourceName: { $0 == SampleIDs.hebrew ? "Hebrew" : "English" })
         }
         let m = model()

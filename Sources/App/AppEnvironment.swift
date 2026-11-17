@@ -23,6 +23,9 @@ import AppKit
     let convert: ConvertDispatcher
     let controller: AppController
     let statusItem: StatusItemController
+    /// P6-3: the optional update check (off until the user opts in).
+    let updates: UpdateChecker
+    private var updateTimer: Timer?
     /// P2-23: built on first `openSettings`, then reused.
     private var settingsWindow: SettingsWindowController?
     /// P2-26: the welcome window, built on first use (launch, or Settings → General → "Show Welcome Again").
@@ -105,6 +108,12 @@ import AppKit
                                    })
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
+        // P6-3: the one network client; the checker asks only while opted in, at most once a day.
+        updates = UpdateChecker(store: store, http: ReleaseHTTPClient(),
+                                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                                    as? String ?? "0")
+        let updateChecker = updates
+        controller.updateNotice = { updateChecker.notice }
         // P6-0e: the menu-bar logo fills the half of the language that is on (an imported map's base counts).
         let catalog = layoutCatalog
         let prefsStore = store
@@ -174,7 +183,7 @@ import AppKit
         let languages = sharedModels.languages
         let window = onboardingWindow ?? OnboardingWindowController(model: OnboardingModel(
             store: store, permissions: permissions, polling: sharedModels.polling, general: sharedModels.general,
-            languages: languages, appName: Self.appName, bundlePath: Bundle.main.bundlePath,
+            languages: languages, appName: Self.appName, bundlePath: Bundle.main.bundlePath, updates: updates,
             // P6-0c: the practice box converts with the pair's layouts, in process.
             layouts: { convert.snapshot(for: store.prefs.languagePair) },
             sourceName: { id in languages.options.first { $0.inputSource == id }?.name ?? id.rawValue }))
@@ -199,7 +208,8 @@ import AppKit
         // P2-23: SMAppServiceLoginItems only reads the status here; register/unregister run on the user's toggle.
         let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
                                            sources: { switcher.sources(includeDisabled: false) },
-                                           currentLanguage: { switcher.currentInfo })   // P6-0d: menu-bar preview
+                                           currentLanguage: { switcher.currentInfo },   // P6-0d: menu-bar preview
+                                           updates: updates)   // P6-3
         // P2-24: reads the layout lists only on refresh (when Settings opens); files only on the user's clicks.
         let languages = LanguagesSettingsModel(store: store, imported: importedLayouts, catalog: layoutCatalog,
                                                fileSystem: importedLayouts.fileSystem,
@@ -270,11 +280,23 @@ import AppKit
     func start() {
         controller.start()
         statusItem.refresh()
+        // P6-3: the update check runs only while opted in; this asks at most once a day (hourly look, no network
+        // unless a day has passed since the last check).
+        let updates = self.updates
+        let statusItem = self.statusItem
+        updates.onChange = { statusItem.refresh() }
+        Task { await updates.checkIfDue() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { _ in
+            Task { @MainActor in await updates.checkIfDue() }
+        }
+        updateTimer?.tolerance = 5 * 60
         // P2-26 (001 §6.1): the welcome window, once. It marks itself seen as it shows; never with read-only prefs.
         if OnboardingModel.shouldShowAtLaunch(store) { openOnboarding(firstLaunch: true) }
     }
 
     func stop() {
+        updateTimer?.invalidate()
+        updateTimer = nil
         for o in appObservers { NotificationCenter.default.removeObserver(o) }
         appObservers = []
         controller.stop()

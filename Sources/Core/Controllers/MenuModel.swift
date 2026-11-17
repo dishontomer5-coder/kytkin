@@ -143,6 +143,12 @@ enum MenuModel {
             for w in warnings { out.append(item(for: w, settingsAvailable: settingsAvailable)) }
         }
 
+        // P6-3: the optional update check found a newer release (a plain line, not a warning).
+        if let update = state.updateNotice {
+            out.append(.separator)
+            out.append(.action(update.menuTitle, .openURL(update.pageURL)))
+        }
+
         out.append(.separator)
         out.append(.action("Settings…", .openSettings(.general), enabled: settingsAvailable, key: ","))
         // P6-0c (visual review N6): "About Kytkin"; the version lives in About.

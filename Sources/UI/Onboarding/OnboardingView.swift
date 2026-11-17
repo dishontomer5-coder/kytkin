@@ -51,10 +51,12 @@ struct OnboardingView: View {
             // P6-0e (Colors.md, mock-ups): Back always in the same place, on the left; Skip Setup there on screen 1.
             HStack {
                 if model.isFirstStep {
+                    // P6-3 QA (a): secondary buttons in primary text; the accent is for the main button only.
                     Button("Skip Setup") { close() }
+                        .tint(.primary)
                         .help("You can open this again in Settings → General.")
                 } else {
-                    Button("Back") { model.back() }
+                    Button("Back") { model.back() }.tint(.primary)
                 }
                 Spacer()
             }
@@ -160,7 +162,7 @@ private struct WelcomeStep: View {
             // Visual review O3: fixed-width icons, so the lines start at one edge. Flows M8: no update claim.
             VStack(alignment: .leading, spacing: 4) {
                 privacy("lock", "What you type stays on your Mac. Kytkin never saves or sends it.")
-                privacy("network.slash", "No internet, no account, no tracking.")
+                privacy("network.slash", "No account, no tracking. No internet, unless you turn on the update check.")
             }
             .font(.callout).foregroundStyle(.secondary)
         }
@@ -230,7 +232,7 @@ private struct PermissionsStep: View {
                     // Flows M4: a stale entry from an older copy.
                     Text("Already on? Select \(model.appName), click –, then click Allow Accessibility… again.")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button("Allow Accessibility…") { model.grantAccessibility() }
+                    Button("Allow Accessibility…") { model.grantAccessibility() }.tint(.primary)
                 }
                 Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.kytkinLink)
             }
@@ -269,6 +271,16 @@ private struct PracticeStep: View {
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
+            if model.updates != nil {
+                // P6-3: unchecked until the user ticks it.
+                Toggle(isOn: $model.checkForUpdates) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Check for updates")
+                        Text("Once a day, asks GitHub whether a newer version is out. Only Kytkin's version number is sent.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
             if let error = model.general.loginItemError {
                 StatusLabel(text: error, symbol: "xmark.circle.fill", tint: .red).font(.caption)
             }
@@ -318,6 +330,7 @@ private struct MoveToApplicationsView: View {
                 Button { showInFinder() } label: { Text("Show in Finder").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
                 Button { quit() } label: { Text("Quit").frame(maxWidth: .infinity) }.controlSize(.large)
+                    .tint(.primary)
             }
             .frame(maxWidth: 320)
             Spacer()

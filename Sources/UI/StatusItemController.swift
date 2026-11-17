@@ -161,6 +161,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .quitAndReopen: AppRelauncher.quitAndReopen()
         case .restartKeyboard: menuControl.restartKeyboard()
         case .revealFile(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .openURL(let url): NSWorkspace.shared.open(url)   // P6-3: the release page, on the user's click
         case .quit: NSApp.terminate(nil)
         }
         refresh()
