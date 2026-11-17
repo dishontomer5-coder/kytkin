@@ -30,11 +30,15 @@ enum SettingsMetrics {
 }
 
 extension Color {
+    /// P6-0h: the one background behind every tab (the window's own colour, painted by each pane so no tab shows a
+    /// table's or the window material's background instead).
+    static let kytkinWindow = Color(nsColor: .windowBackgroundColor)
+
     /// The setting cards (Colors.md: Form section, light #FFFFFF, dark #2E2E31).
     static let kytkinCard = Color(nsColor: NSColor(name: "KytkinCard") { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0x2E / 255, green: 0x2E / 255, blue: 0x31 / 255, alpha: 1)
-            : NSColor.white
+            : NSColor(srgbRed: 0xF4 / 255, green: 0xF5 / 255, blue: 0xF5 / 255, alpha: 1)   // P6-0h: the light window is white on macOS 26
     })
 
     /// P6-0g (review P2): the green for controls and the chosen half: light #0E7A66, dark #2FA88B.
@@ -75,11 +79,25 @@ struct SettingsPage<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .scrollContentBackground(.hidden)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.kytkinWindow)   // P6-0h: one window background for every tab
     }
 }
 
 // MARK: - Section and rows
+
+/// P6-0h (owner: every tab looks like General): the one card shape, used by every section and Rules' table.
+struct SettingsCard<Content: View>: View {
+    static var cornerRadius: CGFloat { 12 }
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+            .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).fill(Color.kytkinCard))
+            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+    }
+}
 
 /// A header (title case) over one card of rows with a hairline between them.
 struct SettingsSection<Content: View>: View {
@@ -100,10 +118,7 @@ struct SettingsSection<Content: View>: View {
                     .padding(.leading, 2)
                     .accessibilityAddTraits(.isHeader)
             }
-            _VariadicView.Tree(DividedCard()) { content }
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.kytkinCard))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+            SettingsCard { _VariadicView.Tree(DividedCard()) { content } }
             if let footer {
                 Text(footer).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

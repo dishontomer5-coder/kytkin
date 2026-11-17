@@ -82,12 +82,18 @@ struct LanguagePairProblems: View {
     }
 }
 
-/// P6-0g (design v2, lg-general "Language pair"): one wide key with two halves. Each half is a standard language picker
-/// ("First language", "Second language") beside the half-filled key icon it is in the menu bar (review P3: the one
-/// place that teaches the icon); a round button on the seam swaps them.
+/// P6-0g / P6-0h (owner, lg-general): ONE rounded key, about 64 pt tall, split by the logo's S-shaped seam with a thin
+/// gap. The left half is the first language, filled teal like the logo's left half; the right half is neutral. Each
+/// half IS its picker: the half-filled key glyph, a grey "First language" / "Second language" caption, the language in
+/// bold ("English (ABC)") and a small round chevron at its right edge; a click anywhere on the half opens the list (an
+/// AppKit menu, so no pop-up bezel inside). The round swap button sits on the seam, over both halves.
 struct LanguagePairKey: View {
     @Bindable var model: LanguagesSettingsModel
     static let height: CGFloat = 64
+    /// The seam: how far its top leans right of the middle (and its bottom left), as a share of the height.
+    static let slant: CGFloat = 0.38
+    static let gap: CGFloat = 3
+    static let radius: CGFloat = 18
 
     var body: some View {
         ZStack {
@@ -97,20 +103,21 @@ struct LanguagePairKey: View {
             }
             .background {
                 ZStack {
-                    KeyHalf(side: .a, gap: 6, radius: 16, slant: 0.12).fill(Color.primary.opacity(0.07))
-                    KeyHalf(side: .b, gap: 6, radius: 16, slant: 0.12).fill(Color.kytkinMint)
+                    KeyHalf(side: .a, gap: Self.gap, radius: Self.radius, slant: Self.slant).fill(Color.kytkinPairFirst)
+                    KeyHalf(side: .b, gap: Self.gap, radius: Self.radius, slant: Self.slant)
+                        .fill(Color.kytkinPairSecond)
                 }
             }
             Button { model.swap() } label: {
                 Image(systemName: "arrow.left.arrow.right")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 30, height: 30)
-                    .background(Circle().fill(Color.kytkinCard).shadow(color: .black.opacity(0.18), radius: 3, y: 1))
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+                    .foregroundStyle(.primary)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color.kytkinSwap).shadow(color: .black.opacity(0.25), radius: 4, y: 1.5))
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .focusEffectDisabled()
             .help("Swap the two languages")
             .accessibilityLabel("Swap the two languages")
         }
@@ -120,33 +127,103 @@ struct LanguagePairKey: View {
     private func half(_ side: PairSide) -> some View {
         let id = side == .a ? model.pair.a : model.pair.b
         let title = side == .a ? "First language" : "Second language"
-        return HStack(spacing: 10) {
-            if let glyph = MenuBarGlyph.image(for: .active, side: side) {
-                Image(nsImage: glyph).renderingMode(.template).foregroundStyle(.primary)
+        let value = model.options.first { $0.id == id }?.title ?? model.name(of: id)
+        let onTeal = side == .a
+        return Button { LanguagePairPopUp.show(model: model, side: side) } label: {
+            HStack(spacing: 12) {
+                if let glyph = MenuBarGlyph.image(for: .active, side: side) {
+                    Image(nsImage: glyph).renderingMode(.template)
+                        .foregroundStyle(onTeal ? Color.white : Color.primary)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: SettingsMetrics.secondarySize))
+                        .foregroundStyle(onTeal ? Color.white.opacity(0.75) : Color.secondary)
+                    Text(value).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                        .foregroundStyle(onTeal ? Color.white : Color.primary)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(onTeal ? Color.white : Color.primary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill((onTeal ? Color.white : Color.primary).opacity(0.14)))
                     .accessibilityHidden(true)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                LanguagePairMenu(model: model, title: title, selection: side == .a ? $model.pairA : $model.pairB)
-                    .labelsHidden()
-                    .frame(maxWidth: 210, alignment: .leading)
-                    .accessibilityLabel("\(title): \(model.name(of: id))")
-            }
-            Spacer(minLength: 0)
+            .padding(.leading, side == .a ? 18 : 30)
+            .padding(.trailing, side == .a ? 32 : 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, side == .a ? 14 : 34)
-        .padding(.trailing, side == .a ? 34 : 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title): \(model.name(of: id))")
+        .accessibilityHint("Opens the list of languages")
     }
 }
 
+/// P6-0h: the list behind a half of the pair key: the same groups, names and disabled entries as the setup window's
+/// pickers (`LanguagesSettingsModel.optionGroups`), the current one checked. Opened only by a click.
+@MainActor enum LanguagePairPopUp {
+    static func show(model: LanguagesSettingsModel, side: PairSide) {
+        let current = (side == .a ? model.pair.a : model.pair.b).rawValue
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        var checked: NSMenuItem?
+        for (index, group) in model.optionGroups.enumerated() {
+            if index > 0 { menu.addItem(.separator()) }
+            menu.addItem(NSMenuItem.sectionHeader(title: group.title))
+            for option in group.options {
+                let item = ClosureMenuItem(title: option.title) {
+                    if side == .a { model.pairA = option.tag } else { model.pairB = option.tag }
+                }
+                item.isEnabled = option.isSelectable
+                if option.tag == current {
+                    item.state = .on
+                    checked = item
+                }
+                menu.addItem(item)
+            }
+        }
+        menu.popUp(positioning: checked, at: NSEvent.mouseLocation, in: nil)
+    }
+}
+
+/// A menu item that runs a closure.
+final class ClosureMenuItem: NSMenuItem {
+    private let run: @MainActor () -> Void
+
+    init(title: String, run: @escaping @MainActor () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+    }
+
+    @available(*, unavailable) required init(coder: NSCoder) { fatalError("not used") }
+
+    @MainActor @objc private func fire() { run() }
+}
+
 extension Color {
-    /// The second language's half (lg-general): mint, light #D8F5EC, dark #1E3F37.
-    static let kytkinMint = Color(nsColor: NSColor(name: "KytkinMint") { appearance in
+    /// P6-0h: the first language's half, filled like the logo's left half: light #0E7A66 (white text 5.3:1), dark
+    /// #2C5E57 (lg-general-dark).
+    static let kytkinPairFirst = Color(nsColor: NSColor(name: "KytkinPairFirst") { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x1E / 255, green: 0x3F / 255, blue: 0x37 / 255, alpha: 1)
-            : NSColor(srgbRed: 0xD8 / 255, green: 0xF5 / 255, blue: 0xEC / 255, alpha: 1)
+            ? NSColor(srgbRed: 0x2C / 255, green: 0x5E / 255, blue: 0x57 / 255, alpha: 1)
+            : NSColor(srgbRed: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255, alpha: 1)
+    })
+
+    /// P6-0h: the second language’s half, neutral: light #E4E7E6, dark #3A3A3E.
+    static let kytkinPairSecond = Color(nsColor: NSColor(name: "KytkinPairSecond") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x3A / 255, green: 0x3A / 255, blue: 0x3E / 255, alpha: 1)
+            : NSColor(srgbRed: 0xE4 / 255, green: 0xE7 / 255, blue: 0xE6 / 255, alpha: 1)
+    })
+
+    /// P6-0h: the round swap button on the seam: light white, dark #4A4A50.
+    static let kytkinSwap = Color(nsColor: NSColor(name: "KytkinSwap") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x4A / 255, green: 0x4A / 255, blue: 0x50 / 255, alpha: 1)
+            : NSColor.white
     })
 }
 
