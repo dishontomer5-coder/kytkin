@@ -121,5 +121,8 @@ text, or assets from FlicKey. Contributors must not consult FlicKey's source rep
 
 Kytkin is released under the [MIT License](LICENSE).
 
+Kytkin was built by Tomer Dishon for Ofir W. So she would never have to pay for a keyboard switcher again — and get
+a better one.
+
 It bundles the [Public Suffix List](https://publicsuffix.org/) (Mozilla Public License 2.0), unmodified, to find a
 website's domain. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -60,18 +60,33 @@ struct AboutSettingsView: View {
 }
 
 /// P3-15: third-party data shipped inside Kytkin (behind About → "Acknowledgements…").
+/// P6-0l (owner): a personal dedication first; the licence credit (notice and MPL link) small at the bottom.
 struct AcknowledgementsView: View {
     let acknowledgements: [AboutInfo.Acknowledgement]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(acknowledgements) { ack in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(ack.title).font(.system(size: SettingsMetrics.titleSize, weight: .semibold))
-                    Text(ack.detail).font(.system(size: 12)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Link(ack.license, destination: ack.licenseURL).foregroundStyle(Color.kytkinLink)
-                        .font(.system(size: 12))
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(AboutInfo.acknowledgementsTitle)
+                    .font(.system(size: SettingsMetrics.titleSize, weight: .semibold))
+                Text(AboutInfo.dedication).font(.system(size: 12))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(AboutInfo.thirdPartyTitle)
+                    .font(.system(size: SettingsMetrics.secondarySize, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(acknowledgements) { ack in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ack.detail)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // P6-0l: the popover focuses this link when it opens; no ring then (Tab still reaches it).
+                        Link(ack.license, destination: ack.licenseURL).foregroundStyle(Color.kytkinLink)
+                            .focusEffectDisabled()
+                    }
+                    .font(.system(size: SettingsMetrics.secondarySize))
                 }
             }
         }

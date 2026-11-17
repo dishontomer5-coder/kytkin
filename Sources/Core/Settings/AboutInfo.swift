@@ -31,12 +31,19 @@ struct AboutInfo: Equatable, Sendable {
         return isDate ? String(date) : raw
     }
 
+    /// P6-0l (owner's exact words): the Acknowledgements popover's title and dedication; the licence credit for the
+    /// bundled data stays below them, under `thirdPartyTitle`.
+    static let acknowledgementsTitle = "Acknowledgements"
+    static let dedication = "Kytkin was built by Tomer Dishon for Ofir W.\n"
+        + "So she would never have to pay for a keyboard switcher again — and get a better one."
+    static let thirdPartyTitle = "Third-party software"
+
     static func publicSuffixList(version: String?) -> Acknowledgement {
-        var detail = "Kytkin uses the Public Suffix List (publicsuffix.org) to group website addresses into sites, "
-            + "so www.ynet.co.il and news.ynet.co.il share the rule for ynet.co.il. Shipped unmodified."
+        // P6-0l: the owner's shorter wording; the list's version (P3-15) stays after it.
+        var detail = "Public Suffix List (publicsuffix.org), used unmodified to group website addresses into sites."
         if let version { detail += " Version \(displayVersion(version))." }
         return Acknowledgement(title: "Public Suffix List", detail: detail,
-                               license: "Mozilla Public License 2.0 (MPL-2.0)",
+                               license: "Mozilla Public License 2.0",
                                licenseURL: URL(string: "https://mozilla.org/MPL/2.0/") ?? URL(fileURLWithPath: "/"))
     }
 

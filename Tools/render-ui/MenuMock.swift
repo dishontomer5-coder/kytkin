@@ -152,3 +152,37 @@ struct ToolbarTabsMock: View {
         .background(scheme == .dark ? Color(white: 0.17) : Color(white: 0.93))
     }
 }
+
+/// P6-0l: a stand-in for an NSPopover (it only draws while open on screen): the real content view in a rounded
+/// panel with an arrow on its top edge pointing up at its anchor. The look is an approximation; the content is real.
+struct PopoverMock<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ArrowUp()
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .overlay(ArrowUp().stroke(Color.primary.opacity(0.15), lineWidth: 0.5))
+                .frame(width: 22, height: 10)
+                .offset(y: 0.5)
+                .zIndex(1)
+            content
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .shadow(color: .black.opacity(0.25), radius: 12, y: 4))   // the panel's shadow, not the text's
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
+        }
+        .fixedSize()
+    }
+
+    private struct ArrowUp: Shape {
+        func path(in rect: CGRect) -> Path {
+            var p = Path()
+            p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            p.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            return p
+        }
+    }
+}
