@@ -72,6 +72,12 @@ enum PracticeGhost {
 
     static func accept(old: String, new: String, sample: Sample) -> Edit {
         if new == sample.target || new.isEmpty { return Edit(text: new, rejected: nil) }
+        // QA (P6-0i): a key typed after the word was converted keeps the word (it used to empty the box and flash the
+        // word's first letter as the "wrong" key).
+        if old == sample.target, new.count > old.count {
+            let same = zip(old, new).prefix { $0 == $1 }.count
+            return Edit(text: old, rejected: Array(new)[same])
+        }
         let lowered = new.lowercased()
         let filled = matchingPrefix(lowered, sample)
         if filled == lowered.count { return Edit(text: lowered, rejected: nil) }

@@ -61,4 +61,12 @@ final class PracticeGhostTests: XCTestCase {
         XCTAssertEqual(PracticeGhost.progressAnnouncement(filled: 2, sample: sample), "a, k typed")
         XCTAssertEqual(PracticeGhost.progressAnnouncement(filled: 0, sample: sample), "")
     }
+
+    // QA (P6-0i): a key after the converted word is turned away; the word stays.
+    func testAKeyAfterTheConvertedWordKeepsTheWord() {
+        XCTAssertEqual(PracticeGhost.accept(old: "שלום", new: "שלוםx", sample: sample),
+                       PracticeGhost.Edit(text: "שלום", rejected: "x"))
+        XCTAssertEqual(PracticeGhost.accept(old: "שלום", new: "שלו", sample: sample),
+                       PracticeGhost.Edit(text: "", rejected: nil), "Backspace starts over")
+    }
 }

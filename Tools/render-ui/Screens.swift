@@ -71,7 +71,7 @@ import SwiftUI
         let extractor = DomainExtractor(suffixList: PublicSuffixList(datContents: suffixText))
 
         let general = GeneralSettingsModel(store: store, loginItems: FakeLoginItems(),
-                                           sources: { Sample.enabledSources }, currentLanguage: { Sample.hebrewInfo },
+                                           sources: { Sample.enabledSources }, currentLanguage: { Sample.current },
                                            updates: UpdateChecker(store: store, http: NoNetwork(), appVersion: "1.0.0"))
         let languages = LanguagesSettingsModel(store: store, imported: imported, catalog: catalog,
                                                fileSystem: layoutFS, inputMethods: { Sample.enabledSources })
@@ -265,8 +265,11 @@ import SwiftUI
         func model(bundlePath: String = "/Applications/Kytkin.app") -> OnboardingModel {
             OnboardingModel(store: w.store, permissions: w.permissions, polling: w.polling, general: w.general,
                             languages: w.languages, appName: "Kytkin", bundlePath: bundlePath, updates: w.general.updates,
-                            layouts: { snapshot }, sourceName: { $0 == SampleIDs.hebrew ? "Hebrew" : "English" })
+                            layouts: { snapshot }, sourceName: { $0 == SampleIDs.hebrew ? "Hebrew" : "English" },
+                            // QA (P6-0i): the pretend keyboard really switches, so the chip shows EN while typing.
+                            selectSource: { Sample.select($0) })
         }
+        defer { Sample.current = Sample.hebrewInfo }
         let m = model()
         m.begin(firstLaunch: true)
         let size = OnboardingView.size
@@ -296,7 +299,8 @@ import SwiftUI
         OnboardingView.renderCelebrationAt = 0
         try shot("onboarding-3-practice-wrong-language", m)
         m.practiceFocused = true
-        _ = m.practiceDoubleShift()
+        if let target = m.practiceDoubleShift() { Sample.select(target) }   // the after-convert switch
+        m.reload()
         OnboardingView.renderCelebrationAt = 0.35
         try shot("onboarding-3-practice-confetti", m)
         OnboardingView.renderCelebrationAt = nil

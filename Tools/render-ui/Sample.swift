@@ -41,6 +41,9 @@ enum Sample {
                                             isEnabled: true, isConvertible: false, isInputMethod: true)
 
     static let enabledSources = [abcInfo, hebrewInfo, pinyinInfo]
+    /// The keyboard that is on (Hebrew, except where a screen switches it).
+    nonisolated(unsafe) static var current = hebrewInfo
+    static func select(_ id: InputSourceID) { current = enabledSources.first { $0.id == id } ?? current }
     static let allSources = [abcInfo, hebrewInfo, hebrewQWERTYInfo, pinyinInfo]
 
     static func date(_ day: Int, _ hour: Int, _ minute: Int) -> Date {

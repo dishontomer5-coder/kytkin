@@ -91,6 +91,9 @@ import Observation
     @ObservationIgnored private var lastShiftAt: Date?
     /// P6-0i: switches the keyboard to the typing side's language when the practice step opens (the app's own switch).
     @ObservationIgnored private let selectSource: @MainActor (InputSourceID) -> Void
+    /// QA (P6-0i): the keyboard that is on, as last read (`reload`). `general.menuBarPreview` reads it live but isn't
+    /// observed, so the chip went stale after a switch nothing else redrew for (the user's own ⌃Space, say).
+    private(set) var currentSource: InputSourceID?
     /// "Open Kytkin when I log in" (owner 2026-11-17: on by default); applied on Done.
     var openAtLogin = true
     /// P6-3: "Check for updates": off until the user ticks it (the only network call); applied on Done.
@@ -163,6 +166,15 @@ import Observation
     func reload() {
         let next = permissions.status.grants.accessibility
         if next != accessibility { accessibility = next }
+        let source = general.currentLanguage()?.id
+        if source != currentSource { currentSource = source }
+    }
+
+    /// QA (P6-0i): the menu-bar chip on the welcome and practice steps: the language that is on now (redrawn when
+    /// `reload` sees the keyboard change; the root reloads on every input-source change).
+    var menuBarPreview: MenuModel.Label {
+        _ = currentSource
+        return general.menuBarPreview
     }
 
     // MARK: - Steps
@@ -210,6 +222,12 @@ import Observation
     /// converted.
     func practiceDoubleShift() -> InputSourceID? {
         guard step == .practice, practiceFocused else { return nil }
+        // QA (P6-0i): with a ghost word, only the whole word (or the converted one) converts. A half-typed word would
+        // turn into invisible text and switch the keyboard to the language every next key is turned away in.
+        if case .typing = practicePhase {
+            practiceResult = .nothingToConvert
+            return nil
+        }
         guard let layouts = layouts(), let result = PracticeConvert.convert(practiceText, layouts: layouts) else {
             practiceResult = .nothingToConvert
             return nil
@@ -271,6 +289,7 @@ import Observation
         practiceSample = PracticeGhost.sample(layouts: layouts())
         if let sample = practiceSample, let layouts = layouts() {
             selectSource(layouts.source(of: sample.typingSide))
+            reload()   // the chip shows the language just switched to
         }
     }
 
