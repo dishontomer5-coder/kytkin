@@ -141,11 +141,6 @@ import Foundation
         var atoms: [String] = []
         /// P3-44: the selected range exactly as the app reported it (put back when nothing was typed).
         var rawSelection: TextRange?
-        /// P3-54: a box convert: where a mail's quoted thread / forward / signature starts in `text`
-        /// (`QuotedReply.boundary`); the plan converts only what comes before it.
-        var quoteBoundary: Int?
-        /// P3-54 QA: a quoted thread / signature was seen at all (a text boundary, or quote lines from the AX walk).
-        var quoteFound = false
     }
 
     /// The caller's conversion of a `Read`.
@@ -251,8 +246,6 @@ import Foundation
         var oddRunsStripped = 0
         /// P3-55: `AXValue`'s length (= `AXNumberOfCharacters`, checked), UTF-16 units (a count only).
         var valueUnits = 0
-        /// P3-54: a mail quote boundary was found in the box's text (the plan stops there).
-        var quoteBoundary = false
     }
 
     /// P3-46: how `AXStringForRange(0, caret)` differed from `AXValue`'s prefix (UTF-16 counts only).
@@ -297,9 +290,7 @@ import Foundation
     /// claim, asked once before the first write (the first selection set).
     /// P3-53: `startedAt`: when the convert started (the controller's request start), so the time spent before this
     /// path (another path's reads, the page check) counts against the same budget. nil = now.
-    /// P3-53 QA: `quoteSearchMustComplete`: a quote-container search cut short stops the read (a webmail whole box).
     func run(_ source: Source, expected: any FocusedElementIdentity, startedAt: UInt64? = nil,
-             quoteSearchMustComplete: Bool = false,
              plan: (Read) -> Planned, mayWrite: () -> Bool) async -> Result {
         timedOut = false
         stripOddUnits = false   // P3-57
@@ -309,7 +300,7 @@ import Foundation
         if clock.nowNanos &- start > timing.readBudgetNanos { return .unavailable(.timedOut) }
         guard let el = focusedElement(), el.isSameElement(as: expected) else { return .unavailable(.focusChanged) }
         let read: Read
-        switch readBox(el, source, start: start, quoteSearchMustComplete: quoteSearchMustComplete) {
+        switch readBox(el, source, start: start) {
         case .failure(let stop): return .unavailable(stop)
         case .success(let r): read = r
         }
@@ -725,8 +716,7 @@ import Foundation
 
     // MARK: - Step 1
 
-    private func readBox(_ el: any AXTextElement, _ source: Source, start: UInt64,
-                         quoteSearchMustComplete: Bool) -> Swift.Result<Read, Stop> {
+    private func readBox(_ el: any AXTextElement, _ source: Source, start: UInt64) -> Swift.Result<Read, Stop> {
         func fail(_ check: Diagnostic.ReadCheck, _ stop: Stop) -> Swift.Result<Read, Stop> {
             lastDiagnostic.readCheck = check
             return .failure(stop)
@@ -754,20 +744,11 @@ import Foundation
         // P3-53: the walks get what is left of the read budget; none left → stop before anything is written.
         let elapsed = clock.nowNanos &- start
         guard elapsed < timing.readBudgetNanos else { return fail(.atomRead, .timedOut) }
-        // P3-54 (owner: a Chrome Gmail reply walked 126 quote lines as atoms, the pieces still reached the quote and the
-        // budget ran out): for a box, the quote boundary is found in the text first; when it is, the plan stops there
-        // and the quote isn't walked at all. Not found → the P3-48 container walk as before.
-        var quoteBoundary = source == .box ? QuotedReply.boundary(in: value) : nil
-        lastDiagnostic.quoteBoundary = quoteBoundary != nil
-        var quoteFound = quoteBoundary != nil   // P3-54 QA
-        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed,
-                                    quoteSearchMustComplete: quoteSearchMustComplete && quoteBoundary == nil,
-                                    searchQuotes: quoteBoundary == nil)) {
+        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed)) {
         case .success(let a):
             atoms = a.map(\.text).filter { !$0.isEmpty }   // P3-55: images come as empty atoms (trace count only)
             images = a.filter { $0.role == "AXImage" }.count   // P3-57
             lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
-            if a.contains(where: { $0.role == "AXQuoteText" }) { quoteFound = true }
         case .failure: if timedOut { return fail(.atomRead, .readFailed) }
         }
         // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
@@ -786,7 +767,6 @@ import Foundation
             units = Array(value.utf16)
             n = units.count
             guard n > 0 else { return fail(.boxSize, .boxSize) }
-            if source == .box { quoteBoundary = QuotedReply.boundary(in: value) }
         }
         guard case .success(let raw) = track(el.range(.selectedTextRange)) else { return fail(.rangeRead, .readFailed) }
         var sel = raw
@@ -844,8 +824,7 @@ import Foundation
                     if source == .selection {
                         guard alignment.narrower == 0, c == sel.end else { return fail(.prefix, .inconsistent) }
                         lastDiagnostic.caretMapped = true
-                        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw,
-                                    quoteBoundary: quoteBoundary, quoteFound: quoteFound))
+                        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
                     }
                     // P3-51: the app's text for the range up to its caret may be in other units than the caret: wider
                     // (an emoji's two units where `AXValue` and the caret count one U+FFFC, or none) → it ends *before*
@@ -864,8 +843,7 @@ import Foundation
                 if source == .box, !atoms.isEmpty { return fail(.prefix, .inconsistent) }
             }
         }
-        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw,
-                                    quoteBoundary: quoteBoundary, quoteFound: quoteFound))
+        return .success(Read(text: value, selection: sel, atoms: atoms, rawSelection: raw))
     }
 
     /// P3-46: an AX role for the DEBUG trace: kept only when it looks like an AX role name (`AX` + letters, ≤ 40),

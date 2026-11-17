@@ -431,8 +431,7 @@ final class ConvertControllerClipboardTests: XCTestCase {
         let out = await rig.sut.handle(request(empty(), gen: 1), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
         XCTAssertFalse(rig.poster.events.contains { $0.keyCode == SyntheticKeyEvent.unicodeKeyCode }, "nothing typed")
-        XCTAssertFalse(rig.poster.events.contains { $0.keyCode == ClipboardShortcut.selectAll.keyCode },
-                       "never ⌘A")
+        XCTAssertFalse(rig.poster.events.contains { $0.keyCode == KeyCode.upArrow }, "never ⇧⌘↑")
     }
 
     @TextActor func testWithTheClipboardOffASelectionIsStillTypedOver() async {

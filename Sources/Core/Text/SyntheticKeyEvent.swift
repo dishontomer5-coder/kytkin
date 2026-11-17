@@ -2,7 +2,8 @@
 // or a Unicode string on a neutral key code. Both always carry the `ours` marker and no modifier flags (the user
 // may still hold Shift right after a double-Shift). There is no way to build a Return, Tab or other control key.
 // P3-37: two more shapes, for the clipboard convert in unreadable non-terminal apps only: ⌘A / ⌘C / ⌘V (Command and
-// nothing else, on the three ANSI keys, no text) and a plain Right arrow (drops the ⌘A selection, caret at the end).
+// nothing else, on the three ANSI keys, no text) and a plain Right arrow (drops the selection, caret at its end).
+// P3-62: ⌘A is gone; ⇧⌘↑ (Up arrow, Shift + Command, no text) selects from the cursor to the box's start instead.
 // Still never a Return, Tab, Escape, ⌃C or any other key.
 
 import Foundation
@@ -23,8 +24,10 @@ struct SyntheticKeyEvent: Sendable, Equatable {
     /// Modifier flags to post with. Always 0: flags are cleared on every event.
     let modifierFlags: UInt64
 
-    /// P3-37: CGEventFlags.maskCommand (bit 20), the only modifier Kytkin ever posts.
+    /// P3-37: CGEventFlags.maskCommand (bit 20).
     static let commandFlag: UInt64 = 0x0010_0000
+    /// P3-62: CGEventFlags.maskShift (bit 17), only ever with Command on the Up arrow (`selectToStart`).
+    static let shiftFlag: UInt64 = 0x0002_0000
 
     private init(keyCode: UInt16, isKeyDown: Bool, unicode: [UInt16], modifierFlags: UInt64 = 0) {
         self.keyCode = keyCode
@@ -34,12 +37,20 @@ struct SyntheticKeyEvent: Sendable, Equatable {
         self.modifierFlags = modifierFlags
     }
 
-    /// P3-37: ⌘A / ⌘C / ⌘V for the clipboard convert. Command only, no text.
+    /// P3-37: ⌘C / ⌘V for the clipboard convert (P3-62: ⌘A removed). Command only, no text.
     static func shortcut(_ s: ClipboardShortcut, keyDown: Bool) -> SyntheticKeyEvent {
         SyntheticKeyEvent(keyCode: s.keyCode, isKeyDown: keyDown, unicode: [], modifierFlags: commandFlag)
     }
 
-    /// P3-37: a plain Right arrow, to drop the ⌘A selection when nothing is pasted (the caret goes to the end).
+    /// P3-62 (owner 2026-11-17: no selection → the text from the start of the box up to the cursor): ⇧⌘↑, "select to
+    /// the beginning of the document" in Cocoa text views, Chromium and Gecko text boxes. The anchor stays at the cursor.
+    static func selectToStart(keyDown: Bool) -> SyntheticKeyEvent {
+        SyntheticKeyEvent(keyCode: KeyCode.upArrow, isKeyDown: keyDown, unicode: [],
+                          modifierFlags: commandFlag | shiftFlag)
+    }
+
+    /// P3-37: a plain Right arrow, to drop the copy selection when nothing is pasted (P3-62: the caret goes back to the
+    /// selection's end, where the cursor was).
     static func rightArrow(keyDown: Bool) -> SyntheticKeyEvent {
         SyntheticKeyEvent(keyCode: KeyCode.rightArrow, isKeyDown: keyDown, unicode: [])
     }
@@ -72,9 +83,12 @@ struct SyntheticKeyEvent: Sendable, Equatable {
     /// event whose text is 1…16 units with no Cc/Zl/Zp character. Nothing else may be posted.
     var isSafeToPost: Bool {
         guard marker == EventOrigin.oursMarker else { return false }
-        // P3-37: Command goes only with ⌘A / ⌘C / ⌘V and no text; no other modifier ever.
+        // P3-37: Command goes only with ⌘C / ⌘V and no text. P3-62: Shift + Command only with the Up arrow (⇧⌘↑).
         if modifierFlags == Self.commandFlag {
             return unicode.isEmpty && ClipboardShortcut.allCases.contains { $0.keyCode == keyCode }
+        }
+        if modifierFlags == Self.commandFlag | Self.shiftFlag {
+            return unicode.isEmpty && keyCode == KeyCode.upArrow
         }
         guard modifierFlags == 0 else { return false }
         switch keyCode {

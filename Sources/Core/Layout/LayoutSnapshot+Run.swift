@@ -76,6 +76,8 @@ extension LayoutSnapshot {
         return (target, out)
     }
 
+    /// P3-62: ⌘A is no longer posted (⇧⌘↑ selects to the box's start; the arrow key is layout-independent), so only C
+    /// and V matter now; the rules below are unchanged for them.
     /// P3-37: ⌘ + the ANSI A / C / V keys is ⌘A / ⌘C / ⌘V for this pair: one of its layouts types plain `a`, `c` and `v`
     /// on exactly those key codes (ABC, U.S., British…; Apple Hebrew's Command layer is QWERTY). On AZERTY the A
     /// position types `q` (⌘Q would quit the app) and on Dvorak C is `j`, so the clipboard convert is never used there.

@@ -1,5 +1,5 @@
 // P3-44 (owner tests 2026-11-16: Slack bold + @mention pill + emoji, and Gmail bold, were pasted back as plain text by the
-// P3-37 clipboard convert, losing the bold, the mention and the emoji): is what ⌘A ⌘C just copied *rich*? Rich content is
+// P3-37 clipboard convert, losing the bold, the mention and the emoji): is what ⌘C just copied *rich*? Rich content is
 // never replaced by a plain-text paste; the caller converts only the typed run (keys) or just switches the language.
 // Pure and conservative: anything it can't vouch for as "plain text runs and line breaks" counts as rich.
 //

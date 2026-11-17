@@ -458,7 +458,9 @@ import Foundation
         var fromBuffer = false
 
         // P3-35 (X11): the whole text box. P3-40: every time, also right after a convert (no undo record).
-        let locate: (FieldWindow) -> FieldEdit? = { window in
+        let locate: (FieldWindow) -> FieldEdit? = { read in
+            // P3-62 (owner 2026-11-17): only the text from the box's start up to the caret.
+            let window = read.upToCaret
             let result = BoxConversion.plan(window, classify: layouts.runClass) { side, grapheme in
                 layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
             }
@@ -680,30 +682,6 @@ import Foundation
                        mayPasteLineBreaks: lineBreaks, typedTail: typedTail)
     }
 
-    /// P3-53 QA / P3-54 QA: the request's page is a webmail page (the context's host, or this request's page check).
-    private func isWebmail(_ r: ConvertRequest) -> Bool {
-        r.webmailPage || (requestPage.map { $0.gen == r.gen && $0.category == .webmail } ?? false)
-    }
-
-    /// P3-54 QA: where the paragraph block holding `caret` starts: right after the last empty line (only spaces, NBSP or
-    /// nothing) before it, else 0. UTF-16 offsets.
-    nonisolated static func blockStart(before caret: Int, in units: [UInt16]) -> Int {
-        let end = max(0, min(caret, units.count))
-        // Line starts up to the caret; the last one is the caret's own line.
-        var starts = [0]
-        for k in 0..<end where units[k] == 0x0A { starts.append(k + 1) }
-        func isBlank(_ line: Int) -> Bool {
-            let lo = starts[line], hi = starts[line + 1] - 1   // without its LF
-            return units[lo..<hi].allSatisfy { $0 == 0x20 || $0 == 0xA0 || $0 == 0x09 || $0 == 0x0D }
-        }
-        var line = starts.count - 2
-        while line >= 0 {   // bounded by the number of lines
-            if isBlank(line) { return starts[line + 1] }
-            line -= 1
-        }
-        return 0
-    }
-
     /// P3-58: the focused box's mention pill texts (read only), inside what is left of the B5 budget (≤ 100 ms).
     private func pillTexts() -> [String] {
         let elapsed = clock.nowNanos &- requestStart
@@ -792,13 +770,8 @@ import Foundation
                 return .replace(c.text)
             case .box:
                 guard text.utf16.count <= ReplacementPlanner.maxFieldReadChars else { return .tooLong }
-                // P3-48: a mail reply / forward copied as plain text: only what comes before the quoted thread, the
-                // forward header or the signature converts; the rest is pasted back as it was.
-                let all = Array(text.utf16)
-                let cut = QuotedReply.boundary(in: text) ?? all.count
-                let own = String(decoding: all[..<cut], as: UTF16.self)
-                let rest = String(decoding: all[cut...], as: UTF16.self)
-                let window = FieldWindow(text: own, location: 0, caret: own.utf16.count, reachesFieldStart: true,
+                // P3-62: the copy is the text from the box's start up to the cursor (⇧⌘↑): all of it is planned.
+                let window = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
                                          reachesFieldEnd: true)
                 let result = BoxConversion.plan(window, classify: layouts.runClass, direction: job.direction) {
                     side, grapheme in
@@ -808,11 +781,11 @@ import Foundation
                 case .nothing: return .nothing
                 case .tooLong: return .tooLong
                 case .convert(let p):
-                    let units = Array(own.utf16)
+                    let units = Array(text.utf16)
                     let head = String(decoding: units[..<p.edit.offset], as: UTF16.self)
                     let tail = String(decoding: units[(p.edit.offset + p.edit.length)...], as: UTF16.self)
                     target = layouts.source(of: p.side.other)
-                    return .replace(head + p.text + tail + rest)
+                    return .replace(head + p.text + tail)
                 }
             }
         }
@@ -861,6 +834,12 @@ import Foundation
                                              app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
                                              pasteRichAsPlain: chat, convert: convert,
                                              htmlPlanner: htmlPlanner,
+                                             selectionShows: {   // P3-62 QA: AX's selection now (nil = can't tell)
+                                                 defer { replacer.endReplacement() }   // nothing read is kept
+                                                 guard let f = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout)
+                                                 else { return nil }
+                                                 return !(f.selection ?? "").isEmpty
+                                             },
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
         note(.clipboard, "\(result)")
@@ -1037,7 +1016,7 @@ import Foundation
         }
         // P3-61 (Coordinator 2026-11-17; owner video, a Gmail reply in Chrome: a typed piece swallowed the line break
         // before the quote header, later presses rewrote the header's case): webmail pages never get the AX editing
-        // path; they use the clipboard HTML path (quote skipping + text boundary), as in Zen (owner-verified).
+        // path; they use the clipboard HTML path, as in Zen (owner-verified). P3-62: up to the cursor (⇧⌘↑).
         if r.webmailPage {
             trace?.chromiumSkipped = "webmailClipboard"
             return nil
@@ -1079,7 +1058,6 @@ import Foundation
                                finish: inout Finish) async -> ConvertOutcome {
         guard let ax = currentChromiumAX() else { return await fallBackFromChromium(r, layouts: layouts, finish: &finish) }
         var target: InputSourceID?
-        let webmail = isWebmail(r)
         let plan: (ChromiumAXConvert.Read) -> ChromiumAXConvert.Planned = { read in
             switch job.source {
             case .selection:
@@ -1106,28 +1084,9 @@ import Foundation
                 target = whole.target
                 return changes.isEmpty ? .nothing : .changes(changes)
             case .box:
-                // P3-54: a mail reply / forward: only the text before the quoted thread (or signature) is planned.
-                var text = read.text
-                var caret = read.selection.location
-                /// P3-54 QA: the planned text starts here in `read.text` (changes are moved by it).
-                var base = 0
-                let units = Array(read.text.utf16)
-                if let b = read.quoteBoundary {
-                    // P3-54: the caret clamped to the boundary (the quote itself is never planned).
-                    text = String(decoding: units[..<b], as: UTF16.self)
-                    caret = min(caret, b)
-                } else if webmail, !read.quoteFound {
-                    // (Coordinator 2026-11-16: the AX path only. The clipboard path, with no caret after ⌘A, converts a
-                    // webmail box with no quote signal whole, as verified in §P3-50: Gmail writes the attribution
-                    // header in the account's language, and English + Hebrew are matched, plus the class / blockquote
-                    // rules.)
-                    // P3-54 QA (Coordinator 2026-11-16): a webmail box with no quote seen (no Gmail class, blockquote or
-                    // header matched): a reply's thread could be anywhere after the caret, so only the paragraph block
-                    // holding the caret, from the previous empty line up to the caret, converts.
-                    base = Self.blockStart(before: caret, in: units)
-                    text = String(decoding: units[base..<caret], as: UTF16.self)
-                    caret -= base
-                }
+                // P3-62 (owner 2026-11-17): no selection → only the text from the box's start up to the caret.
+                let caret = read.selection.location
+                let text = String(decoding: Array(read.text.utf16)[..<caret], as: UTF16.self)
                 let window = FieldWindow(text: text, location: 0, caret: caret,
                                          reachesFieldStart: true, reachesFieldEnd: true)
                 // P3-44: mention pills / links the AX tree shows as their own elements stay whole.
@@ -1140,15 +1099,12 @@ import Foundation
                 case .tooLong: return .tooLong
                 case .convert(let p):
                     target = layouts.source(of: p.side.other)
-                    return .changes(p.changes.map { TextChange(offset: $0.offset + base, length: $0.length, text: $0.text) })
+                    return .changes(p.changes)
                 }
             }
         }
         let gen = r.gen
-        // P3-53 QA (Coordinator 2026-11-16): on a webmail page a whole-box convert needs the quote search complete (a
-        // search cut short by the tighter clock could miss the quoted thread and convert it); elsewhere (Slack) not.
-        let result = await ax.run(job.source, expected: job.element, startedAt: requestStart,
-                                  quoteSearchMustComplete: job.source == .box && webmail, plan: plan,
+        let result = await ax.run(job.source, expected: job.element, startedAt: requestStart, plan: plan,
                                   mayWrite: { self.claim(gen) })
         note(.chromiumAX, "\(result)")
         trace?.chromium = ax.lastDiagnostic

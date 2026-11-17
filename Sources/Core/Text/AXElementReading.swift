@@ -20,12 +20,8 @@ protocol AXElementReading: AnyObject {
     /// mention pills (`@Hillel Banai`, `#channel`) and links. Bounded walk (≤ `maxNodes` descendants). Text is held for
     /// one convert only and never logged. P3-46: each with its AX role (for the DEBUG trace, as a role name only).
     /// P3-53: `budgetNanos`: the most wall-clock time the walks may take (what is left of the convert's read budget,
-    /// 001 §7 B5); out of time inside a container that must be complete → `.timeout`.
-    /// P3-53 QA: `quoteSearchMustComplete`: a search for quote containers cut short (time, element cap) → `.timeout`
-    /// too (a webmail whole box); else not finding one in time is not an error.
-    /// P3-54: `searchQuotes`: false = pills and links only (the caller found the quote boundary in the text itself).
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
-        -> Result<[InlineAtom], AXAccessError>
+    /// 001 §7 B5). P3-62: no mail-quote walk any more (the convert stops at the cursor).
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError>
 }
 
 /// P3-46: one inline element that must stay whole (a mention pill, a channel link, a link). `text` is held for one
@@ -39,8 +35,7 @@ extension AXElementReading {
     /// P3-42: an element that can't list its attributes is never treated as web content (the safe default).
     func attributeNames() -> Result<[String], AXAccessError> { .failure(.unsupported) }
     /// P3-44: an element that can't list its inline elements has none (`BoxConversion`'s `@word` rule still holds).
-    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64, quoteSearchMustComplete: Bool, searchQuotes: Bool)
-        -> Result<[InlineAtom], AXAccessError> {
+    func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
         .failure(.unsupported)
     }
 }

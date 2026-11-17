@@ -42,7 +42,12 @@ import Foundation
     /// P3-46: by default a plain HTML flavour (positive evidence the copy is plain, which chat apps now need); `[]` =
     /// a copy with plain text only.
     var copiedExtras: [PasteboardEntry] = [.html("<span style=\"font-weight: 400\">copied</span>")]
-    private(set) var selectedAll = false
+    /// P3-62: ⇧⌘↑ selected from the cursor (`caret`) to the box's start.
+    private(set) var selectedToStart = false
+    /// P3-62: the cursor, UTF-16 offset in `box` (nil = the end).
+    var caret: Int?
+    private var caretUnits: Int { min(caret ?? box.utf16.count, box.utf16.count) }
+    private var beforeCaret: String { String(decoding: Array(box.utf16)[..<caretUnits], as: UTF16.self) }
     /// P3-40: the user's selection in the box (its text, found in `box`), nil = a caret.
     var userSelection: String?
     private(set) var pastes = 0
@@ -138,24 +143,26 @@ import Foundation
             let e = events[seen]
             seen += 1
             guard e.isKeyDown else { continue }
-            if e.modifierFlags == SyntheticKeyEvent.commandFlag {
+            if e.modifierFlags == SyntheticKeyEvent.commandFlag | SyntheticKeyEvent.shiftFlag,
+               e.keyCode == KeyCode.upArrow {
+                selectedToStart = true   // P3-62: ⇧⌘↑
+            } else if e.modifierFlags == SyntheticKeyEvent.commandFlag {
                 switch e.keyCode {
-                case ClipboardShortcut.selectAll.keyCode: selectedAll = true
                 case ClipboardShortcut.copy.keyCode:
-                    if selectedAll || userSelection != nil, let d = copyDelayNanos { copyDue = clock.nowNanos + d }
+                    if selectedToStart || userSelection != nil, let d = copyDelayNanos { copyDue = clock.nowNanos + d }
                 case ClipboardShortcut.paste.keyCode:
                     if let d = pasteDelayNanos { pasteDue = clock.nowNanos + d }
                 default: break
                 }
             } else if e.keyCode == KeyCode.rightArrow {
-                selectedAll = false
+                selectedToStart = false
                 userSelection = nil
             }
         }
         let now = clock.nowNanos
         if let due = copyDue, now >= due {
             copyDue = nil
-            let copied = copiesInstead ?? (selectedAll ? box : userSelection ?? box)
+            let copied = copiesInstead ?? (selectedToStart ? beforeCaret : userSelection ?? box)
             items = [[PasteboardEntry(type: Self.plain, data: Data(copied.utf8))] + copiedExtras]
             count += 1
         }
@@ -163,14 +170,17 @@ import Foundation
             pasteDue = nil
             let pasted = text(of: items) ?? ""
             if items.first?.contains(where: { $0.type == Self.transient }) == true { reads += 1 }
-            if selectedAll {
-                box = pasted
+            if selectedToStart {
+                // P3-62: the paste replaces the text before the cursor; the cursor ends after it.
+                let after = String(decoding: Array(box.utf16)[caretUnits...], as: UTF16.self)
+                box = pasted + after
+                caret = caret == nil ? nil : pasted.utf16.count
             } else if let sel = userSelection, let r = box.range(of: sel) {
                 box.replaceSubrange(r, with: pasted)   // P3-40: the paste replaces the selection
             } else {
                 box += pasted
             }
-            selectedAll = false
+            selectedToStart = false
             userSelection = nil
             pastes += 1
         }

@@ -24,6 +24,8 @@ final class ClipboardConvertTests: XCTestCase {
     private func shortcuts(_ poster: RecordingPoster) -> [String] {
         poster.events.filter(\.isKeyDown).map { e in
             if e.keyCode == KeyCode.rightArrow { return "→" }
+            if e.keyCode == KeyCode.upArrow,
+               e.modifierFlags == SyntheticKeyEvent.commandFlag | SyntheticKeyEvent.shiftFlag { return "⇧⌘↑" }   // P3-62
             return ClipboardShortcut.allCases.first { $0.keyCode == e.keyCode && e.modifierFlags != 0 }
                 .map { "⌘" + $0.letter.uppercased() } ?? "?"
         }
@@ -40,14 +42,14 @@ final class ClipboardConvertTests: XCTestCase {
                                               mayWrite: { claims += 1; return true })
         XCTAssertEqual(result, .pasted)   // P3-40: no text comes back (no undo)
         XCTAssertEqual(claims, 1)
-        XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C", "⌘V"], "no Right arrow after a paste")
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "⌘V"], "no Right arrow after a paste")
         XCTAssertTrue(poster.events.allSatisfy(\.isSafeToPost))
         XCTAssertTrue(poster.events.allSatisfy { $0.marker == EventOrigin.oursMarker }, "never fed to the buffer")
         XCTAssertEqual(pb.transientWrites, ["AKUO\nVH"])
         XCTAssertFalse(pb.holdsUserClipboard, "the converted text is on the clipboard until the paste is read")
         let restoreAt = clock.nowNanos
         await sut.finish(pending!)
-        XCTAssertEqual(pb.box, "AKUO\nVH", "pasted over the ⌘A selection")
+        XCTAssertEqual(pb.box, "AKUO\nVH", "pasted over the ⇧⌘↑ selection")
         XCTAssertTrue(pb.holdsUserClipboard, "every item and type back")
         XCTAssertEqual(pb.restores, 1)
         XCTAssertGreaterThanOrEqual(clock.nowNanos - restoreAt, sut.timing.pasteMinNanos)
@@ -69,11 +71,32 @@ final class ClipboardConvertTests: XCTestCase {
         let (result, pending) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
         XCTAssertEqual(result, .boxEmpty)
         XCTAssertLessThanOrEqual(clock.nowNanos - start, sut.timing.copyWaitNanos + sut.timing.pollNanos)
-        XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C", "→"], "the ⌘A selection is dropped, nothing pasted")
+        // P3-62 QA: nothing copied and AX can't tell whether ⇧⌘↑ selected anything: no Right arrow (it would move the
+        // cursor one character when nothing was selected).
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"], "nothing pasted, the cursor left alone")
         XCTAssertTrue(pb.holdsUserClipboard)
         await sut.finish(pending!)
         XCTAssertTrue(pb.holdsUserClipboard)
         XCTAssertEqual(pb.restores, 0, "nothing to undo")
+    }
+
+    @TextActor func testANoCopyWithASelectionShowingDropsIt() async {
+        // P3-62 QA: ⇧⌘↑ did select (AX shows it) but the copy never came: the selection is dropped (Right arrow: the
+        // caret back at the cursor), so the user's next key can't replace it.
+        let (sut, pb, poster) = make(box: "akuo")
+        pb.copyDelayNanos = nil
+        _ = await sut.run(.box, convert: upper, selectionShows: { true }, focusIsSame: { true }, mayWrite: { true })
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "→"])
+    }
+
+    @TextActor func testANoCopyWithNoSelectionShowingLeavesTheCursorAlone() async {
+        // The cursor at the box's start (or an app that ignores ⇧⌘↑): nothing selected, nothing copied, no arrow.
+        let (sut, pb, poster) = make(box: "akuo")
+        pb.copyDelayNanos = nil
+        let (result, _) = await sut.run(.box, convert: upper, selectionShows: { false }, focusIsSame: { true },
+                                        mayWrite: { true })
+        XCTAssertEqual(result, .boxEmpty)
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"])
     }
 
     @TextActor func testALateCopyIsUndone() async {
@@ -93,7 +116,7 @@ final class ClipboardConvertTests: XCTestCase {
         XCTAssertEqual(result, .boxEmpty)
         XCTAssertNil(pending)
         XCTAssertTrue(pb.holdsUserClipboard)
-        XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C", "→"])
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"], "P3-62 QA: an empty copy selected nothing: no arrow")
     }
 
     @TextActor func testNothingToConvertRestoresAndDropsTheSelection() async {
@@ -103,7 +126,7 @@ final class ClipboardConvertTests: XCTestCase {
         XCTAssertEqual(result, .nothingToConvert)
         XCTAssertNil(pending)
         XCTAssertTrue(pb.holdsUserClipboard)
-        XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C", "→"])
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "→"])
         XCTAssertTrue(pb.transientWrites.isEmpty)
     }
 
@@ -152,7 +175,7 @@ final class ClipboardConvertTests: XCTestCase {
                                               mayWrite: { true })
         XCTAssertEqual(result, .focusChanged)
         XCTAssertNil(pending)
-        XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C"], "no ⌘V, no arrow into another element")
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C"], "no ⌘V, no arrow into another element")
         XCTAssertTrue(pb.holdsUserClipboard)
     }
 
@@ -174,7 +197,7 @@ final class ClipboardConvertTests: XCTestCase {
         let (result, _) = await sut.run(.box, convert: upper, focusIsSame: { true }, mayWrite: { true })
         XCTAssertEqual(result, .failed)
         XCTAssertTrue(pb.holdsUserClipboard)
-        XCTAssertEqual(shortcuts(poster), ["⌘A", "⌘C", "→"])
+        XCTAssertEqual(shortcuts(poster), ["⇧⌘↑", "⌘C", "→"])
     }
 
     @TextActor func testAPostRefusedPartWayIsAFailure() async {
@@ -274,7 +297,9 @@ final class ClipboardConvertTests: XCTestCase {
         }
         XCTAssertTrue(SyntheticKeyEvent.rightArrow(keyDown: true).isSafeToPost)
         XCTAssertEqual(SyntheticKeyEvent.rightArrow(keyDown: false).modifierFlags, 0)
-        XCTAssertEqual(ClipboardShortcut.selectAll.keyCode, 0)
+        // P3-62: ⇧⌘↑ (select to the box's start) is the only Shift + Command event.
+        XCTAssertTrue(SyntheticKeyEvent.selectToStart(keyDown: true).isSafeToPost)
+        XCTAssertEqual(SyntheticKeyEvent.selectToStart(keyDown: true).keyCode, KeyCode.upArrow)
         XCTAssertEqual(ClipboardShortcut.copy.keyCode, 8)
         XCTAssertEqual(ClipboardShortcut.paste.keyCode, 9)
         // Never Return, Tab or ⌃C, whatever the flags.
@@ -284,17 +309,16 @@ final class ClipboardConvertTests: XCTestCase {
 
     func testThePairMustTypeACVOnTheANSIKeys() {
         XCTAssertTrue(ConvertFixtures.layouts.clipboardShortcutsAreSafe, "ABC ⇄ Hebrew")
-        // A layout whose A position types `q` (AZERTY): ⌘ + that key would be ⌘Q.
+        // A layout whose A position types `q` (AZERTY). P3-62: ⌘A is never posted any more, so only C and V matter.
         var azerty = ConvertFixtures.abc
         azerty.keys[0] = KeyCell(plain: "q", shift: "Q")
         azerty.keys[12] = KeyCell(plain: "a", shift: "A")
         let hebrew = ConvertFixtures.hebrew
         let pair = LanguagePair(a: IDs.abc, b: IDs.hebrew)
-        XCTAssertFalse(LayoutSnapshot(pair: pair, a: azerty, b: hebrew)!.clipboardShortcutsAreSafe)
-        // P3-37 QA: ABC ⇄ AZERTY. ABC types a/c/v, but with AZERTY in front ⌘ + key 0 is ⌘Q: never.
+        XCTAssertTrue(LayoutSnapshot(pair: pair, a: azerty, b: hebrew)!.clipboardShortcutsAreSafe)
         var french = azerty
         french.id = IDs.hebrew
-        XCTAssertFalse(LayoutSnapshot(pair: pair, a: ConvertFixtures.abc, b: french)!.clipboardShortcutsAreSafe)
+        XCTAssertTrue(LayoutSnapshot(pair: pair, a: ConvertFixtures.abc, b: french)!.clipboardShortcutsAreSafe)
         // Dvorak's C key types `j` (⌘J), V `k`.
         var dvorak = ConvertFixtures.abc
         dvorak.id = IDs.hebrew
