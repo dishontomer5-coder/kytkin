@@ -118,6 +118,18 @@ final class SettingsMappingTests: XCTestCase {
         XCTAssertEqual(about.repositoryText, "github.com/dishontomer5-coder/kytkin")
     }
 
+    /// P6-8: the developer line and the support links in About.
+    func testAboutSupportLinks() {
+        XCTAssertEqual(AboutInfo.developerText, "Made by Tomer Dishon")
+        XCTAssertEqual(AboutInfo.issuesTitle, "Report an Issue")
+        XCTAssertEqual(AboutInfo.issuesURL.absoluteString, "https://github.com/dishontomer5-coder/kytkin/issues")
+        XCTAssertEqual(AboutInfo.emailTitle, "Email")
+        XCTAssertEqual(AboutInfo.supportEmail, "dishontomer5@gmail.com")
+        XCTAssertEqual(AboutInfo.emailURL.absoluteString, "mailto:dishontomer5@gmail.com?subject=Kytkin")
+        XCTAssertEqual(AboutInfo.emailURL.scheme, "mailto")
+        XCTAssertTrue(AboutInfo.issuesURL.absoluteString.hasPrefix(AboutInfo.repository.absoluteString + "/"))
+    }
+
     func testAboutWithMissingKeys() {
         let about = AboutInfo(infoDictionary: ["CFBundleName": "Kytkin", "CFBundleDisplayName": ""])
         XCTAssertEqual(about.name, "Kytkin")

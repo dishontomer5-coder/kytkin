@@ -1,6 +1,7 @@
 // P2-23: Settings → About (001 §5.2): name, version, MIT license and the GitHub address. The address opens in the
 // browser only when the user clicks it.
 // P3-15: acknowledgements (the Public Suffix List, MPL-2.0, with its version).
+// P6-8: "Made by Tomer Dishon" and the support links ("Report an Issue", "Email"), on click only.
 // P6-0g (design v2, proposed-about): the icon larger, the dark-appearance one in dark mode (the `AboutIcon` image set);
 // the name is "Kytkin" ("Dev" is on the version line); the privacy promise; "An independent project, not affiliated
 // with any other app." (no other app named); the Public Suffix List text behind "Acknowledgements…".
@@ -29,7 +30,18 @@ struct AboutSettingsView: View {
                 Text(info.name).font(.system(size: 22, weight: .bold))
                 Text(info.version).foregroundStyle(.secondary).textSelection(.enabled)
                 Link(info.repositoryText, destination: info.repositoryURL).foregroundStyle(Color.kytkinLink)
-
+                // P6-8: who made it and where to get help, small, under the repository link.
+                VStack(spacing: 2) {
+                    Text(AboutInfo.developerText).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Link(AboutInfo.issuesTitle, destination: AboutInfo.issuesURL)
+                        Text("·").foregroundStyle(.secondary).accessibilityHidden(true)
+                        Link(AboutInfo.emailTitle, destination: AboutInfo.emailURL)
+                    }
+                    .foregroundStyle(Color.kytkinLink)
+                    .focusEffectDisabled()
+                }
+                .font(.system(size: SettingsMetrics.secondarySize))
             }
             .frame(maxWidth: .infinity)
 
