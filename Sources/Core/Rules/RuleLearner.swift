@@ -63,8 +63,9 @@ enum LearnOutcome: Sendable, Equatable {
         case editingAddress
         /// P3-9: the browser's page couldn't be read (`.unknown`), or a `.page` came without a site: D3.
         case siteUnknown
-        /// P3-14 (P3-20 decision): the site came only from the Gecko address bar, which can hold half-typed text.
-        case siteFromAddressBar
+        /// P3-14 (P3-20 decision): the site came only from the Gecko address bar, which can hold half-typed text;
+        /// P3-25: or from an Apple Event after an AX timeout (the bar's focus unknown).
+        case siteNotLearnable
         /// Within `settleAfterContextChange` of a context change.
         case tooSoonAfterContextChange
         case pinned
@@ -201,7 +202,8 @@ struct RuleLearner {
         }
         // P3-14 (P3-20 decision): an answer read only from the Gecko address bar is applied, never learned. Firefox can
         // keep half-typed text in an unfocused bar (`ynet.co`), and nothing tells it apart from the real address.
-        return c.readFromAddressBar ? .siteFromAddressBar : nil
+        // P3-25: likewise an Apple Event answer after an AX timeout.
+        return c.siteNotLearnable ? .siteNotLearnable : nil
     }
 
     private func ruleReason(_ scope: RuleScope, _ id: InputSourceID) -> LearnOutcome.DiscardReason? {

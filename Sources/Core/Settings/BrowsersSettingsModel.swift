@@ -75,6 +75,12 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     func refresh() {
         let next = readInventory()
         if next != inventory { inventory = next }
+        runningAppsChanged()
+    }
+
+    /// P3-25: an app launched or quit while Settings is open: the Ask button's enablement (and "Open … to check")
+    /// follows whether the browser runs, so the rows re-read it, and the silent checks run again.
+    func runningAppsChanged() {
         statusGeneration += 1
         // P3-7: silent Automation checks (never a prompt), so a grant or revoke made in System Settings shows here.
         // The controller throttles them (≤ 1 per 5 s each). P3-26: every listed browser that supports Automation,

@@ -127,7 +127,17 @@ final class AppleEventReaderTests: XCTestCase {
         let (o, sawWindow) = r.read(cold.tree, now: t0)
         XCTAssertTrue(sawWindow)
         XCTAssertEqual(o.pageState, .page)
-        XCTAssertEqual(o.via, .appleEvent)
+        // P3-25 (Coordinator decision): the bar's focus was unknown: applied, never learned.
+        XCTAssertEqual(o.via, .appleEventAfterTimeout)
+        XCTAssertTrue(o.siteNotLearnable)
+    }
+
+    func testAnAppleEventAfterAGoodAXReadIsStillLearnable() {
+        // P3-25: only the timeout path is marked.
+        XCTAssertFalse(BrowserObservation(site: nil, pageState: .notWebPage, isPrivate: nil, via: .appleEvent)
+            .siteNotLearnable)
+        let o = BrowserObservation(site: nil, pageState: .page, isPrivate: nil, via: .axURL)
+        XCTAssertEqual(o.afterAXTimeout(), o, "only an Apple Event answer is re-marked")
     }
 
     func testAClosedGateSendsNothing() {

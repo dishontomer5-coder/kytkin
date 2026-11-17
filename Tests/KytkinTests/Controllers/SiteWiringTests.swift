@@ -52,7 +52,7 @@ final class SiteWiringTests: XCTestCase {
                       pid: Int32 = 7) -> Context {
         generation += 1
         let c = Context(bundleID: zen, pid: pid, host: domain.map { "www.\($0)" }, siteDomain: domain,
-                        pageState: page, readFromAddressBar: bar, generation: generation)
+                        pageState: page, siteNotLearnable: bar, generation: generation)
         monitor.current = c
         monitor.onChange?(c)
         return c
@@ -246,7 +246,7 @@ final class SiteWiringTests: XCTestCase {
         userSwitch(to: IDs.hebrew)
         twoWords()
         XCTAssertTrue(store.prefs.rules.isEmpty, "nothing learned: not the site, not the browser")
-        XCTAssertTrue(sut.switching.learnerDebug.contains("siteFromAddressBar"), sut.switching.learnerDebug)
+        XCTAssertTrue(sut.switching.learnerDebug.contains("siteNotLearnable"), sut.switching.learnerDebug)
     }
 
     func testTheSameSiteFromAXURLIsLearned() {
@@ -274,13 +274,13 @@ final class SiteWiringTests: XCTestCase {
         let sec: UInt64 = 1_000_000_000
         var l = RuleLearner(engine: RuleEngine(rules: []), keyboardTapAvailable: true, currentSource: IDs.abc)
         let c = Context(bundleID: zen, pid: 7, host: "ynet.co", siteDomain: "ynet.co", pageState: .page,
-                        readFromAddressBar: true, generation: 1)
+                        siteNotLearnable: true, generation: 1)
         XCTAssertNil(l.handle(.contextChanged(c, atNanos: 10 * sec)))
-        XCTAssertEqual(l.handle(.externalSwitch(IDs.hebrew, atNanos: 12 * sec)), .discard(.siteFromAddressBar))
+        XCTAssertEqual(l.handle(.externalSwitch(IDs.hebrew, atNanos: 12 * sec)), .discard(.siteNotLearnable))
         // A `.notWebPage` answer from the bar isn't learned at app level either.
-        let notWeb = Context(bundleID: zen, pid: 7, pageState: .notWebPage, readFromAddressBar: true, generation: 2)
+        let notWeb = Context(bundleID: zen, pid: 7, pageState: .notWebPage, siteNotLearnable: true, generation: 2)
         XCTAssertNil(l.handle(.contextChanged(notWeb, atNanos: 13 * sec)))
-        XCTAssertEqual(l.handle(.externalSwitch(IDs.russian, atNanos: 15 * sec)), .discard(.siteFromAddressBar))
+        XCTAssertEqual(l.handle(.externalSwitch(IDs.russian, atNanos: 15 * sec)), .discard(.siteNotLearnable))
     }
 
     /// QA (P3-14): the flag can't be laundered. A switch made on an AXURL site, then a bar read of another site
@@ -471,11 +471,11 @@ final class SiteWiringTests: XCTestCase {
         XCTAssertNil(a.appActivated(bundleID: zen, pid: 7, awaitsSite: true))
         let first = try XCTUnwrap(a.browserObserved(BrowserObservation(site: ynet, pageState: .page, isPrivate: nil,
                                                                        via: .addressBar), pid: 7))
-        XCTAssertTrue(first.readFromAddressBar)
+        XCTAssertTrue(first.siteNotLearnable)
         clock.advance(byMilliseconds: 500)
         let second = try XCTUnwrap(a.browserObserved(BrowserObservation(site: ynet, pageState: .page, isPrivate: nil,
                                                                         via: .axURL), pid: 7))
-        XCTAssertFalse(second.readFromAddressBar)
+        XCTAssertFalse(second.siteNotLearnable)
         XCTAssertNil(a.browserObserved(BrowserObservation(site: ynet, pageState: .page, isPrivate: nil, via: .kept),
                                        pid: 7), "kept vs AXURL: not the bar either way, no change")
         clock.advance(byMilliseconds: 500)
