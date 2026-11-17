@@ -34,7 +34,14 @@ targets:
         includes:
           - "*.pdf"
       # P6-0e: the app icon and the accent colour (#0E7A66), docs/design/artwork/Colors.md.
+      # P6-0g: + the About icon (light and dark) and the dark accent (#2FA88B).
       - path: Resources/Assets.xcassets
+      # P6-0g (design v2, Liquid Glass): the app icon as an Icon Composer package (letter-free, two glass halves).
+      # actool builds Assets.car (macOS 26 glass, dark, clear and tinted) and AppIcon.icns (older macOS) from it; it
+      # wins over the PNG set of the same name in Assets.xcassets, which stays as the hand-fitted fallback/source art.
+      - path: Resources/AppIcon.icon
+        type: file
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin
