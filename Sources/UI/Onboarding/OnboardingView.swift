@@ -17,7 +17,9 @@ struct OnboardingView: View {
     /// "Quit" on the move screen.
     var quit: @MainActor () -> Void = {}
 
-    static let size = CGSize(width: 540, height: 480)
+    /// P6-0e (Colors.md "First run": one fixed frame for every screen; 560 wide, a little taller than the mock-ups'
+    /// 420 so the privacy lines and the inline pair pickers fit).
+    static let size = CGSize(width: 560, height: 470)
 
     var body: some View {
         Group {
@@ -46,10 +48,13 @@ struct OnboardingView: View {
     /// Visual review O4: three equal columns, so the dots stay put on every screen.
     private var footer: some View {
         HStack {
+            // P6-0e (Colors.md, mock-ups): Back always in the same place, on the left; Skip Setup there on screen 1.
             HStack {
                 if model.isFirstStep {
                     Button("Skip Setup") { close() }
                         .help("You can open this again in Settings → General.")
+                } else {
+                    Button("Back") { model.back() }
                 }
                 Spacer()
             }
@@ -57,7 +62,6 @@ struct OnboardingView: View {
             StepDots(current: model.step, description: model.stepDescription)
             HStack {
                 Spacer()
-                if !model.isFirstStep { Button("Back") { model.back() } }
                 Button(model.primaryTitle) {
                     if model.isLastStep {
                         model.done()
@@ -75,47 +79,99 @@ struct OnboardingView: View {
 
 // MARK: - Screen 1: what Kytkin does
 
+/// P6-0e (mock-ups firstrun-1…3): every screen starts the same way: a 56 pt tile, the title (22 pt bold), a subtitle.
+private struct StepHeader: View {
+    enum Tile { case appIcon, symbol(String) }
+    let tile: Tile
+    let title: String
+    var subtitle: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch tile {
+            case .appIcon:
+                Image(nsImage: NSApp.applicationIconImage ?? NSImage())
+                    .resizable().frame(width: 56, height: 56).accessibilityHidden(true)
+            case .symbol(let name):
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(red: 0x1A / 255, green: 0x9E / 255, blue: 0x85 / 255),
+                                                  Color(red: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(width: 56, height: 56)
+                    .overlay(Image(systemName: name).font(.system(size: 24, weight: .medium)).foregroundStyle(.white))
+                    .accessibilityHidden(true)
+            }
+            Text(title).font(.system(size: 22, weight: .bold)).fixedSize(horizontal: false, vertical: true)
+            if let subtitle {
+                Text(subtitle).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// P6-0e: a rounded box like the mock-ups' grouped rows.
+private struct Box<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) { content }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
+    }
+}
+
 private struct WelcomeStep: View {
     let model: OnboardingModel
     @State private var showsPickers = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
-                    .resizable().frame(width: 48, height: 48).accessibilityHidden(true)
-                Text("Kytkin keeps your keyboard in the right language").font(.title2.bold())
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("It remembers the language you use in each app and website, and switches for you.")
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Typed in the wrong language? Press Shift twice and Kytkin converts it:")
-                .fixedSize(horizontal: false, vertical: true)
+            StepHeader(tile: .appIcon, title: "Kytkin keeps your keyboard in the right language",
+                       subtitle: "A small helper that lives in the menu bar.")
+            feature("keyboard", "It remembers the language you use in each app and website, and switches for you.")
+            feature("shift", "Typed in the wrong language? Press Shift twice and Kytkin converts it:")
             // Copy review B7: the Hebrew sample on its own line, isolated, so bidi never flips it.
-            Text("akuo  →  \u{2068}שלום\u{2069}").font(.title3).padding(.leading, 12)
-
-            HStack {
-                Text("Your two languages:").foregroundStyle(.secondary)
-                Text(pairText).bold()
-                Button(showsPickers ? "Done" : "Change…") { showsPickers.toggle() }.buttonStyle(.link)
+            Text("akuo  →  \u{2068}שלום\u{2069}").font(.title3).padding(.leading, 28)
+            HStack(spacing: 8) {
+                Text("You see it only in the menu bar:").foregroundStyle(.secondary)
+                MenuBarPreview(label: model.general.menuBarPreview)
             }
-            if showsPickers {
-                Form { LanguagePairPickers(model: model.languages) }
-                    .formStyle(.grouped)
-                    .frame(height: 150)
-                    .disabled(!model.languages.isEditable)
-                Text("You can change these later in Settings → General.").font(.caption).foregroundStyle(.secondary)
+            .padding(.leading, 28)
+
+            Box {
+                HStack {
+                    Text("Your two languages")
+                    Spacer()
+                    Text(pairText)
+                    Button(showsPickers ? "Done" : "Change…") { showsPickers.toggle() }.buttonStyle(.kytkinLink)
+                }
+                if showsPickers {
+                    Form { LanguagePairRow(model: model.languages) }
+                        .formStyle(.columns)
+                        .disabled(!model.languages.isEditable)
+                    Text("You can change these later in Settings → General.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
-            Spacer(minLength: 4)
-            // Visual review O3: fixed-width icons, so the three lines start at one edge. Flows M8: no update claim.
-            VStack(alignment: .leading, spacing: 6) {
+            Spacer(minLength: 0)
+            // Visual review O3: fixed-width icons, so the lines start at one edge. Flows M8: no update claim.
+            VStack(alignment: .leading, spacing: 4) {
                 privacy("lock", "What you type stays on your Mac. Kytkin never saves or sends it.")
                 privacy("network.slash", "No internet, no account, no tracking.")
             }
             .font(.callout).foregroundStyle(.secondary)
         }
         .onAppear { showsPickers = !model.languages.pairWarnings.isEmpty || model.languages.pairProblem != nil }
+    }
+
+    private func feature(_ symbol: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol).foregroundStyle(.tint).frame(width: 20)
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var pairText: String {
@@ -140,15 +196,14 @@ private struct PermissionsStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("One permission: Accessibility").font(.title2.bold())
-            Text("Kytkin needs Accessibility to read and replace the text you convert, and to see which website "
-                 + "you're on. macOS asks you once.")
-                .fixedSize(horizontal: false, vertical: true)
+            StepHeader(tile: .symbol("accessibility"), title: "One permission: Accessibility",
+                       subtitle: "Kytkin needs Accessibility to read and replace the text you convert, and to see "
+                           + "which website you're on. macOS asks you once.")
             Text("Kytkin only reads text when you press Shift twice, and never saves it.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Without it, Kytkin still switches the language for each app.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            status
+            Box { status }
             Spacer()
             Text("Later: Kytkin menu → Settings → General.").font(.caption).foregroundStyle(.secondary)
         }
@@ -161,7 +216,7 @@ private struct PermissionsStep: View {
         case .notAsked:
             HStack(spacing: 12) {
                 Button("Allow Accessibility…") { model.grantAccessibility() }.buttonStyle(.borderedProminent)
-                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.link)
+                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.kytkinLink)
             }
         case .waiting, .waitingLong:
             VStack(alignment: .leading, spacing: 8) {
@@ -177,7 +232,7 @@ private struct PermissionsStep: View {
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Button("Allow Accessibility…") { model.grantAccessibility() }
                 }
-                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.link)
+                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.kytkinLink)
             }
         case .granted:
             StatusLabel(text: "Accessibility is on.", symbol: "checkmark.circle.fill", tint: .green)
@@ -193,22 +248,24 @@ private struct PracticeStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Try double-Shift").font(.title2.bold())
-            Text("Type in the box below with the wrong keyboard, then press Shift twice.")
-                .fixedSize(horizontal: false, vertical: true)
+            StepHeader(tile: .symbol("keyboard"), title: "Try double-Shift",
+                       subtitle: "Type in the box below with the wrong keyboard, then press Shift twice.")
             TextField("Type here…", text: $model.practiceText)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3)
                 .focused($focused)
                 .accessibilityLabel("Practice box")
-            Text(model.practiceHint).font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top) {
+                Text(model.practiceHint).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                MenuBarPreview(label: model.general.menuBarPreview)   // the letters change when it converts
+            }
             result
             Spacer()
-            // P6-0c QA: Text concatenation, not an Image interpolated into a String (that rendered "Image(provider: …)").
-            (Text("Kytkin lives in the menu bar, at the top right of your screen. Look for ")
-                + Text(Image(systemName: "keyboard"))
-                + Text(" and the language letters, like HE or EN."))
+            // P6-0e: the real logo is shown above (the preview next to the hint), so no stand-in symbol here.
+            Text("Kytkin lives in the menu bar, at the top right of your screen: look for its icon and the language "
+                 + "letters, like HE or EN.")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
@@ -246,18 +303,26 @@ private struct MoveToApplicationsView: View {
     let quit: @MainActor () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Move Kytkin to Applications first").font(.title2.bold())
+        // P6-0e (mock-up move-to-applications): centred, the app icon, the main button full width.
+        VStack(spacing: 14) {
+            Spacer()
+            Image(nsImage: NSApp.applicationIconImage ?? NSImage())
+                .resizable().frame(width: 80, height: 80).accessibilityHidden(true)
+            Text("Move Kytkin to Applications first").font(.system(size: 18, weight: .bold))
             Text("Kytkin is running from the disk image (or Downloads), so macOS won't keep its permissions. Drag "
                  + "Kytkin into Applications, then open it from there.")
+                .multilineTextAlignment(.center).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            HStack {
-                Spacer()
-                Button("Quit") { quit() }
-                Button("Show in Finder") { showInFinder() }.keyboardShortcut(.defaultAction)
+                .frame(maxWidth: 380)
+            VStack(spacing: 8) {
+                Button { showInFinder() } label: { Text("Show in Finder").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
+                Button { quit() } label: { Text("Quit").frame(maxWidth: .infinity) }.controlSize(.large)
             }
+            .frame(maxWidth: 320)
+            Spacer()
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -270,7 +335,7 @@ private struct StepDots: View {
         HStack(spacing: 6) {
             ForEach(OnboardingModel.Step.allCases, id: \.self) { step in
                 Circle()
-                    .fill(step == current ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .fill(step == current ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.secondary.opacity(0.3)))
                     .frame(width: 7, height: 7)
             }
         }

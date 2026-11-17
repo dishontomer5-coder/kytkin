@@ -81,21 +81,12 @@ struct StatusLabelMock: View {
                     HStack(spacing: 14) {
                         Spacer()
                         Image(systemName: "wifi")
-                        // P6-0c: the placeholder glyph (StatusItemController's MenuBarGlyph) + fixed-width letters.
-                        HStack(spacing: 3) {
-                            if sample.label.showsIcon {
-                                Image(systemName: Self.placeholder(sample.label.look))
-                                    .frame(width: 16, height: 16)
-                            }
-                            if let letters = sample.label.letters {
-                                Text(letters).font(.system(size: 13, weight: .regular))
-                                    .frame(minWidth: 24, alignment: .leading)
-                            }
-                            if !sample.label.showsIcon, sample.label.look == .attention {
-                                Image(systemName: "circle.fill").font(.system(size: 4))
+                        // P6-0e: the very image the status item shows (MenuBarGlyph.itemImage).
+                        Group {
+                            if let image = MenuBarGlyph.itemImage(for: sample.label) {
+                                Image(nsImage: image).renderingMode(.template)
                             }
                         }
-                        .opacity(sample.label.dimmed ? 0.45 : 1)
                         .padding(.horizontal, 4).padding(.vertical, 1)
                         Image(systemName: "battery.75percent")
                         Text("Tue 17 Nov 9:41")
@@ -113,14 +104,6 @@ struct StatusLabelMock: View {
         .frame(width: 640, alignment: .leading)
     }
 
-    /// The same SF Symbols `MenuBarGlyph.placeholderSymbol` uses until the real artwork lands.
-    static func placeholder(_ look: MenuModel.Label.Look) -> String {
-        switch look {
-        case .active, .off: "keyboard"
-        case .paused: "pause.circle"
-        case .attention: "exclamationmark.circle"
-        }
-    }
 }
 
 /// P6-0c: the Settings window's toolbar tabs (icon over title, `NSTabViewController.tabStyle = .toolbar`) are window
@@ -140,7 +123,7 @@ struct ToolbarTabsMock: View {
                         Image(systemName: tab.symbolName).font(.system(size: 18)).frame(height: 22)
                         Text(tab.title).font(.system(size: 11))
                     }
-                    .foregroundStyle(tab == selected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(tab == selected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.secondary))
                     .frame(minWidth: 64)
                     .padding(.horizontal, 6).padding(.vertical, 4)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous)

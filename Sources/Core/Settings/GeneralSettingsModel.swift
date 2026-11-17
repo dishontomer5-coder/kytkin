@@ -39,8 +39,10 @@ import Observation
     /// P6-0d: how the status item looks with `menuBarDisplay` (the real label model, the normal look).
     var menuBarPreview: MenuModel.Label {
         let info = currentLanguage()
-        return MenuModel.label(languageCode: info?.languageCode ?? "en", languageName: info?.name, state: MenuState(),
-                               display: menuBarDisplay)
+        var state = MenuState()
+        state.pairInputSources = store.prefs.languagePair   // P6-0e: the filled half of the language that is on
+        return MenuModel.label(languageCode: info?.languageCode ?? "en", languageName: info?.name, state: state,
+                               display: menuBarDisplay, current: info?.id)
     }
 
     /// When Settings opens or comes to the front: fresh login-item status and layout list.
@@ -74,8 +76,9 @@ import Observation
         }
     }
 
-    static let menuBarDisplayHelp = "The language letters show which keyboard is on, like HE or EN. With Icon only, "
-        + "Kytkin still marks the icon when it is paused or needs your attention."
+    /// P6-0e (mock-up settings-general): the filled half of the logo is the language that is on.
+    static let menuBarDisplayHelp = "The filled half shows which language is on. With Icon only, Kytkin still marks "
+        + "the icon when it is paused or needs your attention."
 
     var learnFromManualSwitches: Bool {
         get { store.prefs.general.learnFromManualSwitches }

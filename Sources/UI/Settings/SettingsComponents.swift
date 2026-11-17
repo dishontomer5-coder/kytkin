@@ -62,16 +62,13 @@ struct MenuBarPreview: View {
     let label: MenuModel.Label
 
     var body: some View {
-        HStack(spacing: 3) {
-            if label.showsIcon, let image = MenuBarGlyph.image(for: label.look) {
+        // P6-0e: the very image the status item shows.
+        HStack {
+            if let image = MenuBarGlyph.itemImage(for: label) {
                 Image(nsImage: image).renderingMode(.template)
-            }
-            if let letters = label.letters {
-                Text(letters).font(Font(NSFont.menuBarFont(ofSize: 0)))
             }
         }
         .foregroundStyle(.primary)
-        .opacity(label.dimmed ? 0.5 : 1)
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(Capsule().fill(Color.primary.opacity(0.08)))
@@ -93,4 +90,28 @@ struct NoticeSection: View {
             }
         }
     }
+}
+
+/// P6-0e QA (Colors.md: Link, light #0E7A66, dark #6FD9C2): Kytkin's link colour, for every link and link-style
+/// button (the system `.link` style draws the system blue). A dynamic colour, so it follows the appearance.
+extension Color {
+    static let kytkinLink = Color(nsColor: NSColor(name: "KytkinLink") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(srgbRed: 0x6F / 255, green: 0xD9 / 255, blue: 0xC2 / 255, alpha: 1)
+            : NSColor(srgbRed: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255, alpha: 1)
+    })
+}
+
+/// P6-0e QA: a text button drawn as a link in Kytkin's link colour.
+struct KytkinLinkButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.kytkinLink)
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .contentShape(Rectangle())
+    }
+}
+
+extension ButtonStyle where Self == KytkinLinkButtonStyle {
+    static var kytkinLink: KytkinLinkButtonStyle { KytkinLinkButtonStyle() }
 }

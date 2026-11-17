@@ -23,6 +23,12 @@ let filter = arguments.count >= 4 ? arguments[3] : nil
 
 MainActor.assumeIsolated {
     NSApplication.shared.setActivationPolicy(.prohibited)
+    // P6-0e: the real menu-bar artwork from the repo (the app reads it from its bundle).
+    MenuBarGlyph.resourceDirectory = repoRoot.appendingPathComponent("Resources/MenuBar", isDirectory: true)
+    // P6-0e: the app icon the screens show (`NSImage.applicationIconName`); the renderer has no bundle icon. The
+    // process can't show a Dock icon (activation policy .prohibited), so this only changes what is drawn.
+    NSApplication.shared.applicationIconImage = NSImage(contentsOf: repoRoot.appendingPathComponent(
+        "Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"))
     do {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let renderer = Renderer(outDir: outDir, filter: filter)

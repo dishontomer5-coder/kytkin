@@ -26,14 +26,17 @@ import Foundation
 enum MenuModel {
     /// The menu-bar item (P6-0c, visual review §3.1–§3.2, copy review M-1/M-2, owner 2026-11-17). `StatusItemController`
     /// sets it only when it differs (P2-52 item 4).
-    struct Label: Equatable {
+    struct Label: Hashable {
         /// Priority when several apply: off > paused > attention > active. The glyph changes with it; the letters
         /// don't (no colour, no animation: the letter change is the feedback).
-        enum Look: String, Equatable, CaseIterable {
+        enum Look: String, Hashable, CaseIterable {
             case active, paused, attention, off
         }
 
         let look: Look
+        /// P6-0e (docs/design/artwork/Colors.md): the filled half of the logo is the language that is on: `.a` = the
+        /// pair's first language (left half), `.b` = the second. Not one of the pair: `.a`.
+        var side: PairSide = .a
         /// "HE"; nil when the language is unknown (copy review M-1: no "?") or in icon-only mode.
         let letters: String?
         /// The Kytkin glyph is drawn. Always in letters-only mode when there are no letters, so the item never
@@ -43,19 +46,51 @@ enum MenuModel {
         /// "Kytkin, Hebrew, turned off"; "Kytkin" when the language is unknown.
         let accessibilityLabel: String
 
-        /// Paused and off are drawn dimmed (`appearsDisabled`).
+        /// Paused and off look dimmed (P6-0e: the artwork draws it: paused fill 45 %, off 35 %).
         var dimmed: Bool { look == .paused || look == .off }
 
-        /// The glyph's asset name (`Resources/MenuBar/kytkin-menubar-{active,paused,attention,off}.pdf`).
-        var imageName: String { MenuModel.glyphName(look) }
+        /// P6-0e (Colors.md): the letters fade to 35 % only when Kytkin is off.
+        var lettersOpacity: Double { look == .off ? 0.35 : 1 }
+
+        /// The glyph's asset name (`Resources/MenuBar/kytkin-menubar-{active,paused,attention,off}-{a,b}.pdf`).
+        var imageName: String { MenuModel.glyphName(look, side: side) }
+
+        /// P6-0e QA: Settings → General → "Show in menu bar" (decides the item's width, not what is known).
+        var display: Preferences.General.MenuBarLabel = .iconAndLanguage
     }
 
-    /// P6-0c: the menu-bar glyph assets, one per look. Placeholder artwork until Claude Design's lands
-    /// (Resources/MenuBar/README.md).
-    static func glyphName(_ look: Label.Look) -> String { "kytkin-menubar-\(look.rawValue)" }
+    /// P6-0e QA: the status item's fixed layout (pt). The width depends on the display mode only, never on the
+    /// language, its letters being known, the look or a warning: the items beside Kytkin never move.
+    enum ItemLayout {
+        static let glyphWidth: Double = 18
+        static let gap: Double = 4
+        static let lettersWidth: Double = 20
+        /// Letters-only mode: room for the "needs attention" dot after the letters, kept even without one.
+        static let dotRoom: Double = 8
+
+        static func width(for display: Preferences.General.MenuBarLabel) -> Double {
+            switch display {
+            case .iconAndLanguage: glyphWidth + gap + lettersWidth
+            case .iconOnly: glyphWidth
+            case .languageOnly: lettersWidth + dotRoom
+            }
+        }
+    }
+
+    /// P6-0e: the menu-bar glyph assets, one per look and pair side (Resources/MenuBar/README.md).
+    static func glyphName(_ look: Label.Look, side: PairSide) -> String {
+        "kytkin-menubar-\(look.rawValue)-\(side == .a ? "a" : "b")"
+    }
+
+    /// P6-0e: which half of the logo is filled: the pair member whose input source is selected.
+    static func side(of current: InputSourceID?, in pair: LanguagePair?) -> PairSide {
+        guard let current, let pair else { return .a }
+        return current == pair.b && current != pair.a ? .b : .a
+    }
 
     static func label(languageCode: String?, languageName: String? = nil, state: MenuState,
-                      display: Preferences.General.MenuBarLabel = .iconAndLanguage) -> Label {
+                      display: Preferences.General.MenuBarLabel = .iconAndLanguage,
+                      current: InputSourceID? = nil) -> Label {
         let look: Label.Look
         if !state.enabled {
             look = .off
@@ -78,7 +113,8 @@ enum MenuModel {
         case .attention: spoken += ", needs attention"
         case .off: spoken += ", turned off"
         }
-        return Label(look: look, letters: letters, showsIcon: showsIcon, accessibilityLabel: spoken)
+        return Label(look: look, side: side(of: current, in: state.pairInputSources), letters: letters,
+                     showsIcon: showsIcon, accessibilityLabel: spoken, display: display)
     }
 
     /// The whole menu, top to bottom.

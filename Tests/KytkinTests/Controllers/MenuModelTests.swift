@@ -478,7 +478,7 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(unknown.showsIcon)
         XCTAssertEqual(unknown.accessibilityLabel, "Kytkin")
         XCTAssertEqual(MenuModel.label(languageCode: "", state: MenuState()).letters, nil)
-        XCTAssertEqual(en.imageName, "kytkin-menubar-active")
+        XCTAssertEqual(en.imageName, "kytkin-menubar-active-a")
     }
 
     func testDisplayModes() {
@@ -501,7 +501,7 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(l.dimmed)
         XCTAssertEqual(l.letters, "HE", "no more trailing dot")
         XCTAssertEqual(l.accessibilityLabel, "Kytkin, Hebrew, paused")
-        XCTAssertEqual(l.imageName, "kytkin-menubar-paused")
+        XCTAssertEqual(l.imageName, "kytkin-menubar-paused-a")
     }
 
     func testOffWinsOverPausedAndWarnings() {
@@ -537,5 +537,92 @@ final class MenuModelTests: XCTestCase {
         a.tapMode = .active
         XCTAssertEqual(MenuModel.label(languageCode: "en", state: a), MenuModel.label(languageCode: "en", state: b),
                        "counters and the context line never change the button")
+    }
+
+    // MARK: - P6-0e: the artwork (docs/design/artwork/Colors.md)
+
+    func testTheFilledHalfIsTheLanguageThatIsOn() {
+        var s = MenuState()
+        s.pairInputSources = LanguagePair(a: IDs.abc, b: IDs.hebrew)
+        XCTAssertEqual(MenuModel.label(languageCode: "en", state: s, current: IDs.abc).side, .a)
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew).side, .b)
+        XCTAssertEqual(MenuModel.label(languageCode: "ru", state: s, current: IDs.russian).side, .a, "not in the pair")
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s).side, .a, "unknown current source")
+        s.pairInputSources = nil
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew).side, .a, "no pair known")
+        XCTAssertEqual(MenuModel.side(of: IDs.hebrew, in: LanguagePair(a: IDs.hebrew, b: IDs.hebrew)), .a,
+                       "a pair with one member twice: the first")
+    }
+
+    func testEveryLookAndSideHasItsGlyphName() {
+        var names: [String] = []
+        for look in MenuModel.Label.Look.allCases {
+            for side in [PairSide.a, .b] { names.append(MenuModel.glyphName(look, side: side)) }
+        }
+        XCTAssertEqual(names, ["kytkin-menubar-active-a", "kytkin-menubar-active-b", "kytkin-menubar-paused-a",
+                               "kytkin-menubar-paused-b", "kytkin-menubar-attention-a", "kytkin-menubar-attention-b",
+                               "kytkin-menubar-off-a", "kytkin-menubar-off-b"])
+    }
+
+    func testStatesMapToLooksAndOnlyOffFadesTheLetters() {
+        var s = MenuState()
+        s.pairInputSources = LanguagePair(a: IDs.abc, b: IDs.hebrew)
+        let active = MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew)
+        XCTAssertEqual(active.imageName, "kytkin-menubar-active-b")
+        XCTAssertEqual(active.lettersOpacity, 1)
+        s.paused = true
+        let paused = MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew)
+        XCTAssertEqual(paused.imageName, "kytkin-menubar-paused-b")
+        XCTAssertEqual(paused.lettersOpacity, 1, "paused: only the glyph's fill changes")
+        s.paused = false
+        s.conflicts.runningSwitchers = ["FlicKey"]
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew).imageName,
+                       "kytkin-menubar-attention-b")
+        s.enabled = false
+        let off = MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew)
+        XCTAssertEqual(off.imageName, "kytkin-menubar-off-b")
+        XCTAssertEqual(off.lettersOpacity, 0.35, "off: the letters fade to 35 % too")
+        XCTAssertEqual(off.letters, "HE", "the language is still shown")
+    }
+
+    /// P6-0e: AppController tells the label the pair as input sources.
+    func testMenuStateCarriesThePairForTheGlyph() {
+        XCTAssertNil(MenuState().pairInputSources)
+    }
+
+    /// P6-0e QA: the item's width depends on the display mode only: not on the language, on its letters being known,
+    /// on the look (off, paused, attention) or on the pair side, so the items beside Kytkin never move.
+    func testTheItemWidthIsFixedPerDisplayMode() {
+        var states: [MenuState] = []
+        var active = MenuState()
+        active.pairInputSources = LanguagePair(a: IDs.abc, b: IDs.hebrew)
+        states.append(active)
+        var paused = active; paused.paused = true; states.append(paused)
+        var off = active; off.enabled = false; states.append(off)
+        var attention = active; attention.secureInputOn = true; states.append(attention)
+        for display in Preferences.General.MenuBarLabel.allCases {
+            var widths = Set<Double>()
+            for state in states {
+                for (code, current) in [("en", IDs.abc), ("he", IDs.hebrew), (nil, nil), ("fil", nil)] as [(String?, InputSourceID?)] {
+                    let label = MenuModel.label(languageCode: code, state: state, display: display, current: current)
+                    XCTAssertEqual(label.display, display)
+                    widths.insert(MenuModel.ItemLayout.width(for: label.display))
+                }
+            }
+            XCTAssertEqual(widths.count, 1, "\(display)")
+        }
+        XCTAssertEqual(MenuModel.ItemLayout.width(for: .iconAndLanguage), 42)
+        XCTAssertEqual(MenuModel.ItemLayout.width(for: .iconOnly), 18)
+        XCTAssertEqual(MenuModel.ItemLayout.width(for: .languageOnly), 28)
+    }
+
+    /// P6-0e QA: the filled half for a language outside the pair, or an unknown pair, is the first one.
+    func testTheGlyphSideOutsideThePair() {
+        let pair = LanguagePair(a: IDs.abc, b: IDs.hebrew)
+        XCTAssertEqual(MenuModel.side(of: IDs.hebrew, in: pair), .b)
+        XCTAssertEqual(MenuModel.side(of: IDs.abc, in: pair), .a)
+        XCTAssertEqual(MenuModel.side(of: InputSourceID("com.apple.keylayout.Russian"), in: pair), .a)
+        XCTAssertEqual(MenuModel.side(of: IDs.hebrew, in: nil), .a)
+        XCTAssertEqual(MenuModel.side(of: IDs.hebrew, in: LanguagePair(a: IDs.hebrew, b: IDs.hebrew)), .a)
     }
 }

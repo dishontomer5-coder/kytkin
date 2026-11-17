@@ -10,6 +10,7 @@
 // distinct glyph for paused, needs attention and off (no more "·"); a VoiceOver label. No colour, no animation.
 
 import AppKit
+import QuartzCore
 
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
@@ -42,36 +43,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     /// Label refresh (any input-source change, Pause, context, warnings). Touches the button only on a change.
+    /// P6-0e: the whole item is one template image (`MenuBarGlyph.itemImage`: the logo with the on language's half
+    /// filled, 4 pt, the letters in a fixed 20 pt frame), so its width never moves. A language change cross-fades
+    /// over 150 ms (Colors.md), never with Reduce Motion.
     func refresh() {
         let state = menuControl.menuState
         let info = switcher.currentInfo
         let label = MenuModel.label(languageCode: info?.languageCode, languageName: info?.name, state: state,
-                                    display: state.menuBarDisplay)
+                                    display: state.menuBarDisplay, current: info?.id)
         guard label != shownLabel, let button = statusItem.button else { return }
+        let languageChanged = shownLabel.map { $0.look == label.look && ($0.side != label.side || $0.letters != label.letters) }
+            ?? false
         shownLabel = label
-        // Letters-only mode marks attention with a small dot after the letters (visual review §3.2).
-        let image = label.showsIcon ? MenuBarGlyph.image(for: label.look)
-            : label.look == .attention ? MenuBarGlyph.attentionDot() : nil
+        if languageChanged, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            button.wantsLayer = true
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.15
+            button.layer?.add(fade, forKey: "kytkin.language")
+        }
+        let image = MenuBarGlyph.itemImage(for: label)
         button.image = image
-        button.imagePosition = label.showsIcon ? .imageLeading : .imageTrailing
-        button.font = NSFont.menuBarFont(ofSize: 0)
-        button.title = label.letters ?? ""
-        button.appearsDisabled = label.dimmed
+        button.imagePosition = .imageOnly
+        button.title = ""
+        button.appearsDisabled = false   // the artwork draws paused (45 %) and off (35 %) itself
         button.setAccessibilityLabel(label.accessibilityLabel)
         button.setAccessibilityHelp("Click for Kytkin options")
-        statusItem.length = Self.width(for: label, image: image)
-    }
-
-    /// P6-0c (visual review M3): a fixed width, so "EN" ↔ "HE" never moves the items beside Kytkin. The letters get
-    /// the room of "WW" (the widest two capitals) whatever the language.
-    private static func width(for label: MenuModel.Label, image: NSImage?) -> CGFloat {
-        let font = NSFont.menuBarFont(ofSize: 0)
-        let padding: CGFloat = 8
-        guard let letters = label.letters else { return max(NSStatusItem.squareLength, 16 + padding) }
-        let room = max(("WW" as NSString).size(withAttributes: [.font: font]).width,
-                       (letters as NSString).size(withAttributes: [.font: font]).width)
-        let imageWidth = image.map { $0.size.width + 3 } ?? 0
-        return ceil(padding + imageWidth + room)
+        statusItem.length = ceil(CGFloat(MenuModel.ItemLayout.width(for: label.display)) + 8)   // P6-0e QA: per mode
     }
 
     func sourcesListDidChange() {

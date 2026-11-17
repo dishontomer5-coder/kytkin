@@ -58,6 +58,8 @@ import Observation
     /// P6-0c (flows §5.4): the setup window's practice box (AppEnvironment wires it). Called for a double-Shift while
     /// Kytkin's own window is in front; returns the language the box's text is in now, nil = nothing converted.
     var practiceDoubleShift: (@MainActor () -> InputSourceID?)?
+    /// P6-0e: the pair as input sources (AppEnvironment: the layout catalog's bases), for the menu-bar logo's half.
+    var pairInputSources: (@MainActor () -> LanguagePair?)?
 
     private var lastPrefs: Preferences?
     private var lastConfig: KeyProcessorConfig?
@@ -415,6 +417,7 @@ import Observation
             convertOffInCurrentApp: currentRule.map { store.prefs.apps[$0.context.bundleID]?.convertEnabled == false }
                 ?? false,
             menuBarDisplay: store.prefs.general.menuBarLabel,
+            pairInputSources: pairInputSources?() ?? store.prefs.languagePair,
             paused: switching.paused, enabled: store.prefs.general.enabled,
             tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
             degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,

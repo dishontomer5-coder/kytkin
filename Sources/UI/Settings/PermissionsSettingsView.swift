@@ -93,7 +93,7 @@ struct PermissionRowView: View {
             if row.showsGrant || row.showsOpenSettings || row.showsQuitAndReopen {
                 HStack(spacing: 12) {
                     if row.showsGrant { Button(row.grantTitle, action: grant) }
-                    if row.showsOpenSettings { Button("Open System Settings", action: openSettings).buttonStyle(.link) }
+                    if row.showsOpenSettings { Button("Open System Settings", action: openSettings).buttonStyle(.kytkinLink) }
                     if row.showsQuitAndReopen { Button("Quit & Reopen", action: quitAndReopen) }
                 }
             }
