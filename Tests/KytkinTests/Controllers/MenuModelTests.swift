@@ -26,7 +26,7 @@ final class MenuModelTests: XCTestCase {
 
     private func items(_ state: MenuState, current: InputSourceID? = IDs.abc, settings: Bool = false,
                        debug: Bool = false) -> [MenuItemModel] {
-        MenuModel.items(state: state, currentSource: current.map(source), version: "1.2.3",
+        MenuModel.items(state: state, currentSource: current.map(source),
                         settingsAvailable: settings, includeDebug: debug,
                         sourceName: { self.sourceNames[$0] ?? $0.rawValue },
                         appName: { self.names[$0] ?? $0 })
@@ -56,9 +56,7 @@ final class MenuModelTests: XCTestCase {
     func testQuietMenuLayout() {
         XCTAssertEqual(items(MenuState()), [
             .action("Pause Kytkin", .togglePause),
-            .separator,
             .action("Settings…", .openSettings(.general), enabled: false, key: ","),
-            .info("Kytkin v1.2.3"),
             .separator,
             .action("Quit Kytkin", .quit, key: "q"),
         ], "no app yet: no context block (copy review M-3)")
@@ -69,18 +67,15 @@ final class MenuModelTests: XCTestCase {
         s.currentRule = rule(matched: .app(notes, IDs.hebrew))
         s.secureInputOn = true
         XCTAssertEqual(titles(items(s, settings: true)), [
-            "Notes · Hebrew",
-            "Remembered from your switches",
+            "Notes · Hebrew, remembered",
             "Always Use ABC in Notes",
-            "Forget Rule for Notes",
             "Don't Convert in Notes",
-            "—",
-            "Pause Kytkin",
+            "Forget Notes",
             "—",
             "Double-Shift waits: another app is protecting your typing",
             "—",
+            "Pause Kytkin",
             "Settings…",
-            "About Kytkin",
             "—",
             "Quit Kytkin",
         ])
@@ -88,7 +83,8 @@ final class MenuModelTests: XCTestCase {
         XCTAssertEqual(all[0].kind, .header)
         XCTAssertEqual(item("Settings…", in: all)?.isEnabled, true)
         XCTAssertEqual(item("Settings…", in: all)?.keyEquivalent, ",")
-        XCTAssertEqual(item("About Kytkin", in: all)?.kind, .action(.openSettings(.about)))
+        XCTAssertFalse(titles(all).contains("About Kytkin"), "P6-0f: About is a Settings tab")
+        XCTAssertEqual(all[1...3].map(\.indent), [1, 1, 1], "P6-0f: the actions sit under the header")
         XCTAssertEqual(item("Quit Kytkin", in: all)?.keyEquivalent, "q")
     }
 
@@ -102,6 +98,23 @@ final class MenuModelTests: XCTestCase {
         XCTAssertFalse(titles(all).contains("Pause Kytkin"))
         XCTAssertFalse(titles(all).contains { $0.hasPrefix("Notes") || $0.hasPrefix("Always") })
         XCTAssertEqual(titles(all).filter { $0 == "Turn Kytkin On" }.count, 1, "not again as a warning")
+        XCTAssertEqual(titles(all), ["Turn Kytkin On", "—", "Settings…", "—", "Quit Kytkin"])
+    }
+
+    /// P6-0f: the update line sits with the warnings, above Pause and Settings.
+    func testUpdateLineSitsWithTheWarnings() {
+        var s = MenuState()
+        s.secureInputOn = true
+        s.updateNotice = UpdateNotice(version: "9.0.0", pageURL: URL(string: "https://example.com/r")!)
+        XCTAssertEqual(titles(items(s, settings: true)), [
+            "Double-Shift waits: another app is protecting your typing",
+            "Update available: Kytkin 9.0.0…",
+            "—",
+            "Pause Kytkin",
+            "Settings…",
+            "—",
+            "Quit Kytkin",
+        ])
     }
 
     func testDebugLinesComeBeforeQuit() {
@@ -112,27 +125,32 @@ final class MenuModelTests: XCTestCase {
         s.tapReEnableCount = 2
         s.slowCallbackCount = 4
         let all = items(s, debug: true)
-        let t = titles(all)
-        XCTAssertEqual(Array(t.suffix(8)), [
-            "—",
-            "DEBUG: Keyboard: listenOnly (lowered)",
-            "DEBUG: Double-Shift count: 3",
-            "DEBUG: Tap re-enables: 2",
-            "DEBUG: Slow key callbacks (over 1 ms): 4",
-            "DEBUG: Switch to",
-            "—",
-            "Quit Kytkin",
+        XCTAssertEqual(Array(titles(all).suffix(3)), ["—", "Debug", "Quit Kytkin"], "P6-0f: one submenu above Quit")
+        let lines = debugLines(all)
+        XCTAssertEqual(titles(lines), [
+            "Keyboard: listenOnly (lowered)",
+            "Double-Shift count: 3",
+            "Tap re-enables: 2",
+            "Slow key callbacks (over 1 ms): 4",
+            "Switch to",
         ])
-        XCTAssertEqual(item("DEBUG: Switch to", in: all)?.kind, .debugSwitchSubmenu)
-        XCTAssertFalse(titles(items(s)).contains { $0.hasPrefix("DEBUG") }, "Release: no DEBUG lines")
+        XCTAssertEqual(item("Switch to", in: lines)?.kind, .debugSwitchSubmenu)
+        XCTAssertFalse(titles(items(s)).contains("Debug"), "Release: no Debug submenu")
+    }
+
+    /// The lines inside "Debug ▸" (P6-0f).
+    private func debugLines(_ all: [MenuItemModel]) -> [MenuItemModel] {
+        for i in all { if case .submenu(let lines) = i.kind, i.title == "Debug" { return lines } }
+        XCTFail("no Debug submenu in \(titles(all))")
+        return []
     }
 
     /// P2-55: the learner line sits with the other DEBUG lines, Debug builds only.
     func testLearnerDebugLineIsShownOnlyInDebug() {
         var s = MenuState()
         s.learnerDebug = "Learner: idle (words)"
-        let t = titles(items(s, debug: true))
-        XCTAssertEqual(Array(t.suffix(4)), ["DEBUG: Learner: idle (words)", "DEBUG: Switch to", "—", "Quit Kytkin"])
+        let t = titles(debugLines(items(s, debug: true)))
+        XCTAssertEqual(Array(t.suffix(2)), ["Learner: idle (words)", "Switch to"])
         XCTAssertFalse(titles(items(s)).contains { $0.contains("Learner") }, "Release: no learner line")
     }
 
@@ -147,11 +165,10 @@ final class MenuModelTests: XCTestCase {
         var s = MenuState()
         s.currentRule = rule(matched: .app(notes, IDs.hebrew))
         XCTAssertEqual(context(s, current: IDs.hebrew), [
-            .header("Notes · Hebrew"),
-            .info("Remembered from your switches"),
-            .action("Always Use Hebrew in Notes", .pinCurrent),
-            .action("Forget Rule for Notes", .forgetCurrent),
-            .action("Don't Convert in Notes", .toggleConvertInCurrentApp),
+            .header("Notes · Hebrew, remembered"),
+            .action("Always Use Hebrew in Notes", .pinCurrent, indent: 1),
+            .action("Don't Convert in Notes", .toggleConvertInCurrentApp, indent: 1),
+            .action("Forget Notes", .forgetCurrent, indent: 1),
         ])
     }
 
@@ -159,49 +176,50 @@ final class MenuModelTests: XCTestCase {
         var s = MenuState()
         s.currentRule = rule(matched: .app(notes, IDs.hebrew, .pinned))
         let all = context(s, current: IDs.hebrew)
-        XCTAssertEqual(all[1], .info("Always Hebrew (you chose this)"))
-        XCTAssertEqual(all[2], .action("Always Use Hebrew in Notes", .unpinCurrent, checked: true),
+        XCTAssertEqual(all[0], .header("Notes · Hebrew, always"))
+        XCTAssertEqual(all[1], .action("Always Use Hebrew in Notes", .unpinCurrent, checked: true, indent: 1),
                        "visual review N5: never checked and greyed")
-        XCTAssertEqual(all[3].isEnabled, true, "a pinned rule can be forgotten")
+        XCTAssertEqual(all[3], .action("Forget Notes", .forgetCurrent, indent: 1), "a pinned rule can be forgotten")
     }
 
     func testPinnedToAnotherSourceCanBeRepinned() {
         var s = MenuState()
         s.currentRule = rule(matched: .app(notes, IDs.hebrew, .pinned))
-        XCTAssertEqual(context(s, current: IDs.abc)[2], .action("Always Use ABC in Notes", .pinCurrent))
+        XCTAssertEqual(context(s, current: IDs.abc)[1], .action("Always Use ABC in Notes", .pinCurrent, indent: 1))
     }
 
     func testNoRule() {
         var s = MenuState()
         s.currentRule = rule()
         let all = context(s)
-        XCTAssertEqual(all[0], .header("Notes · ABC"), "no rule: the language selected now")
-        XCTAssertEqual(all[1], .info("No rule yet"))
-        XCTAssertEqual(all[2], .action("Always Use ABC in Notes", .pinCurrent))
-        XCTAssertEqual(all[3], .action("Forget Rule for Notes", .forgetCurrent, enabled: false))
+        XCTAssertEqual(all, [
+            .header("Notes · ABC"),
+            .action("Always Use ABC in Notes", .pinCurrent, indent: 1),
+            .action("Don't Convert in Notes", .toggleConvertInCurrentApp, indent: 1),
+        ], "no rule: the language selected now, no state word, nothing to forget")
     }
 
     func testDefaultRuleSaysDefault() {
         var s = MenuState()
         s.currentRule = rule(level: .defaultRule, target: IDs.hebrew)
         let all = context(s)
-        XCTAssertEqual(all[0], .header("Notes · Hebrew"))
-        XCTAssertEqual(all[1], .info("No rule yet, so the default applies"))
-        XCTAssertEqual(all[3].isEnabled, false, "nothing to forget")
+        XCTAssertEqual(all[0], .header("Notes · Hebrew"), "the default is no rule of its own")
+        XCTAssertFalse(titles(all).contains { $0.hasPrefix("Forget") }, "nothing to forget")
     }
 
     func testDontConvertIsCheckedWhenTheAppHasDoubleShiftOff() {
         var s = MenuState()
         s.currentRule = rule()
         s.convertOffInCurrentApp = true
-        XCTAssertEqual(context(s)[4], .action("Don't Convert in Notes", .toggleConvertInCurrentApp, checked: true))
+        XCTAssertEqual(context(s)[2], .action("Don't Convert in Notes", .toggleConvertInCurrentApp, checked: true,
+                                              indent: 1))
     }
 
     func testUnknownCurrentSourceDisablesPin() {
         var s = MenuState()
         s.currentRule = rule()
-        XCTAssertEqual(context(s, current: nil)[2],
-                       .action("Always Use This Language in Notes", .pinCurrent, enabled: false))
+        XCTAssertEqual(context(s, current: nil)[1],
+                       .action("Always Use This Language in Notes", .pinCurrent, enabled: false, indent: 1))
         XCTAssertEqual(context(s, current: nil)[0], .header("Notes"))
     }
 
@@ -216,7 +234,7 @@ final class MenuModelTests: XCTestCase {
     func testUnknownSourceShowsItsID() {
         var s = MenuState()
         s.currentRule = rule(matched: .app(notes, IDs.russian))
-        XCTAssertEqual(context(s)[0], .header("Notes · com.apple.keylayout.Russian"))
+        XCTAssertEqual(context(s)[0], .header("Notes · com.apple.keylayout.Russian, remembered"))
     }
 
     func testScopeNames() {
@@ -235,8 +253,8 @@ final class MenuModelTests: XCTestCase {
                         updatedAt: Date(timeIntervalSince1970: 1))
         s.currentRule = rule(matched: site, level: .site, pinScope: .siteHost(host: "www.ynet.co.il"))
         let all = context(s)
-        XCTAssertEqual(all[2].title, "Always Use ABC in www.ynet.co.il")
-        XCTAssertEqual(all[3].title, "Forget Rule for ynet.co.il")
+        XCTAssertEqual(all[1].title, "Always Use ABC in www.ynet.co.il")
+        XCTAssertEqual(all[3].title, "Forget ynet.co.il")
     }
 
     // MARK: - Pause
@@ -457,7 +475,7 @@ final class MenuModelTests: XCTestCase {
         s.canRestartKeyboard = true
         s.secureInputOn = true
         s.store = .init(loadIssue: .corruptQuarantined(URL(fileURLWithPath: "/tmp/c.json")), isReadOnly: true)
-        let user = items(s, settings: true, debug: true).filter { !$0.title.hasPrefix("DEBUG") }
+        let user = items(s, settings: true, debug: true).filter { $0.title != "Debug" }
         for i in user {
             for word in ["tap", "TIS", "watchdog", "AX", "pid", "bundle", "schema", "Secure Input"] {
                 XCTAssertNil(i.title.range(of: "\\b\(word)\\b", options: [.regularExpression, .caseInsensitive]),

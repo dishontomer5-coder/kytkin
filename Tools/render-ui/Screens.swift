@@ -300,7 +300,7 @@ import SwiftUI
 
     private func menuItems(_ state: MenuState, current: InputSourceInfo) -> [MenuItemModel] {
         let names: [InputSourceID: String] = [SampleIDs.abc: "ABC", SampleIDs.hebrew: "Hebrew"]
-        return MenuModel.items(state: state, currentSource: current, version: "0.0.1", settingsAvailable: true,
+        return MenuModel.items(state: state, currentSource: current, settingsAvailable: true,
                                includeDebug: false, sourceName: { names[$0] ?? $0.rawValue },
                                appName: { Sample.appName($0) ?? $0 })
     }

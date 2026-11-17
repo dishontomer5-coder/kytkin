@@ -5,16 +5,18 @@
 
 import Foundation
 
-struct MenuItemModel: Equatable {
-    enum Kind: Equatable {
+struct MenuItemModel: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
         /// A grayed line (context, warning text, version without About).
         case info
         /// P6-0c: a section header (`NSMenuItem.sectionHeader` on macOS 14): the app or website the block is about.
         case header
         case action(Action)
         case separator
-        /// DEBUG builds: the "DEBUG: Switch to" submenu (the UI fills it from the installed sources).
+        /// DEBUG builds: the "Switch to" submenu (the UI fills it from the installed sources).
         case debugSwitchSubmenu
+        /// P6-0f: a submenu of these lines (DEBUG builds: "Debug ▸" holds every DEBUG line).
+        indirect case submenu([MenuItemModel])
     }
 
     enum Action: Equatable {
@@ -48,7 +50,7 @@ struct MenuItemModel: Equatable {
     var title: String
     var isEnabled: Bool
     var isChecked: Bool
-    /// NSMenuItem.indentationLevel: sub-lines of a warning.
+    /// NSMenuItem.indentationLevel: P6-0f, the actions under the context header.
     var indent: Int
     /// Command-key equivalent ("," or "q"), empty for none.
     var keyEquivalent: String

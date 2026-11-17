@@ -15,7 +15,7 @@ import QuartzCore
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     /// Opens the Settings window at a tab (P2-23 sets it in AppEnvironment). While nil, "Settings…" is disabled
-    /// and the "Open Settings…" hints and About are hidden.
+    /// and the "Open Settings…" hints are hidden.
     var openSettings: (@MainActor (MenuItemModel.SettingsTarget) -> Void)?
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -25,7 +25,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let appNames = AppDisplayNames(lookup: StatusItemController.lookUpAppName)
     private var shownLabel: MenuModel.Label?
     #if DEBUG
-    private let debugSwitchMenu = NSMenu()
+    private var debugSwitchMenu = NSMenu()
     private static let includeDebug = true
     #else
     private static let includeDebug = false
@@ -93,7 +93,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let sources = switcher.sources(includeDisabled: true)
         let models = MenuModel.items(
-            state: menuControl.menuState, currentSource: switcher.currentInfo, version: Self.version,
+            state: menuControl.menuState, currentSource: switcher.currentInfo,
             settingsAvailable: openSettings != nil, includeDebug: Self.includeDebug,
             sourceName: { id in sources.first { $0.id == id }?.name ?? id.rawValue },
             appName: { [appNames] in appNames.name(for: $0) })
@@ -125,9 +125,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.indentationLevel = model.indent
             decorate(item, model)
             return item
+        case .submenu(let lines):
+            // P6-0f: "Debug ▸" (DEBUG builds only).
+            let item = NSMenuItem(title: model.title, action: nil, keyEquivalent: "")
+            let sub = NSMenu(title: model.title)
+            sub.autoenablesItems = false
+            for line in lines { sub.addItem(render(line)) }
+            item.submenu = sub
+            return item
         case .debugSwitchSubmenu:
             let item = NSMenuItem(title: model.title, action: nil, keyEquivalent: "")
             #if DEBUG
+            // P6-0f: a fresh menu each rebuild (the old one may still sit under the previous "Debug ▸" item, and a
+            // menu can have only one supermenu).
+            debugSwitchMenu = NSMenu()
             item.submenu = debugSwitchMenu
             rebuildDebugSwitchMenu()
             #endif
@@ -165,10 +176,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .quit: NSApp.terminate(nil)
         }
         refresh()
-    }
-
-    private static var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     }
 
     /// The live lookup behind `AppDisplayNames` (cached there).

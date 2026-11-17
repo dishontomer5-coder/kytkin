@@ -356,6 +356,7 @@ final class AddressBarSwitchTests: XCTestCase {
         XCTAssertNil(rule.forgetScope, "the browser's language isn't a rule to forget")
         let items = MenuModel.contextItems(state: MenuState(currentRule: rule), currentSource: nil,
                                            sourceName: { $0 == IDs.abc ? "ABC" : $0.rawValue }, appName: { _ in "Zen" })
-        XCTAssertEqual(Array(items.prefix(2)), [.header("ynet.co.il · ABC"), .info("Address bar: the browser's language")])
+        XCTAssertEqual(items.first, .header("ynet.co.il · ABC"), "P6-0f: no state word, the browser's language isn't a rule")
+        XCTAssertFalse(items.contains { $0.title.hasPrefix("Forget") })
     }
 }
