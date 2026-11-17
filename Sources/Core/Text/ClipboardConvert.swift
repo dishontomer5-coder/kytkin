@@ -176,7 +176,10 @@ import Foundation
     /// formatting-preserving paste).
     /// P3-53: `startedAt`: when the convert started (the controller's request start): the time spent on other paths
     /// and the page check counts against the same budget. nil = now.
+    /// P3-58: `pasteRichAsPlain`: the rich verdict is not asked (chat apps: the owner accepted that bold / italic
+    /// become plain; Slack's `:shortcode:` text turns back into emoji on paste).
     func run(_ source: Source, typedTail: String? = nil, app: CopiedContent.AppKind = .other, startedAt: UInt64? = nil,
+             pasteRichAsPlain: Bool = false,
              convert: (String) -> Conversion, htmlPlanner: HTMLTextConvert.Planner? = nil,
              focusIsSame: () -> Bool, mayWrite: () -> Bool) async -> (Result, PendingRestore?) {
         lastCopy = nil
@@ -232,7 +235,7 @@ import Foundation
         let verdict = copied.map { CopiedContent.verdict($0.items, text: text, app: app) }
         lastCopy = CopyDiagnostic(types: copied.map { CopiedContent.typeCounts($0.items) }, reason: verdict?.reason)
         var htmlOut: HTMLTextConvert.Output?
-        if verdict?.isRich ?? true {
+        if !pasteRichAsPlain, verdict?.isRich ?? true {
             // P3-47: formatting only (not a chat app) → convert inside the HTML and paste it.
             if app == .other, let planner = htmlPlanner, let items = copied?.items {
                 guard let html = CopiedContent.htmlForFormattingPaste(items) else {

@@ -682,6 +682,14 @@ import Foundation
         return 0
     }
 
+    /// P3-58: the focused box's mention pill texts (read only), inside what is left of the B5 budget (≤ 100 ms).
+    private func pillTexts() -> [String] {
+        let elapsed = clock.nowNanos &- requestStart
+        let left = ReplacementChain.defaultBudgetNanos > elapsed ? ReplacementChain.defaultBudgetNanos - elapsed : 0
+        guard left > 0 else { return [] }
+        return currentReplacer().focusedInlineAtomTexts(budgetNanos: min(100_000_000, left))
+    }
+
     /// P3-50 / P3-53: the focused box's page category, asked at most once per request, inside what is left of the
     /// B5 budget (none left → `.unknown`, nothing asked).
     private func pageCategory(for r: ConvertRequest) -> PageCategory {
@@ -709,11 +717,48 @@ import Foundation
                               finish: inout Finish) async -> ConvertOutcome {
         guard let cb = currentClipboard() else { return await fallBack(r, layouts: layouts, finish: &finish) }
         var target: InputSourceID?
+        // P3-58 (owner 2026-11-17): a chat app (Slack, Discord, Teams): copy → convert the plain text → paste, box and
+        // selection alike, even over a rich copy (bold / italic may become plain). `:shortcode:` words (Slack's emoji,
+        // pasted back as text, turn into emoji again) and mentions never convert: `BoxConversion`'s atomic tokens plus
+        // the box's mention pills read from AX (read only, full multi-word names). Line breaks are pasted as they
+        // were. No AX path, no keys; nothing copied → just switch.
+        let chat = CopiedContent.appKind(bundleID: r.bundleID) == .chat
+        let chatAtoms: [String] = chat ? pillTexts() : []
+        if chat { trace?.chatClipboard = job.source == .box ? "box" : "selection" }
         let convert: (String) -> ClipboardConvert.Conversion = { text in
             // P3-40 (b): the copy must be the selection AX reported. Only the visible characters are compared: AX may
             // have dropped or changed the line breaks and spaces (that is why the copy is used).
-            if case .copiedSelection = job.source, let ax = job.axSelection,
+            // P3-58: not in a chat app: Slack's AX text shows emoji as objects or odd units, its copy as `:name:`.
+            if !chat, case .copiedSelection = job.source, let ax = job.axSelection,
                !Self.sameVisibleText(text, ax) { return .mismatch }
+            if chat {
+                guard text.utf16.count <= ReplacementPlanner.maxFieldReadChars else { return .tooLong }
+                let direction: PairSide?
+                switch job.source {
+                case .box: direction = job.direction
+                case .copiedSelection:
+                    guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else {
+                        return .nothing
+                    }
+                    direction = side
+                }
+                let window = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                                         reachesFieldEnd: true)
+                switch BoxConversion.plan(window, classify: layouts.runClass, direction: direction,
+                                          atomicTexts: chatAtoms, convert: { side, grapheme in
+                                              layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text
+                                                  ?? grapheme
+                                          }) {
+                case .nothing: return .nothing
+                case .tooLong: return .tooLong
+                case .convert(let p):
+                    let units = Array(text.utf16)
+                    let head = String(decoding: units[..<p.edit.offset], as: UTF16.self)
+                    let tail = String(decoding: units[(p.edit.offset + p.edit.length)...], as: UTF16.self)
+                    target = layouts.source(of: p.side.other)
+                    return .replace(head + p.text + tail)
+                }
+            }
             // P3-37 QA: in an unseeded app a line break (or any control character) is never pasted (ClipJob).
             if !job.mayPasteLineBreaks, ReplacementPlanner.containsUnsafeCharacter(text) { return .unsafe }
             switch job.source {
@@ -792,7 +837,7 @@ import Foundation
         let gen = r.gen
         let (result, pending) = await cb.run(job.source, typedTail: job.typedTail,
                                              app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
-                                             convert: convert,
+                                             pasteRichAsPlain: chat, convert: convert,
                                              htmlPlanner: htmlPlanner,
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
@@ -850,6 +895,10 @@ import Foundation
             // after Kytkin's own ⌘A / Right arrow / ⌘V, e.g. a second double-Shift), and a real selection would have
             // been copied. The clipboard path only runs where AX can't write the selection, so the old way is always
             // typing AX's text: never. Just switch; the buffer is forgotten (a selection may be there).
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
+        case .boxEmpty where chat:
+            // P3-58: nothing copied in a chat app: just switch (never keys there); the caret moved, forget the buffer.
             if r.snapshot.hasRun { finish.bufferAfter = [] }
             return await toggle(r, because: .fieldUnreadable)
         case .boxEmpty where r.snapshot.hasRun:
@@ -935,6 +984,12 @@ import Foundation
             trace?.chromiumSkipped = Self.chromiumSkipReason(r, focus: focus, element: element,
                                                              enabled: chromiumAXEnabled && makeChromiumAX != nil,
                                                              family: capabilities.family(for: r.bundleID))
+        }
+        // P3-58 (owner 2026-11-17): Slack, Discord and Teams never get the Chromium AX path (Slack's AX offsets broke
+        // once the box held Hebrew, and its late selections once typed a piece at the wrong place): the clipboard only.
+        if CopiedContent.appKind(bundleID: r.bundleID) == .chat {
+            if trace != nil { trace?.chromiumSkipped = "chatAppClipboard" }
+            return nil
         }
         guard chromiumAXEnabled, makeChromiumAX != nil, r.allowsChromiumAX, !r.inAddressBar,
               capabilities.family(for: r.bundleID) == .chromiumAX,

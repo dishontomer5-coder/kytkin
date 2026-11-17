@@ -48,6 +48,14 @@ import Foundation
         executor.focusedApplicationPID(timeout: timeout)
     }
 
+    func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String] {   // P3-58
+        guard case .success(let el) = AXFocusedElementProvider().focusedTextElement(timeout: ReplacementExecutor.axTimeout),
+              case .success(let atoms) = el.inlineAtoms(maxNodes: ChromiumAXConvert.maxAtomNodes, budgetNanos: budgetNanos,
+                                                        quoteSearchMustComplete: false, searchQuotes: false)
+        else { return [] }
+        return atoms.map(\.text).filter { !$0.isEmpty }
+    }
+
     func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory {   // P3-50
         AXPageCategoryReader.focusedPageCategory(timeout: timeout, budgetNanos: budgetNanos)
     }

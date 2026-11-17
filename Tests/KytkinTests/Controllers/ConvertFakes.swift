@@ -180,6 +180,10 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
     var focusedAppPID: Int32?
     func focusedApplicationPID(timeout: Double) -> Int32? { focusedAppPID }
 
+    /// P3-58: the focused box's mention pills (read only).
+    var inlineAtomTexts: [String] = []
+    func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String] { inlineAtomTexts }
+
     /// P3-50: what the convert's own page check finds (default: can't tell).
     var pageCategory: PageCategory = .unknown
     private(set) var pageChecks = 0

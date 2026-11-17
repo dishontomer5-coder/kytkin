@@ -64,6 +64,10 @@ import Foundation
     /// address, reduced to a category inside the call and dropped. Reads no text box content.
     /// P3-53: `budgetNanos`: the most wall-clock time the walk may take (out of time → `.unknown`).
     func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory
+
+    /// P3-58: the texts of the focused box's mention pills / links (`AXElementReading.inlineAtoms`, no quote walk),
+    /// read only, for the chat-app clipboard convert to keep them whole. [] = none or unknown. Never logged.
+    func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String]
 }
 
 extension TextReplacing {
@@ -78,6 +82,9 @@ extension TextReplacing {
 
     /// P3-50: unknown by default (the caller keeps refusing a whole-box copy on an unknown site).
     func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory { .unknown }
+
+    /// P3-58: none by default (the `@word` rule still holds).
+    func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String] { [] }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }
