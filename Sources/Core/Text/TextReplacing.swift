@@ -31,6 +31,12 @@ import Foundation
     /// or no caret → `.unavailable` (untouched). Writes nothing.
     func readField(maxChars: Int, locate: (FieldWindow) -> FieldEdit?) -> StepOutcome
 
+    /// P6-0j QA: the focused box's selection is an inline completion (`FocusInfo.selectionIsFieldTail`): until
+    /// `endReplacement`, `readField` takes the selection's start as the caret (only the text before it is planned) and
+    /// the AX write after it replaces the range it found through the end of the completion, as typing would. A
+    /// replacer that can't do this leaves `readField` unavailable for a selection (the safe default).
+    func beginInlineCompletion()
+
     /// The run found by the last successful `axReadRunBeforeCaret` / `axReadField` step, in memory for this
     /// replacement only.
     var wordBeforeCaret: String? { get }
@@ -71,6 +77,9 @@ import Foundation
 }
 
 extension TextReplacing {
+    /// P6-0j QA: nothing by default.
+    func beginInlineCompletion() {}
+
     /// P2-59c: a replacer that can't name its element: no clipboard convert, no terminal anchor (the safe default).
     var focusedElement: (any FocusedElementIdentity)? { nil }
 

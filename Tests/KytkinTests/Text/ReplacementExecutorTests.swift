@@ -25,7 +25,8 @@ final class ReplacementExecutorTests: XCTestCase {
         let info = x.focusInfo(timeout: 0.25)
         XCTAssertEqual(info, FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false,
                                        selTextSettable: true, selRangeSettable: true, selection: "akuo",
-                                       canReadBeforeCaret: false, selectedLength: 4))   // P6-0j
+                                       canReadBeforeCaret: false, selectedLength: 4,   // P6-0j
+                                       selectionIsFieldTail: true, canReadBeforeSelection: true))   // P6-0j QA
         XCTAssertEqual(provider.timeouts, [0.25])
     }
 

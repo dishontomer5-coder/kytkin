@@ -488,8 +488,6 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(watcher.calls.first, .perform(.contextChanged(terminalPID: 90)))
     }
 
-    /// P3-37 (b): the first key of a terminal buffer asks the convert controller to note the focused element.
-    /// (P3-40: it no longer also drops an undo record.)
     // MARK: - P6-0j: the focused element's app, not the frontmost one
 
     /// Spotlight's panel takes the keys while cmux (a terminal) stays frontmost: the request is Spotlight's.
@@ -542,6 +540,8 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(watcher.finishes, [5])
     }
 
+    /// P3-37 (b): the first key of a terminal buffer asks the convert controller to note the focused element.
+    /// (P3-40: it no longer also drops an undo record.)
     func testATerminalBufferStartIsAnchored() {
         make(withConvert: true)
         monitor.activate("com.apple.Terminal", pid: 77)

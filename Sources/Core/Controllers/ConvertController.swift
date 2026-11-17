@@ -379,6 +379,12 @@ import Foundation
         // P3-37 (a): a terminal's selection is display only (P2-36: never typed over). It used to beep and not even
         // switch; now it is ignored: the remembered line converts by keys, or double-Shift just switches.
         let terminalSelection = capabilities.method(for: r.bundleID) == .terminal
+        // P6-0j QA (owner 2026-11-18): Spotlight, Safari's address bar and search fields select their inline completion
+        // after what was typed. That selection is the app's guess, not the user's: converting it is wrong, and
+        // Backspace deletes it first. The text before it converts instead (the selection's start is the caret).
+        if let f = focus, Self.isInlineCompletion(f, r, terminal: terminalSelection) {
+            return decideInlineCompletion(r, layouts: layouts, focus: f, replacer: replacer)
+        }
         if let selection = focus?.selection, !selection.isEmpty, !terminalSelection {
             // P3-42: a Chromium/Electron web box: select and type over only the changed pieces of the selection.
             if allowChromiumAX, let job = chromiumJob(r, focus: focus, element: element, source: .selection) {
@@ -425,6 +431,103 @@ import Foundation
     /// P6-0j: single-line text boxes (a search field, Spotlight's). A terminal's screen is never one of these, so in a
     /// terminal app a selection in one of them is a real one that Backspace would delete.
     static let singleLineTextRoles: Set<String> = ["AXTextField", "AXComboBox", "AXSearchField"]
+
+    /// P6-0j QA: roles whose selected tail is taken as an inline completion even with nothing remembered typed.
+    static let completionRoles: Set<String> = ["AXComboBox", "AXSearchField"]
+
+    /// P6-0j QA: the selection runs from inside the box to its end, and either a run was typed since the last caret
+    /// move (arrows, a click and Return reset the buffer, so a tail the user selected by hand comes with no run) or the
+    /// box is a search field / combo box. A terminal's screen selection stays display only (P2-36).
+    static func isInlineCompletion(_ f: FocusInfo, _ r: ConvertRequest, terminal: Bool) -> Bool {
+        let role = f.role ?? ""
+        guard f.selectionIsFieldTail, !terminal || singleLineTextRoles.contains(role) else { return false }
+        return r.snapshot.hasRun || completionRoles.contains(role)
+    }
+
+    /// P6-0j QA: an inline completion: the text before it converts through the AX box path, with the selection's start
+    /// as the caret (P3-62's rule), and the write replaces the converted range through the end of the completion, as
+    /// typing would (the app then completes again). Outside a search field / combo box the text before the completion
+    /// must end with the remembered typed run, or it may be a user's selection: just switch. No AX write possible, a
+    /// read that fails: just switch. Never keys (Backspace would delete the completion first).
+    private func decideInlineCompletion(_ r: ConvertRequest, layouts: LayoutSnapshot, focus f: FocusInfo,
+                                        replacer: any TextReplacing) -> Decision {
+        note(.ax, "inlineCompletion")   // DEBUG trace: a step name only
+        let focus = f.beforeInlineCompletion
+        guard ReplacementPlanner.readsField(bundleID: r.bundleID, caps: capabilities, focus: focus) else {
+            return .selectionBlocksKeys
+        }
+        let snap = r.snapshot
+        var old: String?
+        var rendered: (target: InputSourceID, text: String)?
+        if snap.hasRun {
+            let source = snap.renderedIn ?? r.currentSource
+            guard layouts.side(of: source) != nil else { return .selectionBlocksKeys }
+            if let typed = layouts.typedRun(snap, in: source), let render = layouts.renderRun(snap, from: source) {
+                old = typed
+                rendered = render
+            }
+        }
+        let mustEndWithTyped = !Self.completionRoles.contains(f.role ?? "")
+        if mustEndWithTyped && old == nil { return .selectionBlocksKeys }
+        replacer.beginInlineCompletion()
+
+        var box: BoxConversion.Result?
+        var plan: BoxConversion.Plan?
+        var bufferMayApply = true
+        var target: InputSourceID?
+        var fromBuffer = false
+        var notTyped = false
+        let locate: (FieldWindow) -> FieldEdit? = { read in
+            let window = read.upToCaret
+            if mustEndWithTyped, let old {
+                let typed = Array(old.unicodeScalars), before = Array(window.text.unicodeScalars)
+                guard before.count >= typed.count, Array(before.suffix(typed.count)) == typed else {
+                    notTyped = true
+                    return nil
+                }
+            }
+            let result = BoxConversion.plan(window, classify: layouts.runClass) { side, grapheme in
+                layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text ?? grapheme
+            }
+            box = result
+            guard case .convert(let p) = result else { return nil }
+            plan = p
+            bufferMayApply = window.location + p.edit.offset + p.edit.length == window.caret
+            return p.edit
+        }
+        let convert: (String) -> String? = { text in
+            if bufferMayApply, let old, let rendered, text.unicodeScalars.elementsEqual(old.unicodeScalars) {
+                guard rendered.text != old else { return nil }
+                fromBuffer = true
+                target = rendered.target
+                return rendered.text
+            }
+            guard let p = plan else { return nil }
+            fromBuffer = false
+            target = layouts.source(of: p.side.other)
+            return p.text
+        }
+        // No `typedLength`: the plan holds no key step.
+        let request = ReplacementRequest(kind: .convertRun, bundleID: r.bundleID, snapshot: snap, typedLength: nil)
+        let outcome = runChain(request, focus: focus, old: nil, gen: r.gen, replacer: replacer, locateField: locate,
+                               convert: convert)
+        if notTyped { return .selectionBlocksKeys }
+        switch outcome.result {
+        case .replaced(let step):
+            guard let target else { return .failed(.replacement(outcome.result), beeps: true, textMayHaveChanged: true) }
+            return .replaced(target: target, step: step, keptBuffer: fromBuffer, isRun: true)
+        case .notConvertible:
+            return .nothingToConvert
+        case .exhausted where outcome.attempts.allSatisfy({ Self.isRead($0.step) }):
+            if box == .tooLong { return .failed(.runTooLong, beeps: true, textMayHaveChanged: false) }
+            // Read fine and nothing to convert: switch. The read failed: switch too (never keys over the completion).
+            return outcome.attempts.contains(where: { $0.verdict != .done }) ? .selectionBlocksKeys : .nothingToConvert
+        case .refused:
+            return .selectionBlocksKeys
+        default:
+            return Self.failure(outcome)
+        }
+    }
 
     /// P2-59 (001 §12.3 X4–X6): no selection, the run before the caret.
     private func decideRun(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
