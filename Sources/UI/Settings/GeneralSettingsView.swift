@@ -37,8 +37,8 @@ struct GeneralSettingsView: View {
             }
             .disabled(!model.isEditable)
 
-            Section("Your two languages") {
-                LanguagePairPickers(model: languages)
+            Section {
+                LanguagePairRow(model: languages)   // P6-0d (owner): one row, ⇄ between
             }
             .disabled(!languages.isEditable)
 
@@ -52,6 +52,8 @@ struct GeneralSettingsView: View {
                     RowLabel("Show in menu bar", subtitle: GeneralSettingsModel.menuBarDisplayHelp)
                 }
                 .disabled(!model.isEditable)
+                // P6-0d (owner): a live preview, drawn like the real status item.
+                LabeledContent("Looks like") { MenuBarPreview(label: model.menuBarPreview) }
                 Toggle(isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) })) {
                     RowLabel("Open at Login", subtitle: model.loginItemHint)
                 }

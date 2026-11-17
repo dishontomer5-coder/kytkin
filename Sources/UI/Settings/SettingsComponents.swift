@@ -4,6 +4,7 @@
 //   where orange / green text measured about 2:1).
 // - NoticeSection: the preferences-file notices are the form's first section, on the form's own left edge.
 
+import AppKit
 import SwiftUI
 
 struct RowLabel: View {
@@ -52,6 +53,30 @@ struct WarningLabel: View {
 
     var body: some View {
         StatusLabel(text: text, symbol: "exclamationmark.triangle.fill", tint: .orange)
+    }
+}
+
+/// P6-0d (owner): the status item as it will look, from the same label model and glyphs (`MenuBarGlyph`), template-
+/// tinted for the current appearance, on a small menu-bar-like capsule.
+struct MenuBarPreview: View {
+    let label: MenuModel.Label
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if label.showsIcon, let image = MenuBarGlyph.image(for: label.look) {
+                Image(nsImage: image).renderingMode(.template)
+            }
+            if let letters = label.letters {
+                Text(letters).font(Font(NSFont.menuBarFont(ofSize: 0)))
+            }
+        }
+        .foregroundStyle(.primary)
+        .opacity(label.dimmed ? 0.5 : 1)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Preview: \(label.accessibilityLabel)")
     }
 }
 

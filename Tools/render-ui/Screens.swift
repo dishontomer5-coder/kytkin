@@ -71,7 +71,7 @@ import SwiftUI
         let extractor = DomainExtractor(suffixList: PublicSuffixList(datContents: suffixText))
 
         let general = GeneralSettingsModel(store: store, loginItems: FakeLoginItems(),
-                                           sources: { Sample.enabledSources })
+                                           sources: { Sample.enabledSources }, currentLanguage: { Sample.hebrewInfo })
         let languages = LanguagesSettingsModel(store: store, imported: imported, catalog: catalog,
                                                fileSystem: layoutFS, inputMethods: { Sample.enabledSources })
         let rules = RulesSettingsModel(store: store, appName: Sample.appName, sources: { Sample.allSources },

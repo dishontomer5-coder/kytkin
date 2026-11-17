@@ -191,7 +191,8 @@ import AppKit
         let switcher = self.switcher
         // P2-23: SMAppServiceLoginItems only reads the status here; register/unregister run on the user's toggle.
         let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
-                                           sources: { switcher.sources(includeDisabled: false) })
+                                           sources: { switcher.sources(includeDisabled: false) },
+                                           currentLanguage: { switcher.currentInfo })   // P6-0d: menu-bar preview
         // P2-24: reads the layout lists only on refresh (when Settings opens); files only on the user's clicks.
         let languages = LanguagesSettingsModel(store: store, imported: importedLayouts, catalog: layoutCatalog,
                                                fileSystem: importedLayouts.fileSystem,

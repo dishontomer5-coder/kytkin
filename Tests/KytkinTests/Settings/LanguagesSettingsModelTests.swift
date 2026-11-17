@@ -159,6 +159,14 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertEqual(store.prefs.languagePair, LanguagePair(a: IDs.hebrew, b: IDs.abc))
     }
 
+    /// P6-0d: the pair row's badges are the menu bar's letters.
+    func testCodesAreTheMenuBarLetters() {
+        make()
+        sut.refresh()
+        XCTAssertEqual(sut.code(for: IDs.hebrew), "HE")
+        XCTAssertEqual(sut.code(for: InputSourceID("com.example.gone")), nil, "unknown: no badge")
+    }
+
     func testCheckIsPure() {
         let options = LanguagePairOption.options(
             installed: [FakeSystemLayouts.info(IDs.abc, "ABC"), FakeSystemLayouts.info(IDs.hebrew, "")],

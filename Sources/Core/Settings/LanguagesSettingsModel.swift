@@ -119,6 +119,16 @@ import Observation
         store.update { $0.languagePair = candidate }
     }
 
+    /// P6-0d: the menu-bar letters for a pair member ("EN", "HE"): its input source's language (an imported map's
+    /// base). nil = unknown.
+    func code(for id: InputSourceID) -> String? {
+        let base = catalog.inputSource(for: id) ?? id
+        let system = systemLayouts.first { $0.id == base }?.languageCode ?? ""
+        let language = system.isEmpty ? (catalog.map(for: id)?.language ?? "") : system
+        let code = InputSourceLabel.label(forLanguages: [language])
+        return code == InputSourceLabel.unknown ? nil : code
+    }
+
     /// Swaps A and B (always valid if the pair is).
     func swap() {
         choose(LanguagePair(a: pair.b, b: pair.a))
