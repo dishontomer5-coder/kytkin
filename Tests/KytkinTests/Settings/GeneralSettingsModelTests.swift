@@ -77,6 +77,20 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertFalse(store.prefs.general.learnFromManualSwitches)
     }
 
+    /// P6-0d (owner): "Show in menu bar" writes the preference and the preview follows it.
+    func testMenuBarDisplayAndItsPreview() {
+        make()
+        XCTAssertEqual(sut.menuBarDisplay, .iconAndLanguage)
+        XCTAssertEqual(sut.menuBarPreview.letters, "EN", "no current language yet: English letters as a sample")
+        XCTAssertTrue(sut.menuBarPreview.showsIcon)
+        sut.menuBarDisplay = .iconOnly
+        XCTAssertEqual(store.prefs.general.menuBarLabel, .iconOnly)
+        XCTAssertNil(sut.menuBarPreview.letters)
+        sut.menuBarDisplay = .languageOnly
+        XCTAssertFalse(sut.menuBarPreview.showsIcon)
+        XCTAssertEqual(sut.menuBarPreview.look, .active)
+    }
+
     func testDefaultBehaviorPickerRoundTrips() {
         make()
         sut.refresh()

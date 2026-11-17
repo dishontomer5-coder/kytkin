@@ -19,14 +19,15 @@ import Observation
     static let sliderRange = Double(windowRangeMs.lowerBound)...Double(windowRangeMs.upperBound)
 
     /// P6-0c (copy review C-1, P1): what double-Shift does since P3-62 (up to the cursor) and P3-40 (again = back).
-    /// Hebrew samples are wrapped in FSI/PDI so bidi never flips the punctuation (copy review B7).
+    /// P6-0d (owner): the "How it works" section, always visible: selection or before the cursor, again = back,
+    /// mentions and :codes: kept, chat apps paste plain (P3-58).
     static let explanation = [
-        "Typed in the wrong language? Press Shift twice. For example, akuo becomes \u{2068}שלום\u{2069}.",
         "With text selected, Kytkin converts only the selection. With nothing selected, it converts what's before "
             + "the cursor, back to the start of the box. Text already in the right language stays.",
         "Press Shift twice again to convert it back. You can also undo with ⌘Z.",
-        "In terminals, Kytkin converts what you typed since you last pressed Return. Where it can't convert, "
-            + "double-Shift just switches the language.",
+        "@mentions, :shortcodes: and links stay as they are.",
+        "In Slack, Discord and Teams, the converted text is pasted back as plain text, so bold or italic in it may be "
+            + "lost. In terminals, Kytkin converts what you typed since you last pressed Return.",
     ]
 
     /// P6-0c: the one-line summary shown under the main switch (the rest sits behind "How it works").
@@ -36,11 +37,17 @@ import Observation
     static let clipboardTitle = "Convert through the clipboard when needed"
 
     /// P3-37: the caption under the clipboard toggle. P6-0c (copy review C-4, P3-18 audit M1 disclosure, P1).
-    static let clipboardNote = "In apps Kytkin can't read directly (like Slack, VS Code and Chrome), it copies the "
-        + "text, pastes it back converted, then puts back what you had copied. In Slack, Discord and Teams, bold or "
-        + "italic in that message may become plain text. Clipboard history apps (like Maccy, Raycast or Alfred) may "
-        + "briefly see the copied text and save it. If you use one, you may want to turn this off. It's never used in "
-        + "terminals, in password boxes, or while you have a password copied."
+    /// P6-0d (owner: "what happens when it's off?"): the off behaviour, as ConvertController does it (`allowClipboard`).
+    static let clipboardNote = "In apps Kytkin can't read directly (like Slack and VS Code), it copies the text, "
+        + "pastes it back converted, then puts back what you had copied. Clipboard history apps (like Maccy, Raycast "
+        + "or Alfred) may briefly see the copied text and save it. Never in terminals, in password boxes, or while you "
+        + "have a password copied."
+
+    /// P6-0d: what turning it off does, per kind of app.
+    static let clipboardOffNote = "When off: apps Kytkin can read (Notes, Mail, most web pages) work as before. In "
+        + "the others, only what you typed since your last click or Return is converted, by retyping it, and a "
+        + "selection is retyped too (line breaks in it may be lost). In Slack, Discord and Teams, double-Shift only "
+        + "switches the language."
 
     init(store: PreferencesStore) {
         self.store = store

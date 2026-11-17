@@ -90,9 +90,14 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertTrue(text.contains("terminals"))
         // P6-0c (copy review C-4, P3-18 audit M1): the clipboard detail sits under its own switch.
         let note = ConvertSettingsModel.clipboardNote
-        for part in ["Clipboard history apps", "Slack, Discord and Teams", "never used in terminals",
-                     "while you have a password copied"] {
+        for part in ["Clipboard history apps", "Never in terminals", "while you have a password copied"] {
             XCTAssertTrue(note.contains(part), part)
+        }
+        // P6-0d (owner): what "off" does, as ConvertController does it.
+        let off = ConvertSettingsModel.clipboardOffNote
+        for part in ["apps Kytkin can read", "work as before", "since your last click or Return",
+                     "In Slack, Discord and Teams, double-Shift only switches the language"] {
+            XCTAssertTrue(off.contains(part), part)
         }
         XCTAssertEqual(ConvertSettingsModel.clipboardTitle, "Convert through the clipboard when needed")
         XCTAssertTrue(Preferences().convert.useClipboardInUnreadableApps)
@@ -109,7 +114,9 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertTrue(text.contains("twice again to convert it back"))
         XCTAssertTrue(text.contains("⌘Z"))
         XCTAssertEqual(ConvertSettingsModel.explanation.count, 4)
-        XCTAssertTrue(text.contains("\u{2068}שלום\u{2069}"), "the Hebrew sample is isolated for bidi")
+        // P6-0d (owner): mentions and :codes: kept; chat apps paste plain.
+        XCTAssertTrue(text.contains("@mentions, :shortcodes: and links stay"))
+        XCTAssertTrue(text.contains("Slack, Discord and Teams, the converted text is pasted back as plain text"))
     }
 
     func testReadOnlyBlocksEveryWrite() {

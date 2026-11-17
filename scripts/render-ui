@@ -32,6 +32,7 @@ SOURCES=(
   Sources/UI/Settings/RulesSettingsView.swift
   Sources/UI/Settings/SearchField.swift
   Sources/UI/Settings/SettingsComponents.swift
+  Sources/UI/MenuBarGlyph.swift
   Sources/UI/Settings/SettingsView.swift
   Sources/UI/Onboarding/OnboardingView.swift
 )

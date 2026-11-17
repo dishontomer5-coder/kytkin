@@ -24,11 +24,23 @@ import Observation
     /// Set when the last toggle failed; cleared by the next toggle or refresh.
     private(set) var loginItemError: String?
 
+    /// P6-0d: the language selected now, for the "Show in menu bar" preview (read when drawn).
+    @ObservationIgnored let currentLanguage: @MainActor () -> InputSourceInfo?
+
     init(store: PreferencesStore, loginItems: any LoginItemManaging,
-         sources: @escaping @MainActor () -> [InputSourceInfo]) {
+         sources: @escaping @MainActor () -> [InputSourceInfo],
+         currentLanguage: @escaping @MainActor () -> InputSourceInfo? = { nil }) {
         self.store = store
         self.loginItems = loginItems
         self.readSources = sources
+        self.currentLanguage = currentLanguage
+    }
+
+    /// P6-0d: how the status item looks with `menuBarDisplay` (the real label model, the normal look).
+    var menuBarPreview: MenuModel.Label {
+        let info = currentLanguage()
+        return MenuModel.label(languageCode: info?.languageCode ?? "en", languageName: info?.name, state: MenuState(),
+                               display: menuBarDisplay)
     }
 
     /// When Settings opens or comes to the front: fresh login-item status and layout list.

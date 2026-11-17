@@ -28,14 +28,8 @@ struct SetupSection: View {
                 ForEach(model.conflictLines, id: \.self) { WarningLabel(text: $0) }
             }
         } header: {
-            HStack {
-                Text("Setup")
-                Spacer()
-                Button { model.checkAgain() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless)
-                    .help("Check again")
-                    .accessibilityLabel("Check again")
-            }
+            // P6-0d (owner): no "check again" button: the 1 s poll re-reads while General shows.
+            Text("Setup")
         }
     }
 }
