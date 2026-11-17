@@ -276,7 +276,7 @@ private struct PracticeStep: View {
                 Toggle(isOn: $model.checkForUpdates) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Check for updates")
-                        Text("Once a day, asks GitHub whether a newer version is out. Nothing about you is sent.")
+                        Text("Once a day, asks GitHub whether a newer version is out. Only Kytkin's version number is sent.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

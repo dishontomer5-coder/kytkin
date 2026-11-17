@@ -42,8 +42,9 @@ import Observation
     }
 
     /// P6-3: Settings → General → "Check for updates" (subtitle).
-    static let updateCheckHelp = "Once a day, Kytkin asks GitHub whether a newer version is out. Nothing about you "
-        + "or your typing is sent, and nothing is downloaded."
+    /// P6-3 QA: exact: the request carries Kytkin's version (User-Agent) and nothing else of the Mac's.
+    static let updateCheckHelp = "Once a day, Kytkin asks GitHub whether a newer version is out. Only Kytkin's "
+        + "version number is sent, never anything you type, and nothing is downloaded."
 
     /// P6-3: when the last check ran, for the "Check Now" row.
     var lastUpdateCheckText: String? {

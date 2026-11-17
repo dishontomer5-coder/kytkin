@@ -23,11 +23,17 @@ protocol HTTPGetting: Sendable {
 /// offered: see `UpdateCheck.parse`).
 struct SemanticVersion: Comparable, Sendable, CustomStringConvertible {
     let parts: [Int]
+    /// P6-3 QA: a `-beta`-style suffix (semver: a pre-release sorts before its release; build metadata `+…` is
+    /// ignored). A pre-release is never offered (`UpdateCheck.parse`).
+    let isPrerelease: Bool
 
     init?(_ text: String) {
         var t = text.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("v") || t.hasPrefix("V") { t.removeFirst() }
-        let core = t.split(separator: "-", maxSplits: 1).first.map(String.init) ?? ""
+        if let plus = t.firstIndex(of: "+") { t = String(t[..<plus]) }
+        let split = t.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let core = split.first.map(String.init) ?? ""
+        isPrerelease = split.count > 1
         let numbers = core.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
         guard !numbers.isEmpty, numbers.count <= 4, numbers.allSatisfy({ $0 != nil && $0! >= 0 }) else { return nil }
         parts = numbers.compactMap { $0 }
@@ -39,7 +45,7 @@ struct SemanticVersion: Comparable, Sendable, CustomStringConvertible {
             let x = i < a.parts.count ? a.parts[i] : 0, y = i < b.parts.count ? b.parts[i] : 0
             if x != y { return x < y }
         }
-        return false
+        return a.isPrerelease && !b.isPrerelease   // 1.0.0-beta < 1.0.0
     }
 
     static func == (a: SemanticVersion, b: SemanticVersion) -> Bool { !(a < b) && !(b < a) }
@@ -62,8 +68,22 @@ enum UpdateCheck {
     static let latestReleaseURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
     static let minimumInterval: TimeInterval = 24 * 60 * 60
 
+    /// P6-3 QA: every header the system would otherwise fill in from the Mac (the preferred languages) is fixed here.
     static func headers(appVersion: String) -> [String: String] {
-        ["User-Agent": "Kytkin/\(appVersion)", "Accept": "application/vnd.github+json"]
+        ["User-Agent": "Kytkin/\(appVersion)", "Accept": "application/vnd.github+json", "Accept-Language": "en"]
+    }
+
+    /// P6-3 QA: the only page Kytkin opens: this repository's releases on github.com (https, no user, port or query).
+    static func isReleasePage(_ url: URL) -> Bool {
+        guard url.scheme == "https", url.host?.lowercased() == "github.com", url.user == nil, url.password == nil,
+              url.port == nil, url.query == nil else { return false }
+        return url.path.lowercased().hasPrefix("/\(repository.lowercased())/releases/")
+    }
+
+    /// P6-3 QA: a redirect the live client may follow: https to api.github.com only.
+    static func allowsRedirect(to url: URL?) -> Bool {
+        guard let url else { return false }
+        return url.scheme == "https" && url.host?.lowercased() == "api.github.com" && url.user == nil && url.port == nil
     }
 
     /// `tag_name` and `html_url` of the latest release; nil for anything else (a draft or pre-release, a page that
@@ -77,8 +97,8 @@ enum UpdateCheck {
         }
         guard let latest = try? JSONDecoder().decode(Latest.self, from: body),
               latest.draft != true, latest.prerelease != true,
-              let version = SemanticVersion(latest.tag_name),
-              let page = URL(string: latest.html_url), page.scheme == "https", page.host == "github.com" else {
+              let version = SemanticVersion(latest.tag_name), !version.isPrerelease,
+              let page = URL(string: latest.html_url), UpdateCheck.isReleasePage(page) else {
             return nil
         }
         return (version, page)
@@ -111,6 +131,8 @@ enum UpdateCheck {
 
     private(set) var status: Status = .idle
     private var running = false
+    /// P6-3 QA: the last check this run, so read-only preferences (the date can't be saved) don't mean one every hour.
+    @ObservationIgnored private var lastAttempt: Date?
 
     init(store: PreferencesStore, http: any HTTPGetting, appVersion: String, now: @escaping () -> Date = Date.init) {
         self.store = store
@@ -142,8 +164,8 @@ enum UpdateCheck {
     /// At most once a day, only when opted in. The app calls it at launch and every hour.
     func checkIfDue() async {
         guard isOn else { return }
-        if let last = store.prefs.general.lastUpdateCheck, now().timeIntervalSince(last) < UpdateCheck.minimumInterval,
-           now() >= last {
+        for last in [store.prefs.general.lastUpdateCheck, lastAttempt].compactMap({ $0 })
+        where now() >= last && now().timeIntervalSince(last) < UpdateCheck.minimumInterval {
             return
         }
         await check()
@@ -161,6 +183,7 @@ enum UpdateCheck {
         status = .checking
         let answer = await http.get(UpdateCheck.latestReleaseURL, headers: UpdateCheck.headers(appVersion: appVersion))
         running = false
+        lastAttempt = now()
         if !store.isReadOnly { store.update { $0.general.lastUpdateCheck = now() } }
         guard let answer, answer.status == 200 else {
             status = .failed   // 404 while private, 403 rate limit, offline: quiet

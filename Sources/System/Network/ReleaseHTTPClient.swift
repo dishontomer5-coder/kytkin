@@ -6,6 +6,7 @@ import Foundation
 
 final class ReleaseHTTPClient: HTTPGetting, @unchecked Sendable {   // @unchecked: URLSession is thread-safe
     private let session: URLSession
+    private let redirects = RedirectGuard()
 
     init() {
         let config = URLSessionConfiguration.ephemeral
@@ -26,8 +27,17 @@ final class ReleaseHTTPClient: HTTPGetting, @unchecked Sendable {   // @unchecke
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        guard let (data, response) = try? await session.data(for: request),
+        guard let (data, response) = try? await session.data(for: request, delegate: redirects),
               let http = response as? HTTPURLResponse else { return nil }
         return (http.statusCode, data)
+    }
+}
+
+/// P6-3 QA: follows a redirect only to https://api.github.com (a moved repository); anything else is not followed (the
+/// 3xx answer comes back and the check stays quiet).
+private final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        UpdateCheck.allowsRedirect(to: request.url) ? request : nil
     }
 }

@@ -53,7 +53,9 @@ final class UpdateCheckTests: XCTestCase {
         let (url, headers) = http.requests[0]
         XCTAssertEqual(url.absoluteString, "https://api.github.com/repos/dishontomer5-coder/kytkin/releases/latest")
         XCTAssertNil(url.query, "no query parameters")
-        XCTAssertEqual(headers, ["User-Agent": "Kytkin/1.0.0", "Accept": "application/vnd.github+json"])
+        // P6-3 QA: Accept-Language fixed too (the system would send the Mac's preferred languages).
+        XCTAssertEqual(headers, ["User-Agent": "Kytkin/1.0.0", "Accept": "application/vnd.github+json",
+                                 "Accept-Language": "en"])
         XCTAssertEqual(store.prefs.general.lastUpdateCheck, now, "only the date is stored")
     }
 
@@ -150,5 +152,59 @@ final class UpdateCheckTests: XCTestCase {
         setup.checkForUpdates = true
         setup.done()
         XCTAssertTrue(store.prefs.general.updateCheckOptedIn)
+    }
+
+    // MARK: - P6-3 QA
+
+    func testOnlyThisRepositorysReleasePageIsEverOpened() async {
+        store.update { $0.general.updateCheckOptedIn = true }
+        for page in ["https://github.com/someone-else/kytkin/releases/tag/v2.0.0",
+                     "https://github.com/dishontomer5-coder/kytkin-fork/releases/tag/v2.0.0",
+                     "https://github.com/dishontomer5-coder/kytkin/issues/1",
+                     "https://github.com.evil.example/dishontomer5-coder/kytkin/releases/tag/v2.0.0",
+                     "https://user@github.com/dishontomer5-coder/kytkin/releases/tag/v2.0.0",
+                     "https://github.com:8443/dishontomer5-coder/kytkin/releases/tag/v2.0.0",
+                     "https://github.com/dishontomer5-coder/kytkin/releases/tag/v2.0.0?x=1"] {
+            http.answer = (200, release("v2.0.0", page: page))
+            await sut.checkNow()
+            XCTAssertNil(sut.notice, page)
+        }
+        XCTAssertTrue(UpdateCheck.isReleasePage(URL(string: "https://github.com/dishontomer5-coder/kytkin/releases/tag/v2.0.0")!))
+    }
+
+    func testRedirectsOnlyToTheGitHubAPI() {
+        XCTAssertTrue(UpdateCheck.allowsRedirect(to: URL(string: "https://api.github.com/repositories/1/releases/latest")))
+        XCTAssertFalse(UpdateCheck.allowsRedirect(to: URL(string: "http://api.github.com/x")))
+        XCTAssertFalse(UpdateCheck.allowsRedirect(to: URL(string: "https://evil.example/x")))
+        XCTAssertFalse(UpdateCheck.allowsRedirect(to: URL(string: "https://api.github.com.evil.example/x")))
+        XCTAssertFalse(UpdateCheck.allowsRedirect(to: nil))
+    }
+
+    func testPreReleasesAreNeverOfferedAndSortBeforeTheirRelease() async {
+        XCTAssertLessThan(SemanticVersion("1.0.0-beta.2")!, SemanticVersion("1.0.0")!)
+        XCTAssertLessThan(SemanticVersion("0.9.9")!, SemanticVersion("1.0.0-beta")!)
+        XCTAssertEqual(SemanticVersion("1.0.0+build.7")!, SemanticVersion("1.0.0")!)
+        store.update { $0.general.updateCheckOptedIn = true }
+        http.answer = (200, release("v1.1.0-rc.1"))   // a pre-release tag not flagged as one
+        await sut.checkNow()
+        XCTAssertNil(sut.notice)
+        // A beta user is told about the release.
+        let beta = UpdateChecker(store: store, http: http, appVersion: "1.1.0-beta", now: { [unowned self] in self.now })
+        http.answer = (200, release("v1.1.0"))
+        await beta.checkNow()
+        XCTAssertEqual(beta.notice?.version, "1.1.0")
+    }
+
+    func testReadOnlyPreferencesStillCheckOnlyOnceADay() async {
+        var prefs = Preferences()
+        prefs.general.updateCheckOptedIn = true
+        let readOnly = makeReadOnlyStore(prefs)
+        XCTAssertTrue(readOnly.isReadOnly)
+        let checker = UpdateChecker(store: readOnly, http: http, appVersion: "1.0.0", now: { [unowned self] in self.now })
+        http.answer = (500, Data())
+        await checker.checkIfDue()
+        now = now.addingTimeInterval(60 * 60)
+        await checker.checkIfDue()
+        XCTAssertEqual(http.requests.count, 1, "the hourly timer doesn't ask again while the date can't be saved")
     }
 }
