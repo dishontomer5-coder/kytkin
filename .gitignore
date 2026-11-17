@@ -18,3 +18,13 @@ scripts/local.env
 # P6-0e: the designer's delivery zip (its contents live in docs/design/artwork/, Resources/, docs/assets/)
 docs/design/Kytkin-artwork.zip
 docs/design/artwork/_source/
+# P6-5: the internal paper trail and crew files live in the private kytkin-internal repo (checked out at
+# ./internal and symlinked here). Never commit them to this public repo. docs/assets/ (README images) stays tracked.
+/internal/
+/CLAUDE.md
+/plan.md
+/todo.md
+/design.md
+/.claude/
+/docs/*
+!/docs/assets/
