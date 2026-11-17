@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# P6-2: Build the Release app and package it as build/Kytkin-<version>.dmg with the drag-to-Applications window
+# (background picture, Kytkin at (165, 200), an Applications link at (495, 200), 128 pt icons), then print its SHA-256.
+#
+#   ./scripts/package-dmg
+#
+# Signing: set KYTKIN_RELEASE_SIGN_IDENTITY to the name of the owner's self-signed release certificate (P6-1; the
+# owner creates it in Keychain Access, see docs/manual-test-checklist.md). Without it the app is ad-hoc signed: fine for
+# a test DMG, but permissions (Accessibility, Input Monitoring) would not survive an update, so never publish one.
+#
+# Built-in tools only: xcodegen + xcodebuild, swiftc, tiffutil, hdiutil, codesign, shasum. No AppleScript, no Apple
+# Events and no Finder window: the Finder layout is written straight into the image's .DS_Store by
+# Tools/dmg-dsstore (compiled here into build/tools/). The image is attached once, -nobrowse -noautoopen at a private
+# mount point under build/, only to write that file, then detached.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+VOLNAME="Kytkin"
+DERIVED="build/release"
+WORK="build/dmg"
+LOG="build/package-dmg.log"
+mkdir -p build
+: >"$LOG"
+
+step() { echo "▸ $*"; }
+die() { echo "❌ $*" >&2; echo "Full log: $ROOT/$LOG" >&2; exit 1; }
+
+command -v xcodegen >/dev/null 2>&1 || die "xcodegen not found (brew install xcodegen)"
+[[ -f Resources/Release/dmg-background.png && -f Resources/Release/dmg-background@2x.png ]] \
+  || die "Resources/Release/dmg-background(.png|@2x.png) missing"
+
+# 1. Release build.
+SIGN_ARGS=()
+if [[ -n "${KYTKIN_RELEASE_SIGN_IDENTITY:-}" ]]; then
+  SIGN_ARGS=("CODE_SIGN_IDENTITY=$KYTKIN_RELEASE_SIGN_IDENTITY")
+  SIGNED_WITH="$KYTKIN_RELEASE_SIGN_IDENTITY"
+else
+  SIGNED_WITH=""
+fi
+step "Building Release${SIGNED_WITH:+ (signing with \"$SIGNED_WITH\")}…"
+xcodegen generate --quiet >>"$LOG" 2>&1 || die "xcodegen generate failed"
+xcodebuild -project Kytkin.xcodeproj -scheme Kytkin -configuration Release -destination 'platform=macOS' \
+  -derivedDataPath "$DERIVED" ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} build >>"$LOG" 2>&1 \
+  || die "Release build failed (wrong KYTKIN_RELEASE_SIGN_IDENTITY? see the log)"
+APP="$DERIVED/Build/Products/Release/Kytkin.app"
+[[ -d "$APP" ]] || die "no $APP after the build"
+codesign --verify --strict "$APP" >>"$LOG" 2>&1 || die "codesign --verify failed for $APP"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+DMG="build/Kytkin-$VERSION.dmg"
+
+# 2. The layout tool.
+step "Compiling the DMG layout tool…"
+mkdir -p build/tools
+swiftc -O -o build/tools/dmg-dsstore Tools/dmg-dsstore/main.swift >>"$LOG" 2>&1 || die "swiftc dmg-dsstore failed"
+
+# 3. Staging folder: the app, an Applications link, the background (1x + 2x in one TIFF, for Retina).
+step "Staging…"
+rm -rf "$WORK"
+mkdir -p "$WORK/stage/.background"
+ditto "$APP" "$WORK/stage/Kytkin.app"
+ln -s /Applications "$WORK/stage/Applications"
+tiffutil -cathidpicheck Resources/Release/dmg-background.png Resources/Release/dmg-background@2x.png \
+  -out "$WORK/stage/.background/background.tiff" >>"$LOG" 2>&1 || die "tiffutil failed"
+
+# 4. A read-write HFS+ image (HFS+: the alias to the background uses its CNIDs), its .DS_Store, then compress.
+step "Creating the disk image…"
+SIZE_MB=$(( $(du -sm "$WORK/stage" | cut -f1) + 20 ))
+hdiutil create -quiet -ov -srcfolder "$WORK/stage" -volname "$VOLNAME" -fs HFS+ -format UDRW \
+  -size "${SIZE_MB}m" "$WORK/rw.dmg" >>"$LOG" 2>&1 || die "hdiutil create failed"
+MNT="$ROOT/$WORK/mnt"
+mkdir -p "$MNT"
+hdiutil attach -quiet -nobrowse -noautoopen -noverify -readwrite -mountpoint "$MNT" "$WORK/rw.dmg" >>"$LOG" 2>&1 \
+  || die "hdiutil attach failed"
+detach() { hdiutil detach -quiet "$MNT" >>"$LOG" 2>&1 || hdiutil detach -quiet -force "$MNT" >>"$LOG" 2>&1 || true; }
+trap detach EXIT
+build/tools/dmg-dsstore write "$MNT" "$VOLNAME" .background/background.tiff 660x400 128 \
+  "Kytkin.app=165,200" "Applications=495,200" >>"$LOG" 2>&1 || die "writing .DS_Store failed"
+build/tools/dmg-dsstore verify "$MNT" >>"$LOG" 2>&1 || die "the .DS_Store self-check failed"
+rm -rf "$MNT/.fseventsd" "$MNT/.Trashes"
+detach
+trap - EXIT
+
+step "Compressing…"
+rm -f "$DMG"
+hdiutil convert -quiet "$WORK/rw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG" >>"$LOG" 2>&1 \
+  || die "hdiutil convert failed"
+hdiutil verify -quiet "$DMG" >>"$LOG" 2>&1 || die "hdiutil verify failed"
+rm -rf "$WORK"
+
+SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+echo "✅ $ROOT/$DMG"
+echo "   SHA-256: $SHA"
+if [[ -z "$SIGNED_WITH" ]]; then
+  echo "⚠️  Ad-hoc signed (KYTKIN_RELEASE_SIGN_IDENTITY not set): a test DMG only. Don't publish it: permissions"
+  echo "   granted to this build won't carry over to the next one."
+fi
