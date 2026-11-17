@@ -32,12 +32,23 @@ struct MenuMock: View {
         case .separator:
             Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
                 .padding(.horizontal, 10).padding(.vertical, 5)
+        case .header:
+            // P6-0c: NSMenuItem.sectionHeader (small, bold, secondary).
+            Text(item.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).frame(height: 20)
         default:
             HStack(spacing: 0) {
                 Text(item.isChecked ? "✓" : "").frame(width: 22, alignment: .center)
-                Text(item.title)
-                    .fixedSize()
-                    .padding(.leading, CGFloat(item.indent) * 14)
+                if let symbol = item.symbol {
+                    Image(systemName: symbol).frame(width: 18, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.title).fixedSize()
+                    if let subtitle = item.subtitle {
+                        Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize()
+                    }
+                }
+                .padding(.leading, CGFloat(item.indent) * 14)
                 Spacer(minLength: 12)
                 if !item.keyEquivalent.isEmpty {
                     Text("⌘" + item.keyEquivalent.uppercased()).foregroundStyle(.secondary)
@@ -47,7 +58,8 @@ struct MenuMock: View {
             .font(.system(size: 13))
             .foregroundStyle(item.isEnabled ? Color.primary : Color.secondary.opacity(0.75))
             .padding(.horizontal, 6)
-            .frame(height: 22)
+            .frame(minHeight: 22)
+            .padding(.vertical, item.subtitle == nil ? 0 : 2)
         }
     }
 }
@@ -69,10 +81,22 @@ struct StatusLabelMock: View {
                     HStack(spacing: 14) {
                         Spacer()
                         Image(systemName: "wifi")
-                        Text(sample.label.title)
-                            .font(.system(size: 13, weight: .regular))
-                            .opacity(sample.label.dimmed ? 0.45 : 1)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
+                        // P6-0c: the placeholder glyph (StatusItemController's MenuBarGlyph) + fixed-width letters.
+                        HStack(spacing: 3) {
+                            if sample.label.showsIcon {
+                                Image(systemName: Self.placeholder(sample.label.look))
+                                    .frame(width: 16, height: 16)
+                            }
+                            if let letters = sample.label.letters {
+                                Text(letters).font(.system(size: 13, weight: .regular))
+                                    .frame(minWidth: 24, alignment: .leading)
+                            }
+                            if !sample.label.showsIcon, sample.label.look == .attention {
+                                Image(systemName: "circle.fill").font(.system(size: 4))
+                            }
+                        }
+                        .opacity(sample.label.dimmed ? 0.45 : 1)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
                         Image(systemName: "battery.75percent")
                         Text("Tue 17 Nov 9:41")
                     }
@@ -87,6 +111,15 @@ struct StatusLabelMock: View {
         }
         .padding(16)
         .frame(width: 640, alignment: .leading)
+    }
+
+    /// The same SF Symbols `MenuBarGlyph.placeholderSymbol` uses until the real artwork lands.
+    static func placeholder(_ look: MenuModel.Label.Look) -> String {
+        switch look {
+        case .active, .off: "keyboard"
+        case .paused: "pause.circle"
+        case .attention: "exclamationmark.circle"
+        }
     }
 }
 

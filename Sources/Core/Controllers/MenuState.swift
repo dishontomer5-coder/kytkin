@@ -7,6 +7,10 @@ import Foundation
 struct MenuState: Equatable {
     /// The app Kytkin is acting for (never Kytkin itself), its resolution and the scope a Pin writes.
     var currentRule: SwitchController.CurrentRule?
+    /// P6-0c (flows S3): double-Shift is turned off for the app in front (`apps[id].convertEnabled == false`).
+    var convertOffInCurrentApp = false
+    /// P6-0c: Settings → General → "Show in menu bar".
+    var menuBarDisplay: Preferences.General.MenuBarLabel = .iconAndLanguage
     var paused = false
     /// `general.enabled` (Settings → General → Enable Kytkin).
     var enabled = true

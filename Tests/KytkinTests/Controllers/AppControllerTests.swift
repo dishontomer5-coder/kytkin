@@ -388,6 +388,41 @@ final class AppControllerTests: XCTestCase {
         XCTAssertTrue(store.prefs.rules.isEmpty)
     }
 
+    /// P6-0c (visual review N5): the checked "Always Use …" chosen again makes the pin learned.
+    func testMenuUnpinMakesThePinLearned() {
+        make()
+        monitor.activate(notes, pid: 10)
+        switcher.current = IDs.hebrew
+        sut.pinCurrent()
+        sut.unpinCurrent()
+        XCTAssertEqual(sut.menuState.currentRule?.resolution.matched?.origin, .learned)
+        XCTAssertEqual(store.prefs.rules.count, 1, "the rule stays, only its pin goes")
+    }
+
+    /// P6-0c (flows S3; owner: double-Shift only): "Don't Convert in {App}" writes the per-app convert switch.
+    func testMenuDontConvertInTheCurrentApp() {
+        make()
+        monitor.activate(notes, pid: 10)
+        XCTAssertFalse(sut.menuState.convertOffInCurrentApp)
+        sut.setConvertInCurrentApp(false)
+        XCTAssertEqual(store.prefs.apps[notes]?.convertEnabled, false)
+        XCTAssertNil(store.prefs.apps[notes]?.disabled, "Kytkin itself stays on in the app")
+        XCTAssertTrue(sut.menuState.convertOffInCurrentApp)
+        sut.setConvertInCurrentApp(true)
+        XCTAssertNil(store.prefs.apps[notes]?.convertEnabled)
+        XCTAssertFalse(sut.menuState.convertOffInCurrentApp)
+    }
+
+    /// P6-0c (visual review N2): "Turn Kytkin On" from the menu.
+    func testMenuTurnOn() {
+        make()
+        store.update { $0.general.enabled = false }
+        XCTAssertFalse(sut.menuState.enabled)
+        sut.turnOn()
+        XCTAssertTrue(store.prefs.general.enabled)
+        XCTAssertTrue(sut.menuState.enabled)
+    }
+
     func testMenuSelectIsOurs() {
         make()
         XCTAssertTrue(sut.selectFromMenu(IDs.hebrew))
@@ -844,7 +879,7 @@ final class AppControllerTests: XCTestCase {
 
     func testASuccessfulRetryClearsTheWarning() {
         makeWithLaunchTimeout()
-        XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
+        XCTAssertEqual(MenuModel.label(languageCode: "en", state: sut.menuState).look, .attention)
         watcher.startAnswer = nil                            // the system calmed down
         monitor.activate(notes, pid: 10)
         XCTAssertEqual(watcher.starts, [.active, .active])
@@ -952,7 +987,7 @@ final class AppControllerTests: XCTestCase {
         XCTAssertTrue(store.lastSaveFailed)
         for _ in 0..<50 where displayChanges == 0 { await Task.yield() }
         XCTAssertGreaterThan(displayChanges, 0, "the failed save refreshed the label")
-        XCTAssertTrue(MenuModel.label(languageCode: "en", state: sut.menuState).title.hasSuffix(MenuModel.dot))
+        XCTAssertEqual(MenuModel.label(languageCode: "en", state: sut.menuState).look, .attention)
     }
 
     // MARK: - P2-55: learning from manual switches in the live app (status-bar menu activations)

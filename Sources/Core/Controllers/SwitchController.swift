@@ -438,6 +438,17 @@ import Foundation
         return engine.rule(for: info.pinScope)
     }
 
+    /// P6-0c (visual review N5): the menu's checked "Always Use …" chosen again: that pin becomes learned (it may
+    /// be learned over again). False = no pin for the current scope.
+    @discardableResult func unpinCurrent() -> Bool {
+        guard let info = currentRule, let matched = info.resolution.matched, matched.origin == .pinned,
+              RuleEngine.normalized(matched.scope) == RuleEngine.normalized(info.pinScope) else { return false }
+        let date = now()
+        store.update { $0.rules = RuleWriter.unpin(info.pinScope, in: $0.rules, now: date) }
+        preferencesDidChange()
+        return true
+    }
+
     /// Removes the rule that applies to the current app (the one `resolve` matched). False = there was none.
     /// P3-9 (D6): on a site, only a matched site or siteHost rule; a matched browser rule is left alone (false).
     @discardableResult func forgetCurrent() -> Bool {

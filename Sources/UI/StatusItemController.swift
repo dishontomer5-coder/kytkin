@@ -5,6 +5,9 @@
 // P2-22: the full menu (001 §5.1). Core's `MenuModel` decides every line, text and enabled state; this class only
 // renders it and maps each action to a call. The label is set only when it changes (P2-52 item 4). App names
 // are cached (`AppDisplayNames`). The Settings window (P2-23) plugs in through `openSettings`.
+// P6-0c (owner 2026-11-17, visual review §3): Kytkin's template glyph + the language letters (Settings → General can
+// show the icon only or the letters only), at a fixed width so neighbours never move when the language changes; a
+// distinct glyph for paused, needs attention and off (no more "·"); a VoiceOver label. No colour, no animation.
 
 import AppKit
 
@@ -14,7 +17,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// and the "Open Settings…" hints and About are hidden.
     var openSettings: (@MainActor (MenuItemModel.SettingsTarget) -> Void)?
 
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let switcher: any InputSourceSwitching
     private let menuControl: any MenuControlling
     private let menu = NSMenu()
@@ -40,11 +43,35 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Label refresh (any input-source change, Pause, context, warnings). Touches the button only on a change.
     func refresh() {
-        let label = MenuModel.label(languageCode: switcher.currentInfo?.languageCode, state: menuControl.menuState)
+        let state = menuControl.menuState
+        let info = switcher.currentInfo
+        let label = MenuModel.label(languageCode: info?.languageCode, languageName: info?.name, state: state,
+                                    display: state.menuBarDisplay)
         guard label != shownLabel, let button = statusItem.button else { return }
         shownLabel = label
-        button.title = label.title
+        // Letters-only mode marks attention with a small dot after the letters (visual review §3.2).
+        let image = label.showsIcon ? MenuBarGlyph.image(for: label.look)
+            : label.look == .attention ? MenuBarGlyph.attentionDot() : nil
+        button.image = image
+        button.imagePosition = label.showsIcon ? .imageLeading : .imageTrailing
+        button.font = NSFont.menuBarFont(ofSize: 0)
+        button.title = label.letters ?? ""
         button.appearsDisabled = label.dimmed
+        button.setAccessibilityLabel(label.accessibilityLabel)
+        button.setAccessibilityHelp("Click for Kytkin options")
+        statusItem.length = Self.width(for: label, image: image)
+    }
+
+    /// P6-0c (visual review M3): a fixed width, so "EN" ↔ "HE" never moves the items beside Kytkin. The letters get
+    /// the room of "WW" (the widest two capitals) whatever the language.
+    private static func width(for label: MenuModel.Label, image: NSImage?) -> CGFloat {
+        let font = NSFont.menuBarFont(ofSize: 0)
+        let padding: CGFloat = 8
+        guard let letters = label.letters else { return max(NSStatusItem.squareLength, 16 + padding) }
+        let room = max(("WW" as NSString).size(withAttributes: [.font: font]).width,
+                       (letters as NSString).size(withAttributes: [.font: font]).width)
+        let imageWidth = image.map { $0.size.width + 3 } ?? 0
+        return ceil(padding + imageWidth + room)
     }
 
     func sourcesListDidChange() {
@@ -83,6 +110,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             let item = NSMenuItem(title: model.title, action: nil, keyEquivalent: "")
             item.isEnabled = false
             item.indentationLevel = model.indent
+            decorate(item, model)
+            return item
+        case .header:
+            // P6-0c (visual review N3): the app or website the block is about.
+            if #available(macOS 14.0, *) { return NSMenuItem.sectionHeader(title: model.title) }
+            let item = NSMenuItem(title: model.title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
             return item
         case .action(let action):
             let item = NSMenuItem(title: model.title, action: #selector(performMenuAction(_:)), keyEquivalent: model.keyEquivalent)
@@ -91,6 +125,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.isEnabled = model.isEnabled
             item.state = model.isChecked ? .on : .off
             item.indentationLevel = model.indent
+            decorate(item, model)
             return item
         case .debugSwitchSubmenu:
             let item = NSMenuItem(title: model.title, action: nil, keyEquivalent: "")
@@ -102,11 +137,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// P6-0c (visual review N1): the ⚠ template symbol and the fix as a subtitle (macOS 14.4+) or tooltip.
+    private func decorate(_ item: NSMenuItem, _ model: MenuItemModel) {
+        if let symbol = model.symbol {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Warning")
+            image?.isTemplate = true
+            item.image = image
+        }
+        if let subtitle = model.subtitle {
+            if #available(macOS 14.4, *) { item.subtitle = subtitle } else { item.toolTip = subtitle }
+        }
+    }
+
     @objc private func performMenuAction(_ sender: NSMenuItem) {
         guard let action = (sender.representedObject as? ActionBox)?.action else { return }
         switch action {
         case .pinCurrent: menuControl.pinCurrent()
+        case .unpinCurrent: menuControl.unpinCurrent()
         case .forgetCurrent: menuControl.forgetCurrent()
+        case .toggleConvertInCurrentApp:
+            menuControl.setConvertInCurrentApp(menuControl.menuState.convertOffInCurrentApp)
+        case .turnOn: menuControl.turnOn()
         case .togglePause: menuControl.setPaused(!menuControl.menuState.paused)
         case .openSettings(let target): openSettings?(target)
         case .quitAndReopen: AppRelauncher.quitAndReopen()
@@ -152,4 +203,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 private final class ActionBox: NSObject {
     let action: MenuItemModel.Action
     init(_ action: MenuItemModel.Action) { self.action = action }
+}
+
+/// P6-0c: the menu-bar glyph for each look. The real artwork goes in Resources/MenuBar/ (README there); until it lands,
+/// an SF Symbol stands in. Always a template image: macOS tints it for every menu bar.
+@MainActor enum MenuBarGlyph {
+    private static var cache: [MenuModel.Label.Look: NSImage] = [:]
+
+    static func image(for look: MenuModel.Label.Look) -> NSImage? {
+        if let cached = cache[look] { return cached }
+        let name = MenuModel.glyphName(look)
+        let image: NSImage? = Bundle.main.url(forResource: name, withExtension: "pdf", subdirectory: "MenuBar")
+            .flatMap { NSImage(contentsOf: $0) }
+            ?? NSImage(systemSymbolName: placeholderSymbol(look), accessibilityDescription: nil)
+        image?.size = NSSize(width: 16, height: 16)
+        image?.isTemplate = true
+        if let image { cache[look] = image }
+        return image
+    }
+
+    static func placeholderSymbol(_ look: MenuModel.Label.Look) -> String {
+        switch look {
+        case .active, .off: "keyboard"
+        case .paused: "pause.circle"
+        case .attention: "exclamationmark.circle"
+        }
+    }
+
+    /// Letters-only mode: a small template dot after the letters while a warning applies.
+    static func attentionDot() -> NSImage? {
+        let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
+        image?.size = NSSize(width: 5, height: 5)
+        image?.isTemplate = true
+        return image
+    }
 }

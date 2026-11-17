@@ -2,42 +2,84 @@
 // closures (the UI's cached app names and the switcher's source list), so every line, text and enabled state is
 // unit-tested. StatusItemController only renders the result.
 //
-// Layout:
-//   <App>: <Language> (learned|pinned|default) | <App>: no rule | No app yet      (grayed)
-//   Always use <current language> in <App>            (checked + disabled when that pin already exists)
-//   Forget rule for <App>                             (disabled without a matching rule)
-//   P3-9, on a site in a watched browser (001 §14.9), the three lines become:
-//   <site> (<Browser>[, private]): <Language> (learned|pinned|<Browser>'s rule|default) | <site> (<Browser>): no rule
-//   Always use <current language> on <site>
-//   Forget rule for <site>                            (enabled only for a matched site or subdomain rule, D6)
+// Layout (P6-0c: visual review §3.3, N1–N6; flows S2, S3; copy review M-*):
+//   Turn Kytkin On                                    (only while it is turned off; then no context block, no Pause)
+//   <App> · <Language>                                (section header; omitted with no app yet)
+//   Remembered from your switches | Always <Language> (you chose this) | No rule yet …   (grayed)
+//   ✓ Always Use <current language> in <App>          (checked = that pin exists; choosing it again unpins)
+//   Forget Rule for <App>                             (disabled without a matching rule)
+//   ✓ Don't Convert in <App>                          (double-Shift only; the per-app switch in Advanced)
+//   P3-9, on a site in a watched browser (001 §14.9): "<site> · <Language>", "Always Use … on <site>",
+//   "Forget Rule for <site>" (enabled only for a matched site or subdomain rule, D6).
 //   Pause Kytkin | Resume Kytkin
-//   ── warnings, only when any apply (MenuWarning order), each with indented hints/actions ──
+//   ── ⚠ warnings, only when any apply (MenuWarning order): one clickable line each, the fix as its subtitle ──
 //   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23)
-//   About Kytkin v<version> | Kytkin v<version>       (About only with Settings)
+//   About Kytkin                                      (only with Settings; the version lives in About)
 //   ── DEBUG lines + "DEBUG: Switch to ▸" (Debug builds only) ──
 //   Quit Kytkin  ⌘Q
 //
 // User-visible texts are plain English with no implementation words (no "tap", "TIS"); DEBUG lines may use them.
+// Menu items use Title Case, grayed info lines sentence case (copy review rule 6).
 
 import Foundation
 
 enum MenuModel {
-    /// The menu-bar button. `title` changes only when the language, Pause or the warning dot changes, so the
-    /// UI sets it only when it differs (P2-52 item 4).
+    /// The menu-bar item (P6-0c, visual review §3.1–§3.2, copy review M-1/M-2, owner 2026-11-17). `StatusItemController`
+    /// sets it only when it differs (P2-52 item 4).
     struct Label: Equatable {
-        let title: String
-        /// Paused: the button is drawn grayed as well as carrying the dot.
-        let dimmed: Bool
+        /// Priority when several apply: off > paused > attention > active. The glyph changes with it; the letters
+        /// don't (no colour, no animation: the letter change is the feedback).
+        enum Look: String, Equatable, CaseIterable {
+            case active, paused, attention, off
+        }
+
+        let look: Look
+        /// "HE"; nil when the language is unknown (copy review M-1: no "?") or in icon-only mode.
+        let letters: String?
+        /// The Kytkin glyph is drawn. Always in letters-only mode when there are no letters, so the item never
+        /// disappears.
+        let showsIcon: Bool
+        /// VoiceOver: "Kytkin, Hebrew", "Kytkin, Hebrew, paused", "Kytkin, Hebrew, needs attention",
+        /// "Kytkin, Hebrew, turned off"; "Kytkin" when the language is unknown.
+        let accessibilityLabel: String
+
+        /// Paused and off are drawn dimmed (`appearsDisabled`).
+        var dimmed: Bool { look == .paused || look == .off }
+
+        /// The glyph's asset name (`Resources/MenuBar/kytkin-menubar-{active,paused,attention,off}.pdf`).
+        var imageName: String { MenuModel.glyphName(look) }
     }
 
-    /// 001 §5.1: the language code, plus a small dot while paused or while a warning (other than Secure Input) applies.
-    static func label(languageCode: String?, state: MenuState) -> Label {
+    /// P6-0c: the menu-bar glyph assets, one per look. Placeholder artwork until Claude Design's lands
+    /// (Resources/MenuBar/README.md).
+    static func glyphName(_ look: Label.Look) -> String { "kytkin-menubar-\(look.rawValue)" }
+
+    static func label(languageCode: String?, languageName: String? = nil, state: MenuState,
+                      display: Preferences.General.MenuBarLabel = .iconAndLanguage) -> Label {
+        let look: Label.Look
+        if !state.enabled {
+            look = .off
+        } else if state.paused {
+            look = .paused
+        } else if MenuWarning.list(for: state).contains(where: { $0.marksLabel }) {
+            look = .attention
+        } else {
+            look = .active
+        }
         let code = InputSourceLabel.label(forLanguages: [languageCode ?? ""])
-        let marked = state.paused || MenuWarning.list(for: state).contains { $0.marksLabel }
-        return Label(title: marked ? code + dot : code, dimmed: state.paused)
+        let known = code == InputSourceLabel.unknown ? nil : code
+        let letters = display == .iconOnly ? nil : known
+        let showsIcon = display != .languageOnly || letters == nil
+        var spoken = "Kytkin"
+        if known != nil, let name = languageName ?? known { spoken += ", \(name)" }
+        switch look {
+        case .active: break
+        case .paused: spoken += ", paused"
+        case .attention: spoken += ", needs attention"
+        case .off: spoken += ", turned off"
+        }
+        return Label(look: look, letters: letters, showsIcon: showsIcon, accessibilityLabel: spoken)
     }
-
-    static let dot = "·"
 
     /// The whole menu, top to bottom.
     /// - currentSource: the selected input source (nil if unknown: Pin is disabled).
@@ -48,19 +90,27 @@ enum MenuModel {
     static func items(state: MenuState, currentSource: InputSourceInfo?, version: String, settingsAvailable: Bool,
                       includeDebug: Bool, sourceName: (InputSourceID) -> String,
                       appName: (String) -> String) -> [MenuItemModel] {
-        var out = contextItems(state: state, currentSource: currentSource, sourceName: sourceName, appName: appName)
-        out.append(.action(state.paused ? "Resume Kytkin" : "Pause Kytkin", .togglePause))
+        var out: [MenuItemModel] = []
+        if !state.enabled {
+            // P6-0c (visual review N2, copy M-10): one click turns it back on; nothing else applies while it is off.
+            out.append(.action("Turn Kytkin On", .turnOn))
+        } else {
+            let context = contextItems(state: state, currentSource: currentSource, sourceName: sourceName,
+                                       appName: appName)
+            if !context.isEmpty { out += context + [.separator] }
+            out.append(.action(state.paused ? "Resume Kytkin" : "Pause Kytkin", .togglePause))
+        }
 
-        let warnings = MenuWarning.list(for: state)
+        let warnings = MenuWarning.list(for: state).filter { $0 != .kytkinOff }
         if !warnings.isEmpty {
             out.append(.separator)
-            for w in warnings { out += items(for: w, settingsAvailable: settingsAvailable) }
+            for w in warnings { out.append(item(for: w, settingsAvailable: settingsAvailable)) }
         }
 
         out.append(.separator)
         out.append(.action("Settings…", .openSettings(.general), enabled: settingsAvailable, key: ","))
-        out.append(settingsAvailable ? .action("About Kytkin v\(version)", .openSettings(.about))
-                                     : .info("Kytkin v\(version)"))
+        // P6-0c (visual review N6): "About Kytkin"; the version lives in About.
+        out.append(settingsAvailable ? .action("About Kytkin", .openSettings(.about)) : .info("Kytkin v\(version)"))
 
         // P2-27: compiled out of Release, so its binary carries no DEBUG lines at all (not just hidden ones).
         #if DEBUG
@@ -86,86 +136,74 @@ enum MenuModel {
         return out
     }
 
-    // MARK: - Context, Pin, Forget
+    // MARK: - Context, Pin, Forget, Don't Convert
 
+    /// P6-0c: the block about the app (or website) in front. Empty with no app yet (copy review M-3).
     static func contextItems(state: MenuState, currentSource: InputSourceInfo?,
                              sourceName: (InputSourceID) -> String,
                              appName: (String) -> String) -> [MenuItemModel] {
-        guard let rule = state.currentRule else { return [.info("No app yet")] }
-        if rule.isSite {
-            return siteContextItems(rule, currentSource: currentSource, sourceName: sourceName, appName: appName)
-        }
+        guard let rule = state.currentRule else { return [] }
+        let c = rule.context
         let resolution = rule.resolution
-        let here = scopeName(rule.pinScope, appName: appName)
-
-        let line: String
-        if let matched = resolution.matched {
-            line = "\(scopeName(matched.scope, appName: appName)): \(sourceName(matched.inputSource)) "
-                + "(\(matched.origin.rawValue))"
-        } else if resolution.level == .addressBar, let target = resolution.target {
-            line = "\(here): \(sourceName(target)) (address bar)"   // P3-29
-        } else if resolution.level == .defaultRule, let target = resolution.target {
-            line = "\(here): \(sourceName(target)) (default)"
+        let isSite = rule.isSite
+        let here: String
+        if isSite, case .siteHost(let host)? = resolution.matched?.scope {
+            here = HostNormalizer.unicodeForm(HostNormalizer.normalize(host))
         } else {
-            line = "\(here): no rule"
+            here = scopeName(rule.pinScope, appName: appName)
+        }
+        let appTitle = appName(c.bundleID)
+
+        // The language shown: the rule's, else what is selected now.
+        let language = (resolution.matched?.inputSource ?? resolution.target).map(sourceName)
+            ?? currentSource?.name
+        var head = language.map { "\(here) · \($0)" } ?? here
+        if isSite, c.isPrivateWindow == true { head += " (private)" }
+
+        // P6-0c (flows S2, copy M-4…M-6): plain words for where the language comes from.
+        let why: String
+        if let matched = resolution.matched {
+            switch matched.scope {
+            case .app where isSite: why = "The browser's language"
+            case .app, .site, .siteHost, .chat:
+                why = matched.origin == .pinned ? "Always \(sourceName(matched.inputSource)) (you chose this)"
+                                                : "Remembered from your switches"
+            }
+        } else if resolution.level == .addressBar {
+            why = "Address bar: the browser's language"   // P3-29
+        } else if resolution.level == .defaultRule {
+            why = "No rule yet, so the default applies"
+        } else {
+            why = "No rule yet"
         }
 
         let forget: MenuItemModel = rule.forgetScope.map {
-            .action("Forget rule for \(scopeName($0, appName: appName))", .forgetCurrent)
-        } ?? .action("Forget rule for \(here)", .forgetCurrent, enabled: false)
+            .action("Forget Rule for \(isSite ? here : scopeName($0, appName: appName))", .forgetCurrent)
+        } ?? .action("Forget Rule for \(here)", .forgetCurrent, enabled: false)
 
-        return [.info(line), pinItem(rule, currentSource: currentSource, preposition: "in", here: here), forget]
+        // P6-0c (flows S3; owner: double-Shift only): the per-app convert switch (Advanced → App Exceptions).
+        let dontConvert = MenuItemModel.action("Don't Convert in \(appTitle)", .toggleConvertInCurrentApp,
+                                               checked: state.convertOffInCurrentApp)
+
+        return [.header(head), .info(why),
+                pinItem(rule, currentSource: currentSource, preposition: isSite ? "on" : "in", here: here),
+                forget, dontConvert]
     }
 
-    /// P3-9 (001 §14.9): the site form. `S` = the matched host for a siteHost match, else the site (both in Unicode);
-    /// `B` = the browser's name, plus ", private" in a private window. Pin says "on <site>"; Forget names the site and
-    /// is enabled only for a matched site or siteHost rule (D6).
-    private static func siteContextItems(_ rule: SwitchController.CurrentRule, currentSource: InputSourceInfo?,
-                                         sourceName: (InputSourceID) -> String,
-                                         appName: (String) -> String) -> [MenuItemModel] {
-        let c = rule.context
-        let resolution = rule.resolution
-        let site: String
-        if case .siteHost(let host)? = resolution.matched?.scope {
-            site = HostNormalizer.unicodeForm(HostNormalizer.normalize(host))
-        } else {
-            site = scopeName(rule.pinScope, appName: appName)
-        }
-        let browser = appName(c.bundleID)
-        let head = "\(site) (\(browser)\(c.isPrivateWindow == true ? ", private" : ""))"
-
-        let line: String
-        if let matched = resolution.matched {
-            let why: String
-            switch matched.scope {
-            case .app: why = "\(browser)'s rule"
-            case .site, .siteHost, .chat: why = matched.origin.rawValue
-            }
-            line = "\(head): \(sourceName(matched.inputSource)) (\(why))"
-        } else if resolution.level == .addressBar, let target = resolution.target {
-            line = "\(head): \(sourceName(target)) (address bar)"   // P3-29: the browser's language in the bar
-        } else if resolution.level == .defaultRule, let target = resolution.target {
-            line = "\(head): \(sourceName(target)) (default)"
-        } else {
-            line = "\(head): no rule"
-        }
-
-        let forget: MenuItemModel = .action("Forget rule for \(site)", .forgetCurrent, enabled: rule.forgetScope != nil)
-        return [.info(line), pinItem(rule, currentSource: currentSource, preposition: "on", here: site), forget]
-    }
-
-    /// "Always use <language> in|on <here>", checked and disabled once exactly that pin exists.
+    /// "Always Use <language> in|on <here>": checked once exactly that pin exists; choosing it again unpins it
+    /// (visual review N5: never checked and greyed).
     private static func pinItem(_ rule: SwitchController.CurrentRule, currentSource: InputSourceInfo?,
                                 preposition: String, here: String) -> MenuItemModel {
         guard let current = currentSource else {
-            return .action("Always use this language \(preposition) \(here)", .pinCurrent, enabled: false)
+            return .action("Always Use This Language \(preposition) \(here)", .pinCurrent, enabled: false)
         }
         // P3-9: compare normalized scopes, so an old hand-edited Unicode key still reads as "this pin".
         let done = rule.resolution.matched.map {
             $0.origin == .pinned && RuleEngine.normalized($0.scope) == RuleEngine.normalized(rule.pinScope)
                 && $0.inputSource == current.id
         } ?? false
-        return .action("Always use \(current.name) \(preposition) \(here)", .pinCurrent, enabled: !done, checked: done)
+        return .action("Always Use \(current.name) \(preposition) \(here)", done ? .unpinCurrent : .pinCurrent,
+                       checked: done)
     }
 
     /// How a rule's scope is named in the menu: the app's name, the site, or the chat (P3/P4).
@@ -181,49 +219,55 @@ enum MenuModel {
 
     // MARK: - Warnings
 
-    static func items(for warning: MenuWarning, settingsAvailable: Bool) -> [MenuItemModel] {
-        let openSettings: (MenuItemModel.SettingsTarget) -> [MenuItemModel] = { target in
-            settingsAvailable ? [.action("Open Settings…", .openSettings(target), indent: 1)] : []
+    /// P6-0c (visual review N1, copy review M-11…M-21): one line per warning with a ⚠ symbol. It is clickable when
+    /// there is something to do (the subtitle says what); a warning with nothing to do stays an info line.
+    static func item(for warning: MenuWarning, settingsAvailable: Bool) -> MenuItemModel {
+        let warn = MenuItemModel.warningSymbol
+        func open(_ title: String, _ target: MenuItemModel.SettingsTarget, _ subtitle: String) -> MenuItemModel {
+            settingsAvailable ? .action(title, .openSettings(target), symbol: warn, subtitle: subtitle)
+                              : .info(title, symbol: warn)
         }
         switch warning {
         case .kytkinOff:
-            return [.info("Kytkin is turned off")] + openSettings(.general)
+            return .action("Turn Kytkin On", .turnOn)
         case .quitAndReopen:
-            return [.info("Quit and reopen Kytkin to finish setup"),
-                    .action("Quit & Reopen", .quitAndReopen, indent: 1)]
+            return .action("Quit & Reopen Kytkin to finish setup", .quitAndReopen, symbol: warn,
+                           subtitle: "Kytkin opens again by itself")
         case .accessibilityNeeded(let toggleStillWorks):
-            let text = toggleStillWorks ? "Accessibility is off: double-Shift only switches the language"
-                                        : "Accessibility is off: double-Shift doesn't work"
-            return [.info(text)] + openSettings(.permissions)
+            // P6-0c (flows M3): websites need it too.
+            return open(toggleStillWorks ? "Double-Shift can't convert: Accessibility is off"
+                                         : "Double-Shift and website rules are off: Accessibility is off",
+                        .permissions, "Allow Accessibility…")
         case .otherSwitchers(let names):
-            let one = names.count == 1
-            return [.info("\(joined(names)) \(one ? "is" : "are") also switching languages"),
-                    .info(one ? "Quit it so the two don't fight" : "Quit them so they don't fight", indent: 1)]
+            // Owner 2026-11-17: a warning only; Settings explains.
+            return open("\(joined(names)) also switch\(names.count == 1 ? "es" : "") languages", .general,
+                        names.count == 1 ? "Quit it so the two don't undo each other" : "Quit them so they don't undo Kytkin")
         case .perDocumentInput:
-            return [.info("Learning paused: macOS switches language per document"),
-                    .info("Turn it off in System Settings → Keyboard → Input Sources", indent: 1)]
+            // P6-0c (copy review M-14, P1): the old menu path was wrong; Settings shows the right steps.
+            return open("Not learning: macOS is switching languages per document", .permissions, "How to Turn It Off…")
         case .keyboardSlowedDown(let canRestart):
-            var out: [MenuItemModel] = [.info("Some keyboard features stopped after a slowdown")]
-            if canRestart { out.append(.action("Restart Keyboard Features", .restartKeyboard, indent: 1)) }
-            return out
+            return canRestart
+                ? .action("Double-Shift stopped after a slowdown", .restartKeyboard, symbol: warn,
+                          subtitle: "Start Double-Shift Again")
+                : .info("Double-Shift stopped after a slowdown", symbol: warn)
         case .keyboardFeaturesOff(let canRestart):
-            var out: [MenuItemModel] = [.info("Some keyboard features are off")]
-            if canRestart { out.append(.action("Restart Keyboard Features", .restartKeyboard, indent: 1)) }
-            return out
+            return canRestart
+                ? .action("Double-Shift is off", .restartKeyboard, symbol: warn, subtitle: "Start Double-Shift Again")
+                : .info("Double-Shift is off", symbol: warn)
         case .secureInput:
-            return [.info("Typing protected by another app")]
+            return .info("Double-Shift waits: another app is protecting your typing", symbol: warn)
         case .settingsReadOnly(let newerVersion):
-            return [.info(newerVersion ? "Settings are from a newer Kytkin: changes won't be saved"
-                                       : "Settings file couldn't be read: changes won't be saved")]
+            return open(newerVersion ? "Settings are from a newer Kytkin" : "Settings couldn't be read",
+                        .general, newerVersion ? "Update Kytkin to change them" : "Kytkin is using the defaults")
         case .saveFailed:
-            return [.info("Couldn't save settings")]
+            return .info("Settings couldn't be saved. Changes last until you quit.", symbol: warn)
         case .settingsPartlyReset(let original):
-            var out: [MenuItemModel] = [.info("Some settings couldn't be read and were reset")]
-            if let original { out.append(.action("Show Original File", .revealFile(original), indent: 1)) }
-            return out
+            guard let original else { return .info("Some settings couldn't be read and were reset", symbol: warn) }
+            return .action("Some settings couldn't be read and were reset", .revealFile(original), symbol: warn,
+                           subtitle: "Show Original File")
         case .settingsReset(let movedTo):
-            return [.info("Settings file was damaged and was reset"),
-                    .action("Show Damaged File", .revealFile(movedTo), indent: 1)]
+            return .action("Settings were damaged, so Kytkin started fresh", .revealFile(movedTo), symbol: warn,
+                           subtitle: "Show Old File")
         }
     }
 

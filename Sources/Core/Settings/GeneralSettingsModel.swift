@@ -48,6 +48,23 @@ import Observation
         set { write { $0.general.enabled = newValue } }
     }
 
+    /// P6-0c (copy review §4.2, owner 2026-11-17): Settings → General → "Show in menu bar".
+    var menuBarDisplay: Preferences.General.MenuBarLabel {
+        get { store.prefs.general.menuBarLabel }
+        set { write { $0.general.menuBarLabel = newValue } }
+    }
+
+    static func title(of display: Preferences.General.MenuBarLabel) -> String {
+        switch display {
+        case .iconAndLanguage: "Icon and language"
+        case .iconOnly: "Icon only"
+        case .languageOnly: "Language only"
+        }
+    }
+
+    static let menuBarDisplayHelp = "The language letters show which keyboard is on, like HE or EN. With Icon only, "
+        + "Kytkin still marks the icon when it is paused or needs your attention."
+
     var learnFromManualSwitches: Bool {
         get { store.prefs.general.learnFromManualSwitches }
         set { write { $0.general.learnFromManualSwitches = newValue } }

@@ -43,6 +43,15 @@ struct GeneralSettingsView: View {
             .disabled(!languages.isEditable)
 
             Section {
+                // P6-0c (copy review §4.2, visual G3): the menu-bar look.
+                Picker(selection: $model.menuBarDisplay) {
+                    ForEach(Preferences.General.MenuBarLabel.allCases, id: \.self) {
+                        Text(GeneralSettingsModel.title(of: $0)).tag($0)
+                    }
+                } label: {
+                    RowLabel("Show in menu bar", subtitle: GeneralSettingsModel.menuBarDisplayHelp)
+                }
+                .disabled(!model.isEditable)
                 Toggle(isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) })) {
                     RowLabel("Open at Login", subtitle: model.loginItemHint)
                 }

@@ -64,9 +64,10 @@ enum MenuWarning: Equatable {
         return out
     }
 
-    /// The label's dot (001 §5.1): every warning except Secure Input, which comes and goes with each password
-    /// field and would make the label flicker.
+    /// The label's attention look (001 §5.1; P6-0c: a badge on the glyph, no more "·"): every warning except Secure
+    /// Input, which comes and goes with each password field and would make the label flicker, and Kytkin turned
+    /// off, which has its own look.
     var marksLabel: Bool {
-        self != .secureInput
+        self != .secureInput && self != .kytkinOff
     }
 }

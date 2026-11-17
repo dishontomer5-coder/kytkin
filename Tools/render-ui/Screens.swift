@@ -343,12 +343,20 @@ import SwiftUI
         try r.render("menu-off-no-app", backdrop: desk) { MenuMock(items: storeItems) }
 
         let ok = Self.healthyState
+        var off = Self.healthyState
+        off.enabled = false
         let samples: [StatusLabelMock.Sample] = [
             .init(caption: "English (ABC) selected", label: MenuModel.label(languageCode: "en", state: ok)),
             .init(caption: "Hebrew selected", label: MenuModel.label(languageCode: "he", state: ok)),
-            .init(caption: "Hebrew, a warning applies (dot)", label: MenuModel.label(languageCode: "he", state: warn)),
-            .init(caption: "Paused (dot, dimmed)", label: MenuModel.label(languageCode: "en", state: paused)),
-            .init(caption: "Unknown input source", label: MenuModel.label(languageCode: nil, state: ok)),
+            .init(caption: "Hebrew, needs attention", label: MenuModel.label(languageCode: "he", state: warn)),
+            .init(caption: "Paused (dimmed)", label: MenuModel.label(languageCode: "en", state: paused)),
+            .init(caption: "Turned off (dimmed)", label: MenuModel.label(languageCode: "en", state: off)),
+            .init(caption: "Unknown language (icon only)", label: MenuModel.label(languageCode: nil, state: ok)),
+            .init(caption: "Icon only mode", label: MenuModel.label(languageCode: "he", state: ok, display: .iconOnly)),
+            .init(caption: "Language only mode",
+                  label: MenuModel.label(languageCode: "he", state: ok, display: .languageOnly)),
+            .init(caption: "Language only, needs attention",
+                  label: MenuModel.label(languageCode: "he", state: warn, display: .languageOnly)),
         ]
         try r.render("statusitem-labels", backdrop: desk) { StatusLabelMock(samples: samples) }
     }

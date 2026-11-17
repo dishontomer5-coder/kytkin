@@ -406,8 +406,13 @@ import Observation
         let learnerDebug: String? = nil
         let siteDebug: String? = nil
         #endif
+        let currentRule = switching.currentRule
         return MenuState(
-            currentRule: switching.currentRule, paused: switching.paused, enabled: store.prefs.general.enabled,
+            currentRule: currentRule,
+            convertOffInCurrentApp: currentRule.map { store.prefs.apps[$0.context.bundleID]?.convertEnabled == false }
+                ?? false,
+            menuBarDisplay: store.prefs.general.menuBarLabel,
+            paused: switching.paused, enabled: store.prefs.general.enabled,
             tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
             degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
             // P2-57 item 1: offered whenever the tap runs below the desired mode, not only after a watchdog downgrade.
@@ -436,6 +441,33 @@ import Observation
 
     func forgetCurrent() {
         switching.forgetCurrent()
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
+    /// P6-0c (visual review N5).
+    func unpinCurrent() {
+        switching.unpinCurrent()
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
+    /// P6-0c (flows S3; owner: double-Shift only): the same per-app switch as Advanced → App Exceptions.
+    func setConvertInCurrentApp(_ on: Bool) {
+        guard let id = switching.currentRule?.context.bundleID, !id.isEmpty, !store.isReadOnly else { return }
+        store.update {
+            var o = $0.apps[id] ?? Preferences.AppOverride()
+            o.convertEnabled = on ? nil : false
+            $0.apps[id] = o
+        }
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
+    /// P6-0c (visual review N2): the menu's "Turn Kytkin On" (Settings → General → Kytkin is on).
+    func turnOn() {
+        guard !store.isReadOnly else { return }
+        store.update { $0.general.enabled = true }
         preferencesDidChange()
         onDisplayChange?()
     }
