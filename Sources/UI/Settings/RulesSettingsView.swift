@@ -21,7 +21,7 @@ struct RulesSettingsView: View {
     @State private var sortComparators = [KeyPathComparator(\RuleRow.updatedAt, order: .reverse)]
 
     static let rowHeight: CGFloat = 40
-    static let sides: CGFloat = 20
+    static let sides: CGFloat = SettingsMetrics.sides   // P6-0h: the same margins as every tab
 
     var body: some View {
         let rows = model.rows
@@ -44,13 +44,20 @@ struct RulesSettingsView: View {
                 .fixedSize()
             }
 
-            if rows.isEmpty {
-                Text(model.emptyText)   // P6-0c (visual R6): centred
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                table(rows)
+            // P6-0h (owner: one look for every tab): the table sits in the same card as the other tabs' sections.
+            SettingsCard {
+                if rows.isEmpty {
+                    Text(model.emptyText)   // P6-0c (visual R6): centred
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(20)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    table(rows)
+                        .scrollContentBackground(.hidden)
+                        .alternatingRowBackgrounds(.disabled)
+                        .padding(.vertical, 2)
+                }
             }
 
             HStack(spacing: 6) {
@@ -77,6 +84,7 @@ struct RulesSettingsView: View {
         .padding(.bottom, SettingsMetrics.bottom)
         .background(Color.clear.preference(key: SettingsContentHeightKey.self,
                                            value: naturalHeight(rows: rows.count)))
+        .background(Color.kytkinWindow)   // P6-0h: the same window background as every tab
         .onChange(of: sortComparators) { _, new in applySort(new) }
         .sheet(item: $model.addWebsite) { form in
             AddWebsiteSheet(form: form, save: { model.saveAddWebsite() }, cancel: { model.cancelAddWebsite() })

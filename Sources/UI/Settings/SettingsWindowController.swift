@@ -79,6 +79,7 @@ import SwiftUI
         let window = self.window ?? makeWindow()
         select(tab)
         WindowPresenter.show(window)   // P2-56
+        clearInitialFocus()            // P6-0h: no focus ring on opening
         tabs.permissions.setCovered(false)   // P3-12: just brought to the front; occlusion changes follow
         updatePermissionsPolling()
     }
@@ -109,6 +110,29 @@ import SwiftUI
         window?.title = selection.tab.title
         resizeWindow(animated: window?.isVisible ?? false)
         updatePermissionsPolling()
+        clearInitialFocus()
+    }
+
+    /// P6-0h (owner): no control gets a focus ring just because a tab opened (it was "Show Setup Again…"). AppKit picks
+    /// the first key view when the window shows or a tab appears, and SwiftUI may do so a moment later, so the first
+    /// responder is cleared now and once more after this run loop turn. Tab still moves the focus as usual afterwards.
+    private func clearInitialFocus() {
+        guard let window else { return }
+        window.initialFirstResponder = nil
+        window.makeFirstResponder(nil)
+        for delay in [0.0, 0.1, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak window] in
+                guard let window, Self.isUntouchedFocus(window.firstResponder, in: window) else { return }
+                window.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    /// A control focused by AppKit/SwiftUI, not a text field the user is typing in (the Rules search keeps its focus).
+    private static func isUntouchedFocus(_ responder: NSResponder?, in window: NSWindow) -> Bool {
+        guard let responder, responder !== window else { return false }
+        if let text = responder as? NSTextView, text.isFieldEditor, !(text.string.isEmpty) { return false }
+        return true
     }
 
     /// P6-0g: a pane reported its natural height.

@@ -30,26 +30,31 @@ struct AboutSettingsView: View {
                 Text(info.version).foregroundStyle(.secondary).textSelection(.enabled)
                 Link(info.repositoryText, destination: info.repositoryURL).foregroundStyle(Color.kytkinLink)
 
-                Divider().padding(.vertical, 8)
-
-                PrivacyLine(centered: true)
-                VStack(spacing: 2) {
-                    Text(info.license)
-                    Text(info.cleanRoom)
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 4)
-
-                Button("Acknowledgements…") { showsAcknowledgements = true }
-                    .buttonStyle(.kytkinLink)
-                    .padding(.top, 4)
-                    .popover(isPresented: $showsAcknowledgements, arrowEdge: .bottom) {
-                        AcknowledgementsView(acknowledgements: info.acknowledgements)
-                    }
             }
             .frame(maxWidth: .infinity)
+
+            // P6-0h (owner: every tab looks like General): the promise and the legal lines in the shared card.
+            SettingsCard {
+                VStack(spacing: 8) {
+                    PrivacyLine(centered: true)
+                    VStack(spacing: 2) {
+                        Text(info.license)
+                        Text(info.cleanRoom)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                    Button("Acknowledgements…") { showsAcknowledgements = true }
+                        .buttonStyle(.kytkinLink)
+                        .popover(isPresented: $showsAcknowledgements, arrowEdge: .bottom) {
+                            AcknowledgementsView(acknowledgements: info.acknowledgements)
+                        }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 12)
+            }
         }
     }
 }
