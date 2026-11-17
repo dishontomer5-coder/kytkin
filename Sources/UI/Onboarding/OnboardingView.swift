@@ -16,6 +16,12 @@ struct OnboardingView: View {
     var showInFinder: @MainActor () -> Void = {}
     /// "Quit" on the move screen.
     var quit: @MainActor () -> Void = {}
+    /// P6-0i: a step appeared (the window clears an unasked-for focus ring).
+    var stepChanged: @MainActor () -> Void = {}
+
+    /// P6-0i, the headless renderer only: the practice word's celebration starts on appear and is drawn frozen at
+    /// this many seconds (nil in the app).
+    nonisolated(unsafe) static var renderCelebrationAt: Double?
 
     /// P6-0e (Colors.md "First run": one fixed frame for every screen; 560 wide, a little taller than the mock-ups'
     /// 420 so the privacy lines and the inline pair pickers fit).
@@ -35,6 +41,7 @@ struct OnboardingView: View {
         }
         .padding(24)
         .frame(width: Self.size.width, height: Self.size.height)
+        .onChange(of: model.step) { stepChanged() }
     }
 
     @ViewBuilder private var content: some View {
@@ -244,32 +251,38 @@ private struct PermissionsStep: View {
 
 // MARK: - Screen 3: try double-Shift
 
+/// P6-0c; P6-0i (owner: a premium practice box): the word to type as faded "ghost" letters that fill in one by one,
+/// "Oops — wrong language!" when it is typed, two Shift caps that light up, then the word turns into the real one with
+/// a short burst of confetti. Without a sample for the pair, the plain box of P6-0c.
 private struct PracticeStep: View {
     @Bindable var model: OnboardingModel
     @FocusState private var focused: Bool
+    @State private var shiftMonitor: Any?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            StepHeader(tile: .symbol("keyboard"), title: "Try Double-Shift",
-                       subtitle: "Type in the box below with the wrong keyboard, then press Shift twice.")
-            TextField("Type here…", text: $model.practiceText)
-                .textFieldStyle(.roundedBorder)
-                .font(.title3)
-                .focused($focused)
-                .accessibilityLabel("Practice box")
-            HStack(alignment: .top) {
+            if let sample = model.practiceSample {
+                StepHeader(tile: .symbol("keyboard"), title: "Try Double-Shift",
+                           subtitle: "Type the faded word. Kytkin set your keyboard to the wrong language for it.")
+                GhostWordBoard(model: model, sample: sample, focused: $focused)
+            } else {
+                StepHeader(tile: .symbol("keyboard"), title: "Try Double-Shift",
+                           subtitle: "Type in the box below with the wrong keyboard, then press Shift twice.")
+                TextField("Type here…", text: $model.practiceText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3)
+                    .focused($focused)
+                    .focusEffectDisabled()
+                    .accessibilityLabel("Practice box")
                 Text(model.practiceHint).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Spacer()
+                plainResult
+            }
+            HStack(spacing: 8) {
+                Text("You see it only in the menu bar:").foregroundStyle(.secondary)
                 MenuBarPreview(label: model.general.menuBarPreview)   // the letters change when it converts
             }
-            result
-            Spacer()
-            // P6-0e: the real logo is shown above (the preview next to the hint), so no stand-in symbol here.
-            Text("Kytkin lives in the menu bar, at the top right of your screen: look for its icon and the language "
-                 + "letters, like HE or EN.")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
             if model.updates != nil {
                 // P6-3: unchecked until the user ticks it.
@@ -285,12 +298,25 @@ private struct PracticeStep: View {
                 StatusLabel(text: error, symbol: "xmark.circle.fill", tint: .red).font(.caption)
             }
         }
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            // P6-0i: Shift presses in this window light the key caps (a key-down count only; nothing is read or kept).
+            shiftMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [model] event in
+                if event.keyCode == 56 || event.keyCode == 60, event.modifierFlags.contains(.shift) {
+                    MainActor.assumeIsolated { model.noteShiftPressed() }
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let shiftMonitor { NSEvent.removeMonitor(shiftMonitor) }
+            shiftMonitor = nil
+        }
         .onChange(of: focused) { model.practiceFocused = focused }
         .onChange(of: model.practiceText) { model.practiceTextChanged() }
     }
 
-    @ViewBuilder private var result: some View {
+    @ViewBuilder private var plainResult: some View {
         switch model.practiceResult {
         case .none:
             EmptyView()
@@ -303,6 +329,241 @@ private struct PracticeStep: View {
         case .nothingToConvert:
             StatusLabel(text: "Nothing to convert yet. Type a word on the other keyboard first.", symbol: "info.circle",
                         tint: .secondary)
+        }
+    }
+}
+
+/// P6-0i: the ghost word, its progress, the "wrong language" moment, the Shift caps and the celebration.
+private struct GhostWordBoard: View {
+    @Bindable var model: OnboardingModel
+    let sample: PracticeGhost.Sample
+    var focused: FocusState<Bool>.Binding
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var flash: Character?
+    @State private var shakes: CGFloat = 0
+    @State private var wobbles: CGFloat = 0
+    @State private var celebrating: Date?
+
+
+
+
+    private var phase: PracticeGhost.Phase { model.practicePhase ?? .typing(filled: 0) }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                // The real field: it takes the typing (the window gives it the keyboard on this step), drawn invisibly
+                // so the board is the box (no focus ring).
+                TextField("Practice box", text: $model.practiceText)
+                    .textFieldStyle(.plain)
+                    .focused(focused)
+                    .focusEffectDisabled()
+                    .foregroundStyle(.clear)
+                    .tint(.clear)
+                    .opacity(0.02)
+                    .frame(width: 40, height: 20)
+                    .accessibilityLabel("Practice box: type \(sample.letters.map(String.init).joined(separator: " "))")
+                word
+                    .modifier(Shake(amount: reduceMotion ? 0 : 6, shakes: shakes))
+                    .rotationEffect(.degrees(reduceMotion ? 0 : Double(sin(wobbles * .pi * 4)) * 4 * Double(1 - wobbles)))
+                    .animation(reduceMotion ? .easeInOut(duration: 0.25) : .spring(duration: 0.45), value: phase == .converted)
+                if let start = celebrating, !reduceMotion {
+                    ConfettiView(start: start, frozenAt: OnboardingView.renderCelebrationAt)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 96)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(focused.wrappedValue ? Color.kytkinLink.opacity(0.5) : Color.primary.opacity(0.08),
+                              lineWidth: 1))
+            .contentShape(Rectangle())
+            .onTapGesture { focused.wrappedValue = true }
+            status.frame(minHeight: 44)
+        }
+        .onChange(of: model.practiceRejectCount) {
+            flash = model.practiceRejected
+            if !reduceMotion { withAnimation(.linear(duration: 0.35)) { shakes += 1 } }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(600))
+                flash = nil
+            }
+        }
+        .onChange(of: phase) { old, new in phaseChanged(from: old, to: new) }
+        .onAppear {
+            if phase == .converted, OnboardingView.renderCelebrationAt != nil { celebrating = Date() }
+            if phase == .wrongLanguage, OnboardingView.renderCelebrationAt != nil { wobbles = 0.3 }
+        }
+    }
+
+    // MARK: - The word
+
+    @ViewBuilder private var word: some View {
+        if phase == .converted {
+            // The real word: a quick flip-in (a fade with Reduce Motion), isolated so bidi never reorders it.
+            Text("\u{2068}\(sample.target)\u{2069}")
+                .font(.system(size: 42, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.kytkinLink)
+                .transition(reduceMotion ? .opacity : .asymmetric(insertion: .scale(scale: 0.6).combined(with: .opacity),
+                                                                  removal: .opacity))
+                .id("converted")
+        } else {
+            let filled = { if case .typing(let n) = phase { return n } else { return sample.letters.count } }()
+            HStack(spacing: 6) {
+                ForEach(Array(sample.letters.enumerated()), id: \.offset) { index, letter in
+                    letterView(index: index, letter: letter, filled: filled)
+                }
+            }
+            .transition(.opacity)
+            .id("typing")
+        }
+    }
+
+    private func letterView(index: Int, letter: Character, filled: Int) -> some View {
+        let isFlash = index == filled && flash != nil
+        let shown = isFlash ? String(flash ?? letter) : String(letter)
+        return Text(shown)
+            .font(.system(size: 42, weight: .semibold, design: .monospaced))
+            .foregroundStyle(isFlash ? Color.red : index < filled ? Color.primary : Color.secondary.opacity(0.28))
+            .frame(minWidth: 30)
+            .animation(.easeOut(duration: 0.15), value: filled)
+    }
+
+    // MARK: - The line under it
+
+    @ViewBuilder private var status: some View {
+        switch phase {
+        case .typing(let n):
+            Text(n == 0 ? "Start typing: the letters fill in as you go." : "Keep going…")
+                .font(.callout).foregroundStyle(.secondary)
+        case .wrongLanguage:
+            VStack(spacing: 6) {
+                Text("Oops — wrong language!").font(.headline)
+                HStack(spacing: 8) {
+                    Text("Now press Shift twice").font(.callout).foregroundStyle(.secondary)
+                    ShiftCap(lit: model.practiceShiftPresses >= 1)
+                    ShiftCap(lit: model.practiceShiftPresses >= 2)
+                }
+            }
+        case .converted:
+            Label {
+                Text("That’s Kytkin. It works like this in every app.")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+            .font(.callout)
+        }
+    }
+
+    private func phaseChanged(from old: PracticeGhost.Phase, to new: PracticeGhost.Phase) {
+        switch new {
+        case .typing(let n):
+            let text = PracticeGhost.progressAnnouncement(filled: n, sample: sample)
+            if !text.isEmpty { AccessibilityNotification.Announcement(text).post() }
+        case .wrongLanguage:
+            AccessibilityNotification.Announcement("Wrong language — press Shift twice").post()
+            guard !reduceMotion else { return }
+            wobbles = 0
+            withAnimation(.easeOut(duration: 0.6)) { wobbles = 1 }
+        case .converted:
+            AccessibilityNotification.Announcement("Converted to \(sample.target)").post()
+            guard !reduceMotion else { return }
+            let start = Date()
+            celebrating = start
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(ConfettiView.duration + 0.1))
+                if celebrating == start { celebrating = nil }   // the timeline stops: no CPU when idle
+            }
+        }
+        _ = old
+    }
+}
+
+/// A keyboard Shift cap that lights up (teal) when pressed.
+private struct ShiftCap: View {
+    let lit: Bool
+
+    var body: some View {
+        Text("⇧ shift")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(lit ? Color.white : Color.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(lit ? Color.kytkinAccent : Color.primary.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.primary.opacity(lit ? 0 : 0.15), lineWidth: 1))
+            .animation(.easeOut(duration: 0.12), value: lit)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A side-to-side shake (a wrong letter).
+private struct Shake: GeometryEffect {
+    var amount: CGFloat
+    var shakes: CGFloat
+    var animatableData: CGFloat {
+        get { shakes }
+        set { shakes = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: amount * sin(shakes * .pi * 6), y: 0))
+    }
+}
+
+/// P6-0i: a light burst of brand-coloured confetti, about 1.5 s. The timeline runs only while this view exists (the
+/// board removes it when the burst is over), so nothing runs when idle.
+private struct ConfettiView: View {
+    let start: Date
+    var frozenAt: Double?
+    static let duration: Double = 1.5
+
+    private struct Piece {
+        let angle: Double, speed: Double, spin: Double, size: CGFloat, color: Color, delay: Double
+    }
+
+    private static let colors: [Color] = [
+        Color(red: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255),
+        Color(red: 0x3D / 255, green: 0xD6 / 255, blue: 0xB0 / 255),
+        Color(red: 0x1A / 255, green: 0x9E / 255, blue: 0x85 / 255),
+        Color(red: 0x56 / 255, green: 0xDF / 255, blue: 0xBE / 255),
+    ]
+
+    /// Fixed pieces (a simple generator), so every burst and every render looks the same.
+    private static let pieces: [Piece] = {
+        var seed: UInt64 = 0x6B79_746B_696E
+        func next() -> Double {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Double(seed >> 11) / Double(1 << 53)
+        }
+        return (0..<70).map { i in
+            Piece(angle: -Double.pi / 2 + (next() - 0.5) * Double.pi * 1.4, speed: 160 + next() * 220,
+                  spin: (next() - 0.5) * 14, size: 4 + CGFloat(next()) * 5, color: colors[i % colors.count],
+                  delay: next() * 0.12)
+        }
+    }()
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: frozenAt != nil)) { context in
+            Canvas { gc, size in
+                let t = frozenAt ?? context.date.timeIntervalSince(start)
+                let origin = CGPoint(x: size.width / 2, y: size.height / 2)
+                for p in Self.pieces {
+                    let age = t - p.delay
+                    guard age > 0, age < Self.duration else { continue }
+                    let x = origin.x + cos(p.angle) * p.speed * age
+                    let y = origin.y + sin(p.angle) * p.speed * age + 0.5 * 520 * age * age
+                    let fade = max(0, 1 - age / Self.duration)
+                    var piece = gc
+                    piece.opacity = fade
+                    piece.translateBy(x: x, y: y)
+                    piece.rotate(by: .radians(p.spin * age))
+                    piece.fill(Path(roundedRect: CGRect(x: -p.size / 2, y: -p.size / 4, width: p.size, height: p.size / 2),
+                                    cornerRadius: 1), with: .color(p.color))
+                }
+            }
         }
     }
 }

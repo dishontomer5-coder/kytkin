@@ -25,6 +25,7 @@ import SwiftUI
         if !isOpen { model.begin(firstLaunch: firstLaunch) }
         let window = self.window ?? makeWindow()
         WindowPresenter.show(window)
+        clearInitialFocus()   // P6-0i (owner): no focus ring on "Change…" when the window opens
         model.setCovered(false)   // P3-12: just brought to the front; occlusion changes follow
         model.setVisible(true)
     }
@@ -42,13 +43,21 @@ import SwiftUI
         model.reload()
     }
 
+    /// P6-0i: on every step, no button or link starts with a focus ring (Tab still works). The practice step is the
+    /// exception: its box takes the keyboard so the user can type at once (drawn without the focus ring).
+    private func clearInitialFocus() {
+        let model = self.model
+        (window as? KytkinWindow)?.clearInitialFocus(keep: { model.step == .practice })
+    }
+
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: OnboardingView(
             model: model,
             close: { [weak self] in self?.window?.performClose(nil) },
             // P6-0c (flows M2): the copy's folder (the disk image or Downloads), and Quit.
             showInFinder: { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) },
-            quit: { NSApp.terminate(nil) }))
+            quit: { NSApp.terminate(nil) },
+            stepChanged: { [weak self] in self?.clearInitialFocus() }))
         hosting.sizingOptions = []
         let window = KytkinWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable]   // no minimize, like Settings (QA P2-23)

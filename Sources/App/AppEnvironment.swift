@@ -186,7 +186,12 @@ import AppKit
             languages: languages, appName: Self.appName, bundlePath: Bundle.main.bundlePath, updates: updates,
             // P6-0c: the practice box converts with the pair's layouts, in process.
             layouts: { convert.snapshot(for: store.prefs.languagePair) },
-            sourceName: { id in languages.options.first { $0.inputSource == id }?.name ?? id.rawValue }))
+            sourceName: { id in languages.options.first { $0.inputSource == id }?.name ?? id.rawValue },
+            // P6-0i: the practice step opens on the language the ghost word is typed in (the app's own switch).
+            selectSource: { [controller] id in
+                let base = languages.options.first { $0.id == id }?.inputSource ?? id
+                controller.selectFromMenu(base)
+            }))
         onboardingWindow = window
         controller.practiceDoubleShift = { [weak window] in window?.practiceDoubleShift() }
         window.show(firstLaunch: firstLaunch)
