@@ -16,7 +16,6 @@ enum AXReadError: Error, Sendable, Equatable {
     case timedOut        // kAXErrorCannotComplete after the 0.25 s messaging timeout: the browser is hung or busy
     case invalidElement  // the element went away (tab closed, page reloaded): drop the handle, rescan once
     case apiDisabled     // Accessibility was revoked
-    case cannotComplete  // P3-10: the live tree never produces it (it maps kAXErrorCannotComplete to .timedOut)
     case other
 }
 
