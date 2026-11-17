@@ -28,10 +28,10 @@ SOURCES=(
   Sources/UI/Settings/LanguagePairPickers.swift
   Sources/UI/Settings/LanguagesSettingsView.swift
   Sources/UI/Settings/PermissionsSettingsView.swift
-  Sources/UI/Settings/PlaceholderSettingsView.swift
+  Sources/UI/Settings/AdvancedSettingsView.swift
   Sources/UI/Settings/RulesSettingsView.swift
   Sources/UI/Settings/SearchField.swift
-  Sources/UI/Settings/SettingsNoticeList.swift
+  Sources/UI/Settings/SettingsComponents.swift
   Sources/UI/Settings/SettingsView.swift
   Sources/UI/Onboarding/OnboardingView.swift
 )

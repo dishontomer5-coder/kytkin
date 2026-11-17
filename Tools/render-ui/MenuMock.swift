@@ -90,34 +90,36 @@ struct StatusLabelMock: View {
     }
 }
 
-/// P6-0a: NSTabView's row of tab buttons can't be captured offscreen by `cacheDisplay` (it comes out as a blank
-/// rounded bar across the top of the tab box). This draws over exactly that bar: the same tab titles, in order, with
-/// the selected one highlighted, in a look close to macOS's segmented tabs. Everything else is the real SettingsView.
-struct TabStripOverlay: View {
+/// P6-0c: the Settings window's toolbar tabs (icon over title, `NSTabViewController.tabStyle = .toolbar`) are window
+/// chrome and can't be captured offscreen. This draws a stand-in with the same symbols and titles, the selected one
+/// highlighted as macOS does. Everything below it is the real tab pane.
+struct ToolbarTabsMock: View {
     let selected: SettingsTab
     @Environment(\.colorScheme) private var scheme
+    static let height: CGFloat = 78
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(SettingsTab.allCases) { tab in
-                Text(tab.title)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .foregroundStyle(tab == selected ? Color.white : Color.primary)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(tab == selected ? Color.accentColor : Color.clear))
+        VStack(spacing: 0) {
+            Text("Kytkin Settings").font(.system(size: 13, weight: .semibold)).padding(.top, 8)
+            HStack(spacing: 4) {
+                ForEach(SettingsTab.allCases) { tab in
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.symbolName).font(.system(size: 18)).frame(height: 22)
+                        Text(tab.title).font(.system(size: 11))
+                    }
+                    .foregroundStyle(tab == selected ? Color.accentColor : Color.secondary)
+                    .frame(minWidth: 64)
+                    .padding(.horizontal, 6).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(tab == selected ? Color.primary.opacity(0.08) : Color.clear))
+                }
             }
+            .padding(.top, 4)
+            Spacer(minLength: 0)
+            Divider()
         }
-        .padding(1)
+        .frame(height: Self.height)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(scheme == .dark ? Color(white: 0.24) : Color.white)
-                .shadow(color: .black.opacity(0.18), radius: 0.5, y: 0.5))
-        .frame(height: 26)
+        .background(scheme == .dark ? Color(white: 0.17) : Color(white: 0.93))
     }
 }

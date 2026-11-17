@@ -27,8 +27,9 @@ struct MenuItemModel: Equatable {
 
     /// Where `openSettings` should land. The Settings window (P2-23) maps it to a tab; until it exists the
     /// hook is unset and MenuModel hides or disables these items.
+    /// P6-0c: `.permissions` lands on General's setup section (the Permissions tab is gone).
     enum SettingsTarget: Equatable {
-        case general, permissions, about
+        case general, permissions, doubleShift, about
     }
 
     var kind: Kind

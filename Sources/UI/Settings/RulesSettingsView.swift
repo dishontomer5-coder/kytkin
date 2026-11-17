@@ -12,14 +12,16 @@ struct RulesSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingsNoticeList(notices: model.notices)
+            ForEach(model.notices) { WarningLabel(text: $0.message) }
             HStack {
-                SearchField(prompt: "Search", text: $model.searchText)
+                // P6-0c (visual review R2): a segmented All · Apps · Websites, no bare "All" pop-up.
                 Picker("Kind", selection: $model.kindFilter) {
                     ForEach(RuleKindFilter.allCases) { Text($0.title).tag($0) }
                 }
+                .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                SearchField(prompt: "Search", text: $model.searchText)
                 Picker("Show", selection: $model.originFilter) {
                     ForEach(RuleOriginFilter.allCases) { Text($0.title).tag($0) }
                 }
@@ -32,8 +34,9 @@ struct RulesSettingsView: View {
 
             let rows = model.rows
             if rows.isEmpty {
-                Text(model.emptyText)
+                Text(model.emptyText)   // P6-0c (visual R6): centred, like Apps
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Table(rows, selection: $selection) {

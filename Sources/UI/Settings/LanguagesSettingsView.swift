@@ -1,4 +1,6 @@
-// P2-24: Settings → Languages (001 §5.2). Layout only; `LanguagesSettingsModel` (Core) holds the logic and is tested.
+// P2-24: Settings → Advanced → Keyboard Layouts (001 §5.2; was the Languages tab). Layout only;
+// `LanguagesSettingsModel` (Core) holds the logic and is tested. P6-0c: the language pair moved to General; this is
+// the import/export of layout files (visual review L3: a power-user feature).
 // The open and save panels open only from the user's click on Import… / Export…, and hand the picked URL to the model.
 
 import AppKit
@@ -11,16 +13,8 @@ struct LanguagesSettingsView: View {
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(model.notices) { notice in
-                Label(notice.message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             Form {
-                Section {
-                    LanguagePairPickers(model: model)   // P2-26: shared with the welcome window
-                }
-                .disabled(!model.isEditable)
+                NoticeSection(notices: model.notices)
 
                 Section("Imported layouts") {
                     if model.importedRows.isEmpty {
@@ -40,8 +34,7 @@ struct LanguagesSettingsView: View {
                         }
                     }
                     if let notice = model.skippedFilesNotice {
-                        Text(notice).font(.caption).foregroundStyle(.orange)
-                            .fixedSize(horizontal: false, vertical: true)
+                        WarningLabel(text: notice)
                     }
                     Button("Import Layout…") { chooseFileToImport() }
                         .disabled(!model.isEditable)
@@ -62,9 +55,8 @@ struct LanguagesSettingsView: View {
                 }
 
                 if let status = model.status {
-                    Text(status.text)
-                        .foregroundStyle(status.isError ? .red : .secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    StatusLabel(text: status.text, symbol: status.isError ? "xmark.circle.fill" : "checkmark.circle",
+                                tint: status.isError ? .red : .secondary)
                         .textSelection(.enabled)
                 }
             }

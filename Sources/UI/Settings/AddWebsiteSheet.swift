@@ -27,10 +27,10 @@ struct AddWebsiteSheet: View {
                 }
                 .pickerStyle(.radioGroup)
             } else if let message = form.input.message {
-                Text(message)
+                // P6-0c (visual review S2, X2): secondary text, the orange only on the symbol.
+                StatusLabel(text: message, symbol: form.scope == nil ? "exclamationmark.triangle.fill" : "info.circle",
+                            tint: form.scope == nil ? .orange : .secondary, secondaryText: true)
                     .font(.callout)
-                    .foregroundStyle(form.scope == nil ? .orange : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             Picker("Language", selection: $form.language) {
                 ForEach(form.languageOptions) { Text($0.name).tag($0.id) }

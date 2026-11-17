@@ -121,14 +121,24 @@ import SwiftUI
         return s
     }()
 
-    private func settingsView(_ w: World, tab: SettingsTab) -> some View {
-        SettingsView(selection: SettingsSelection(tab: tab), general: w.general, about: w.about, rules: w.rules,
-                     convert: w.convert, apps: w.apps, permissions: w.permissionsTab, browsers: w.browsers,
-                     openSettingsFolder: {}, showWelcome: {}, tabChanged: {})
-            .environment(w.languages)
-            .overlay(alignment: .top) {   // the tab buttons NSTabView can't draw offscreen (MenuMock.swift)
-                TabStripOverlay(selected: tab).padding(.horizontal, 26).padding(.top, 18)
-            }
+    private func panes(_ w: World, tab: SettingsTab, advanced: AdvancedSection = .apps) -> SettingsPanes {
+        SettingsPanes(selection: SettingsSelection(tab: tab, advancedSection: advanced), general: w.general,
+                      about: w.about, rules: w.rules, convert: w.convert, apps: w.apps, permissions: w.permissionsTab,
+                      browsers: w.browsers, openSettingsFolder: {}, showWelcome: {}, select: { _ in })
+    }
+
+    /// P6-0c: the window's toolbar tabs can't be drawn offscreen (they are window chrome), so a stand-in of the same
+    /// icons and titles sits above the real tab pane (MenuMock.swift).
+    private func settingsView(_ w: World, tab: SettingsTab, advanced: AdvancedSection = .apps) -> some View {
+        VStack(spacing: 0) {
+            ToolbarTabsMock(selected: tab)
+            SettingsView(panes: panes(w, tab: tab, advanced: advanced))
+                .environment(w.languages)
+        }
+    }
+
+    private func settingsSize(height: CGFloat? = nil) -> CGSize {
+        CGSize(width: SettingsView.size.width, height: (height ?? SettingsView.size.height) + ToolbarTabsMock.height)
     }
 
     // MARK: - Render everything
@@ -145,40 +155,57 @@ import SwiftUI
     private func renderSettings(_ r: Renderer) throws {
         let w = try world(support: [SampleIDs.safari: .works, SampleIDs.chrome: .worksWithAutomation,
                                     SampleIDs.zen: .notSeenYet])
-        let size = SettingsView.size
+        let size = settingsSize()
         for tab in SettingsTab.allCases {
             try r.render("settings-\(tab.rawValue)", size: size, inWindow: tab == .rules) { settingsView(w, tab: tab) }
         }
-
-        // The tabs whose grouped Form scrolls in the 680×500 window, drawn tall so nothing is cut off.
-        let tall: [(SettingsTab, CGFloat)] = [(.languages, 490), (.rules, 600), (.convert, 660), (.apps, 1020),
-                                              (.browsers, 800)]
-        for (tab, height) in tall {
-            try r.render("settings-\(tab.rawValue)-full", size: CGSize(width: size.width, height: height),
-                         inWindow: tab == .rules) {
-                tabContent(w, tab: tab).padding(20)
+        for section in AdvancedSection.allCases where section != .apps {
+            try r.render("settings-advanced-\(section.rawValue)", size: size) {
+                settingsView(w, tab: .advanced, advanced: section)
             }
         }
 
-        // Browsers & Sites with Automation on, Chrome chosen and allowed.
+        // The tabs whose grouped Form scrolls in the window, drawn tall so nothing is cut off.
+        let tall: [(SettingsTab, CGFloat)] = [(.general, 760), (.doubleShift, 640), (.websites, 820)]
+        for (tab, height) in tall {
+            try r.render("settings-\(tab.rawValue)-full", size: settingsSize(height: height)) {
+                VStack(spacing: 0) {
+                    ToolbarTabsMock(selected: tab)
+                    SettingsTabPane(tab: tab, panes: panes(w, tab: tab), height: height).environment(w.languages)
+                }
+            }
+        }
+        try r.render("settings-advanced-apps-full", size: settingsSize(height: 900)) {
+            VStack(spacing: 0) {
+                ToolbarTabsMock(selected: .advanced)
+                SettingsTabPane(tab: .advanced, panes: panes(w, tab: .advanced), height: 900).environment(w.languages)
+            }
+        }
+
+        // Websites with Automation on, Chrome chosen and allowed.
         var auto = Sample.preferences()
         auto.browsers.useAutomation = true
         let wa = try world(prefs: auto, support: [SampleIDs.chrome: .worksWithAutomation],
                            automation: [SampleIDs.chrome: .granted])
         wa.browsers.selectedBrowserID = SampleIDs.chrome
-        try r.render("settings-browsers-chrome-automation", size: size) { settingsView(wa, tab: .browsers) }
+        try r.render("settings-websites-chrome-automation", size: size) { settingsView(wa, tab: .websites) }
         // Zen (Firefox-based, no Automation), not checked yet.
         w.browsers.selectedBrowserID = SampleIDs.zen
-        try r.render("settings-browsers-zen", size: size) { settingsView(w, tab: .browsers) }
+        try r.render("settings-websites-zen", size: size) { settingsView(w, tab: .websites) }
 
-        // Permissions missing: Accessibility off, Secure Input on, conflicts.
+        // Setup needs attention: Accessibility off, Secure Input on, conflicts.
         let wt = try world(state: Self.troubledState)
-        try r.render("settings-permissions-missing", size: size) { settingsView(wt, tab: .permissions) }
-        try r.render("settings-permissions-missing-full", size: CGSize(width: size.width, height: 740)) {
-            tabContent(wt, tab: .permissions).padding(20)
+        try r.render("settings-general-setup-missing", size: settingsSize(height: 900)) {
+            VStack(spacing: 0) {
+                ToolbarTabsMock(selected: .general)
+                SettingsTabPane(tab: .general, panes: panes(wt, tab: .general), height: 900).environment(wt.languages)
+            }
+        }
+        try r.render("settings-advanced-diagnostics-troubled", size: size) {
+            settingsView(wt, tab: .advanced, advanced: .diagnostics)
         }
 
-        // Read-only preferences (a file from a newer Kytkin): the notice banners and disabled controls.
+        // Read-only preferences (a file from a newer Kytkin): the notice and disabled controls.
         let wr = try world(readOnly: true)
         try r.render("settings-general-readonly", size: size) { settingsView(wr, tab: .general) }
         try r.render("settings-rules-readonly", size: size, inWindow: true) { settingsView(wr, tab: .rules) }
@@ -188,25 +215,17 @@ import SwiftUI
         empty.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew)
         let we = try world(prefs: empty)
         try r.render("settings-rules-empty", size: size, inWindow: true) { settingsView(we, tab: .rules) }
-        try r.render("settings-apps-empty", size: size) { settingsView(we, tab: .apps) }
+        try r.render("settings-advanced-apps-empty", size: size) { settingsView(we, tab: .advanced) }
 
-        // A pair warning: Language B is installed but not turned on.
+        // A pair warning: the second language is on this Mac but not added.
         var badPair = Sample.preferences()
         badPair.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrewQWERTY)
         let wb = try world(prefs: badPair)
-        try r.render("settings-languages-warning", size: size) { settingsView(wb, tab: .languages) }
-    }
-
-    @ViewBuilder private func tabContent(_ w: World, tab: SettingsTab) -> some View {
-        switch tab {
-        case .general: GeneralSettingsView(model: w.general, showWelcome: {})
-        case .languages: LanguagesSettingsView().environment(w.languages)
-        case .rules: RulesSettingsView(model: w.rules)
-        case .convert: ConvertSettingsView(model: w.convert)
-        case .apps: AppsSettingsView(model: w.apps)
-        case .browsers: BrowsersSettingsView(model: w.browsers, openPermissions: {}, showWebsiteRules: {})
-        case .permissions: PermissionsSettingsView(model: w.permissionsTab)
-        case .about: AboutSettingsView(info: w.about, openSettingsFolder: {})
+        try r.render("settings-general-pair-warning", size: settingsSize(height: 760)) {
+            VStack(spacing: 0) {
+                ToolbarTabsMock(selected: .general)
+                SettingsTabPane(tab: .general, panes: panes(wb, tab: .general), height: 760).environment(wb.languages)
+            }
         }
     }
 

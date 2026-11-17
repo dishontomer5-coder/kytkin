@@ -106,18 +106,10 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     static let allBrowsersTitle = "All browsers"
     static let siteRulesToggleTitle = "Use website rules"
     /// P3-26: the one note for the global switches (e.g. Automation for Zen).
-    static let skipNote = "Some browsers don't support every option; Kytkin skips what a browser can't do."
     static let browserPickerTitle = "Browser"
     static let privateToggleTitle = "Don't use website rules in private windows"
     static let privateExplanation = "Kytkin never learns from private windows. With this on, it doesn't look at "
         + "their address at all."   // P6-0c (copy review B-4)
-    /// P3-16: what the private-window checks can tell, per browser (001 §14.4; owner probe 2026-11-08).
-    static let privateDetectionText = "Kytkin recognizes private windows in Chrome when Chrome is in English or "
-        + "Hebrew (in any language with Automation), and in Arc only with Automation. Tor Browser's windows always "
-        + "count as private. Kytkin can't tell yet in Zen and other Firefox-based browsers."
-    /// Owner answer 3 accepted a Safari gap. P3-30: Safari's private windows are recognized only by the English title
-    /// (the privacy button also shows in normal windows when it's added to the toolbar).
-    static let safariPrivateNote = "In Safari, Kytkin recognizes private windows only when Safari is in English."
     /// P3-4: how websites are grouped, and why gov.il is different.
     /// P6-0c (copy review B-6): the gov.il / github.io detail is where it matters (the Add Website sheet, R-9).
     static let groupingText = "A website rule covers the whole website: ynet.co.il also covers news.ynet.co.il. "

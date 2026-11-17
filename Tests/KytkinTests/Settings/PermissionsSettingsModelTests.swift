@@ -34,6 +34,32 @@ final class PermissionsSettingsModelTests: XCTestCase {
         sut.rows.first { $0.pane == pane }!
     }
 
+    // MARK: - P6-0c: General's setup section
+
+    func testSetupIsOneLineWhenEverythingWorks() {
+        set { $0.accessibility = .granted; $0.inputMonitoring = .granted; $0.tapMode = .active }
+        XCTAssertTrue(sut.setupIsComplete)
+        XCTAssertNil(sut.keyboardProblemText)
+        XCTAssertEqual(sut.setupRows.map(\.pane), [.accessibility], "Input Monitoring adds nothing then")
+    }
+
+    func testSetupNeedsAttentionForAccessibilityAConflictOrAStoppedDoubleShift() {
+        set { $0.accessibility = .denied; $0.inputMonitoring = .notDetermined }
+        XCTAssertFalse(sut.setupIsComplete)
+        XCTAssertEqual(sut.setupRows.map(\.pane), [.accessibility, .inputMonitoring], "the backup is offered then")
+
+        set { $0.accessibility = .granted; $0.tapMode = .active
+              $0.conflicts = Conflicts(runningSwitchers: ["FlicKey"], perDocumentInputEnabled: false) }
+        XCTAssertFalse(sut.setupIsComplete, "another switcher: a warning (owner: warning only)")
+
+        set { $0.conflicts = Conflicts(runningSwitchers: [], perDocumentInputEnabled: false); $0.tapMode = .off }
+        XCTAssertFalse(sut.setupIsComplete)
+        XCTAssertTrue(sut.keyboardProblemText?.hasPrefix("Stopped") == true)
+
+        set { $0.paused = true }
+        XCTAssertNil(sut.keyboardProblemText, "paused is the user's choice, not a setup problem")
+    }
+
     // MARK: - Rows
 
     func testTwoRowsAndNoAutomationYet() {

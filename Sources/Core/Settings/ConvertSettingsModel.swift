@@ -42,9 +42,6 @@ import Observation
         + "briefly see the copied text and save it. If you use one, you may want to turn this off. It's never used in "
         + "terminals, in password boxes, or while you have a password copied."
 
-    /// P6-0c (copy review C-5).
-    static let autoFixNote = "Coming later: converting wrong-language words by itself as you type."
-
     init(store: PreferencesStore) {
         self.store = store
     }

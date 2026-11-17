@@ -74,6 +74,30 @@ import Observation
         state.accessibility == .granted
     }
 
+    // MARK: - P6-0c: General's setup section
+
+    /// Everything is set up: Accessibility allowed, no relaunch pending, double-Shift running as allowed, nothing in
+    /// the way. Then General's setup section is one line (visual review §2.3).
+    var setupIsComplete: Bool {
+        state.accessibility == .granted && !state.showsQuitAndReopen && keyboardProblemText == nil
+            && conflictLines.isEmpty
+    }
+
+    static let setupCompleteText = "Everything is set up"
+
+    /// The rows General's setup section shows: Accessibility always; Input Monitoring only while it could help (no
+    /// Accessibility) or a relaunch is pending (visual review P2, flows N1).
+    var setupRows: [PermissionRow] {
+        rows.filter { $0.pane == .accessibility || $0.status == .needsRelaunch || state.accessibility != .granted }
+    }
+
+    /// Double-Shift runs below what the permissions allow (not Kytkin turned off or paused): the status line, else nil.
+    var keyboardProblemText: String? {
+        guard state.enabled, !state.paused, state.accessibility == .granted,
+              TapModePolicy.rank(state.tapMode) < TapModePolicy.rank(desiredTapMode) else { return nil }
+        return keyboardModeText
+    }
+
     // MARK: - User clicks only
 
     /// The row's "Allow…" button. The only caller of the request APIs in Settings.

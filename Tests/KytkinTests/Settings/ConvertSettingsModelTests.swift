@@ -110,7 +110,6 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertTrue(text.contains("⌘Z"))
         XCTAssertEqual(ConvertSettingsModel.explanation.count, 4)
         XCTAssertTrue(text.contains("\u{2068}שלום\u{2069}"), "the Hebrew sample is isolated for bidi")
-        XCTAssertTrue(ConvertSettingsModel.autoFixNote.hasPrefix("Coming later"))
     }
 
     func testReadOnlyBlocksEveryWrite() {

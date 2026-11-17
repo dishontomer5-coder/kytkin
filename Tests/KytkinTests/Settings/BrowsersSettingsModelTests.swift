@@ -284,10 +284,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
     }
 
     func testTheOwnersNotesAreThere() {
-        XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("Safari"))
-        // P3-30: English only (the shield button is no signal any more); the detection line names each browser.
-        XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("English"))
-        XCTAssertFalse(BrowsersSettingsModel.safariPrivateNote.contains("any language"))
+        // P3-30: Safari's private windows by the English title only (the shield button is no signal any more).
         // P6-0c (copy review B-5): one private-window line per browser, in its status.
         let note = { (id: String) in
             BrowsersSettingsModel.privateWindowNote(bundleID: id, engine: BrowserCatalog.known[id]?.engine ?? .unknown)
@@ -296,9 +293,8 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertTrue(note("company.thebrowser.Browser")?.contains("only with Automation") == true)
         XCTAssertTrue(note("org.torproject.torbrowser")?.contains("every window") == true)
         XCTAssertTrue(note("app.zen-browser.zen")?.contains("can't tell") == true)
-        XCTAssertTrue(note("com.apple.Safari")?.contains("English") == true)
-        XCTAssertEqual(BrowsersSettingsModel.skipNote,
-                       "Some browsers don't support every option; Kytkin skips what a browser can't do.")
+        XCTAssertTrue(note("com.apple.Safari")?.contains("when Safari is in English") == true)
+        XCTAssertFalse(note("com.apple.Safari")?.contains("any language") == true)
         XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Ask the browser for the page address (Automation)")
         XCTAssertTrue(BrowsersSettingsModel.groupingText.contains("news.ynet.co.il"))
         XCTAssertTrue(BrowsersSettingsModel.privateExplanation.contains("doesn't look at their address"))

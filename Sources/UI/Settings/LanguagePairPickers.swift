@@ -12,13 +12,12 @@ struct LanguagePairPickers: View {
         pairPicker("Second language", selection: $model.pairB)
         Text("Press Shift twice to convert text between these two languages.")   // P6-0c (L-2)
             .font(.caption).foregroundStyle(.secondary)
+        // P6-0c (visual review L1, X2): colour only on the symbol.
         if let problem = model.pairProblem {
-            Text(problem.message).font(.caption).foregroundStyle(.red)
+            StatusLabel(text: problem.message, symbol: "xmark.circle.fill", tint: .red).font(.caption)
         }
         ForEach(model.pairWarnings, id: \.self) { warning in
-            Label(warning, systemImage: "exclamationmark.triangle")
-                .font(.caption).foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
+            WarningLabel(text: warning).font(.caption)
         }
     }
 

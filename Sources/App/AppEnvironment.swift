@@ -128,11 +128,7 @@ import AppKit
         }
         // P2-22 + P2-23: the menu's "Settings…", "Open Settings…" and About open the Settings window on that tab.
         statusItem.openSettings = { [weak self] target in
-            switch target {
-            case .general: self?.openSettings(tab: .general)
-            case .permissions: self?.openSettings(tab: .permissions)
-            case .about: self?.openSettings(tab: .about)
-            }
+            self?.openSettings(tab: SettingsTab(target: target))   // P6-0c: the 6-tab mapping lives in Core
         }
 
         // P2-39 (001 §12 W2): Kytkin's own windows are not a context.

@@ -11,17 +11,21 @@ final class SettingsMappingTests: XCTestCase {
 
     // MARK: - Tabs
 
-    func testTabOrderAndPlaceholders() {
+    func testSixTabsInOrderWithSymbols() {
+        // P6-0c (owner 2026-11-17): 8 tabs became 6.
         XCTAssertEqual(SettingsTab.allCases.map(\.title),
-                       ["General", "Languages", "Rules", "Convert", "Apps", "Browsers & Sites", "Permissions",
-                        "About"])
-        XCTAssertEqual(SettingsTab.allCases.filter { !$0.isPlaceholder },
-                       SettingsTab.allCases, "P2-26: the Permissions tab was the last placeholder")
-        for tab in SettingsTab.allCases {
-            XCTAssertFalse(tab.symbolName.isEmpty)
-            XCTAssertEqual(tab.comingSoonText.isEmpty, !tab.isPlaceholder, "\(tab)")
-            if tab.isPlaceholder { XCTAssertTrue(tab.comingSoonText.contains("coming soon"), "\(tab)") }
-        }
+                       ["General", "Rules", "Double-Shift", "Websites", "Advanced", "About"])
+        XCTAssertEqual(SettingsTab.allCases.map(\.symbolName),
+                       ["gearshape", "list.bullet.rectangle", "shift", "globe", "slider.horizontal.3", "info.circle"])
+        XCTAssertEqual(AdvancedSection.allCases.map(\.title), ["App Exceptions", "Keyboard Layouts", "Diagnostics"])
+    }
+
+    func testEveryMenuTargetLandsOnATab() {
+        // P6-0c: the permissions now live in General's setup section.
+        XCTAssertEqual(SettingsTab(target: .general), .general)
+        XCTAssertEqual(SettingsTab(target: .permissions), .general)
+        XCTAssertEqual(SettingsTab(target: .doubleShift), .doubleShift)
+        XCTAssertEqual(SettingsTab(target: .about), .about)
     }
 
     @MainActor func testSelectionDefaultsToGeneral() {
