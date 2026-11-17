@@ -64,7 +64,7 @@ enum HTMLTextConvert {
     static let plainAttributes: Set<String> = [
         "style", "dir", "lang", "align", "color", "face", "size", "start", "type", "value", "charset", "content",
         "http-equiv", "name", "title", "target", "rel",
-        "clear",   // P3-48: Gmail's `<br clear="all">` before a signature
+        "clear",   // layout only: Gmail's `<br clear="all">`
     ]
 
     // MARK: - Tokens

@@ -7,8 +7,7 @@
 // The box flow, on @TextActor (off main), every wait bounded:
 //   1. Snapshot the whole pasteboard (every item, every type). Can't (too big, unreadable type) → `.unavailable`,
 //      nothing posted, the caller falls back to the remembered buffer.
-//   2. Take the hold-back claim (B3), re-check the focus, post ⇧⌘↑ (P3-62: from the cursor to the box's start; was
-//      ⌘A, the whole box), ⌘C.
+//   2. Take the hold-back claim (B3), re-check the focus, post ⇧⌘↑ (P3-62: from the cursor to the box's start), ⌘C.
 //   3. Wait for `changeCount` to move (≤ 250 ms, polled every 10 ms). It didn't, or the copy is empty → nothing before
 //      the cursor, or the app can't copy: P3-62 QA: drop the selection (Right arrow) only when AX shows one (else the
 //      arrow would move the cursor), `.boxEmpty` (the caller just switches), and watch
@@ -19,7 +18,7 @@
 //   6. After the caller's finish (held keys replayed): wait until the app read the pasted text (≥ 100 ms, ≤ 500 ms), then
 //      put the user's clipboard back, only if nobody wrote to it since (`changeCount` still ours).
 // P3-40 (owner 2026-11-11): a selection AX reported in an app whose box AX can't read (Slack, Chrome…) is copied with
-// ⌘C alone (no ⌘A: the selection is already there), because Chromium's `AXSelectedText` can drop the line breaks between
+// ⌘C alone (no ⇧⌘↑: the selection is already there), because Chromium's `AXSelectedText` can drop the line breaks between
 // paragraphs: typing over it, or pasting the AX text, joined the lines. The caller checks the copy against the AX text
 // (`Conversion.mismatch`), converts it and the paste replaces the selection. Nothing copied → `.boxEmpty` (the selection
 // is untouched, nothing was posted but ⌘C).
@@ -27,9 +26,9 @@
 // P3-44 (owner tests 2026-11-16: Slack bold + @mention + emoji, Gmail bold, flattened to plain text): after the copy,
 // what the app put on the pasteboard is checked (`CopiedContent.verdict`: HTML with formatting, mentions, emoji images,
 // links, code, lists; RTF formatting; images, files). Rich → no plain-text paste (P3-47: a formatting-only HTML copy is
-// pasted as converted HTML, below); otherwise nothing is pasted: the clipboard goes back at once, the ⌘A
-// selection is dropped (Right arrow: the caret at the end of the box), and `.richContent` tells the caller whether the
-// copied box text *ends with* the run the user typed (`typedTail`, the remembered buffer's text), i.e. whether the caret
+// pasted as converted HTML, below); otherwise nothing is pasted: the clipboard goes back at once, the ⇧⌘↑
+// selection is dropped (Right arrow: the caret back where the cursor was), and `.richContent` tells the caller whether
+// the copied text *ends with* the run the user typed (`typedTail`, the remembered buffer's text), i.e. whether the caret
 // now sits right after it, so the caller may convert just that run by Backspace + typing; otherwise it only switches.
 // The decision reads the copied data in memory, for this one convert; never logged.
 //
@@ -61,7 +60,7 @@ import Foundation
         var lateCopyWatchNanos: UInt64 = 750_000_000
         /// 001 §7 B5: ⌘V is never posted later than this after the flow started.
         var budgetNanos: UInt64 = ReplacementChain.defaultBudgetNanos
-        /// P3-53: ⌘A / ⌘C are posted only this soon after the convert started (`startedAt`), so the copy wait still
+        /// P3-53: ⇧⌘↑ / ⌘C are posted only this soon after the convert started (`startedAt`), so the copy wait still
         /// fits before `budgetNanos`. Later → `.timedOut`, nothing posted.
         var copyStartBudgetNanos: UInt64 = 200_000_000
 
@@ -74,9 +73,9 @@ import Foundation
     static let maxCopiedBytes = 4 * 1024 * 1024
 
     enum Source: Sendable, Equatable {
-        /// ⌘A, ⌘C: the whole text box.
+        /// ⇧⌘↑, ⌘C: the text box from its start up to the cursor (P3-62).
         case box
-        /// P3-40: ⌘C (no ⌘A) copies the selection that is already there; its converted text is pasted over it.
+        /// P3-40: ⌘C alone (no ⇧⌘↑) copies the selection that is already there; its converted text is pasted over it.
         case copiedSelection
     }
 
@@ -102,21 +101,21 @@ import Foundation
         /// P3-40: the copy is not the selection AX reported (`Conversion.mismatch`); the clipboard put back (beeps).
         case selectionMismatch
         /// P3-44: the copy is rich (formatting, mentions, emoji images, links…): nothing pasted, the clipboard put back,
-        /// a ⌘A selection dropped (caret at the end of the box). `typedRunAtEnd`: the copied box text ends with the
+        /// a ⇧⌘↑ selection dropped (the caret back where the cursor was). `typedRunAtEnd`: the copied text ends with the
         /// caller's `typedTail` (so the caret is right after the typed run).
         case richContent(typedRunAtEnd: Bool)
         /// ⌘C changed nothing, or copied nothing: an empty box, or an app that can't copy. The caller falls back.
-        /// P3-40: for `.copiedSelection` the selection is still there (no ⌘A, no Right arrow was posted).
+        /// P3-40: for `.copiedSelection` the selection is still there (no ⇧⌘↑, no Right arrow was posted).
         case boxEmpty
         /// Nothing was posted or written (no snapshot, the first event refused). The caller falls back.
         case unavailable
         /// The hold-back claim was refused (B3). Nothing posted.
         case abandoned
-        /// The focus moved (before ⌘A, or before ⌘V): stopped, the clipboard put back.
+        /// The focus moved (before ⇧⌘↑, or before ⌘V): stopped, the clipboard put back.
         case focusChanged
         /// The budget ran out before ⌘V: stopped, the clipboard put back.
         case timedOut
-        /// A post or a pasteboard write failed part way: the field may have the ⌘A selection; the clipboard put back.
+        /// A post or a pasteboard write failed part way: the field may have the ⇧⌘↑ selection; the clipboard put back.
         case failed
     }
 
@@ -191,7 +190,7 @@ import Foundation
         let before = pasteboard.changeCount
         guard mayWrite() else { return (.abandoned, nil) }
 
-        // P3-40: `.copiedSelection` has its selection already, so only ⌘C (⌘A would select the whole box). The P3-37
+        // P3-40: `.copiedSelection` has its selection already, so only ⌘C (⇧⌘↑ would widen it to the box's start). The P3-37
         // paste of AX's selected text without a copy is gone (AX's text is what lost the line breaks).
         let all = source == .box
         guard focusIsSame() else { return (.focusChanged, nil) }
@@ -225,7 +224,7 @@ import Foundation
             return (.boxEmpty, nil)
         }
 
-        /// Stops after the copy: the user's clipboard goes back now (only the app's own copy was there since); a ⌘A
+        /// Stops after the copy: the user's clipboard goes back now (only the app's own copy was there since); a ⇧⌘↑
         /// selection is dropped.
         func stop(_ result: Result, collapsing: Bool = true) -> (Result, PendingRestore?) {
             pasteboard.restore(snapshot)
@@ -334,7 +333,7 @@ import Foundation
         }
     }
 
-    /// P3-44: the copied (plain) box text ends with the typed run, so the caret after ⌘A + Right arrow is right after
+    /// P3-44: the copied (plain) box text ends with the typed run, so the caret after ⇧⌘↑ + Right arrow is right after
     /// it. P3-44 QA: never for a run holding a colon: Slack turns a typed `:joy:` (or `:)`) into one emoji while the
     /// plain-text copy still reads `:joy:`, so the copy would "end with" the run and the Backspaces (one per typed
     /// character) would delete the emoji and the text before it.
@@ -349,7 +348,7 @@ import Foundation
         return y.count <= x.count && Array(x[(x.count - y.count)...]) == y
     }
 
-    /// Drops the ⌘A selection, caret at the end (best effort; nothing else is posted).
+    /// Drops the ⇧⌘↑ selection: the caret goes to its end, where the cursor was (best effort; nothing else is posted).
     private func collapse() {
         _ = post([.rightArrow(keyDown: true), .rightArrow(keyDown: false)])
     }

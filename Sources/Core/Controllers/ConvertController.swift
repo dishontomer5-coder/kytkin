@@ -53,12 +53,12 @@
 //       focused element is the one it started in (`anchorTerminalBuffer`); otherwise it is forgotten and double-Shift
 //       just switches. Only the current line is ever converted (the buffer ends at every Return, Shift+Return too).
 //   (c) The clipboard convert (`ClipboardConvert`) in apps whose text box can't be read through AX and that are not
-//       terminals, not secure, not composing, not "Keys only" by the user, with the setting on and a pair whose ⌘A/⌘C/⌘V
-//       keys are safe: ⌘A ⌘C, convert the box with `BoxConversion` (direction: the remembered buffer's language, else
-//       the box's last letter, as if the caret were at its end), paste it with ⌘V, put the clipboard back after the
+//       terminals, not secure, not composing, not "Keys only" by the user, with the setting on and a pair whose ⌘C/⌘V
+//       keys are safe: ⇧⌘↑ ⌘C (P3-62: the box's start up to the cursor), convert it with `BoxConversion` (direction:
+//       the remembered buffer's language, else the last letter before the cursor), paste it with ⌘V, put the clipboard back after the
 //       finish. Empty box / no copy →
 //       the remembered buffer by keys, else just switch. P3-40: double-Shift again converts the box again (no undo).
-//   P3-40 (b): a selection AX reports in such an app is copied with ⌘C (no ⌘A) and pasted over, not typed over:
+//   P3-40 (b): a selection AX reports in such an app is copied with ⌘C (no ⇧⌘↑) and pasted over, not typed over:
 //       Chromium's `AXSelectedText` can drop the line breaks between paragraphs, so typing it over joined the lines.
 //
 // P3-42 (001 §12.3 X15): in a Chromium/Electron app (`FieldFamily.chromiumAX`: Chrome, Edge, Brave, Arc, Vivaldi, Opera,
@@ -72,14 +72,14 @@
 // P3-44 (owner tests 2026-11-16, Slack bold + @mention + emoji, Gmail bold: flattened by the clipboard paste):
 //   - the clipboard path never pastes plain text over rich content (`ClipboardConvert.Result.richContent`); since
 //     P3-47 a formatting-only HTML copy (outside chat apps) is converted inside the HTML and pasted as HTML (X16 C3).
-//     Otherwise, with a remembered buffer whose text the copied box *ends with* (the ⌘A selection was dropped with
+//     Otherwise, with a remembered buffer whose text the copy *ends with* (the ⇧⌘↑ selection was dropped with
 //     Right arrow, so the caret is right after it), only that run converts by Backspace + typing; else double-Shift
 //     just switches the language (the buffer is forgotten: the caret moved). A rich selection that can't take the HTML
 //     paste: just switch.
 //
 // P3-53 (001 §7 B5): one clock per request (`requestStart`, taken when the request arrives) is shared by every path:
 //   the Chromium read and its atom walks (`ChromiumAXConvert.Timing.readBudgetNanos`), the page check
-//   (`pageCheckBudgetNanos`, only what is left), and the clipboard's ⌘A ⌘C start (`copyStartBudgetNanos`); each stops
+//   (`pageCheckBudgetNanos`, only what is left), and the clipboard's ⇧⌘↑ ⌘C start (`copyStartBudgetNanos`); each stops
 //   before writing anything when its share is spent. P3-53: on a browser page whose host is unknown the Chromium path
 //   follows the page check too: `wholeDocument` → never; `unknown` → a selection only (the user chose it).
 //   - whole-box conversion keeps @mentions, `:shortcodes:` and mention pills the Chromium AX tree shows whole
@@ -377,7 +377,7 @@ import Foundation
             }
             // P3-40 (b): in an app whose box AX can't read (Slack, Chrome…), AX's selected text may have lost the line
             // breaks (Chromium can drop them between paragraphs), so typing it over joined the lines. Copy the selection
-            // itself with ⌘C (no ⌘A), check it against the AX text, convert, paste over it.
+            // itself with ⌘C (no ⇧⌘↑), check it against the AX text, convert, paste over it.
             if allowClipboard, let f = focus,
                !ReplacementPlanner.writesSelection(bundleID: r.bundleID, caps: capabilities, focus: f),
                let job = clipJob(r, layouts: layouts, focus: focus, element: element, source: .copiedSelection,
@@ -652,13 +652,13 @@ import Foundation
         case .auto, .preferPaste:
             // P3-37 QA; P3-47: a known Gecko browser is not an unknown terminal (AX first there, `.auto`).
             mayPasteLineBreaks = ReplacementCapabilities.isGeckoBrowser(r.bundleID)
-            // Any other app: only a real text box. ⌘A in a list, table or file browser selects items, and ⌘V could
+            // Any other app: only a real text box. ⇧⌘↑ in a list, table or file browser selects items, and ⌘V could
             // paste over all of them (Numbers, Finder).
             guard let role = f.role, Self.clipboardTextRoles.contains(role) else { return nil }
         case .terminal, .noUnicode, .disabled: return nil
         }
         if capabilities.override(for: r.bundleID) == .keysOnly { return nil }
-        // Editors: ⌘A is the whole file and the window may hold a terminal (a pasted line break could run a command).
+        // Editors: ⇧⌘↑ selects the file up to the cursor and the window may hold a terminal (a pasted line break could run a command).
         if ReplacementCapabilities.isEditor(r.bundleID) { return nil }
         var lineBreaks = mayPasteLineBreaks
         // P3-50: when the watcher has no site, the convert asks AX about the focused box's own page (its outermost web
@@ -671,7 +671,7 @@ import Foundation
         }
         if siteUnknown {
             // P3-47 QA: a browser page whose host Kytkin hasn't read may be a whole-document site (Google Docs…): the
-            // whole box (⌘A) is never copied there.
+            // box up to the cursor (⇧⌘↑) is never copied there.
             if source == .box { return nil }
             // P3-49 (Coordinator 2026-11-16): a selection is the user's own and the paste replaces only it, so it may
             // hold line breaks (HTML path: kept as structure; plain path: the copy must match the selection AX
@@ -872,13 +872,13 @@ import Foundation
             beep()
             return .noop(.replacement(.refused(.selectionUnreadable)))
         case .richContent(let typedRunAtEnd):
-            // P3-44: never paste plain text over rich content. The clipboard is back already; for the box the ⌘A
-            // selection was dropped with Right arrow, so the caret is at the end of the box: the remembered run may be
-            // typed over there only when the box ends with exactly that run. Otherwise (or a selection, or nothing
+            // P3-44: never paste plain text over rich content. The clipboard is back already; for the box the ⇧⌘↑
+            // selection was dropped with Right arrow, so the caret is back where the cursor was: the remembered run may
+            // be typed over there only when the copy ends with exactly that run. Otherwise (or a selection, or nothing
             // remembered) just switch the language; the buffer is forgotten (the caret moved).
             trace?.richCopy = true
             // P3-55 (owner, Slack: a converted copy of the whole box, with a literal U+FFFC, was *appended*): this used
-            // to call `fallBack`, which reads the focus again; Slack still reported the ⌘A selection (the Right arrow
+            // to call `fallBack`, which reads the focus again; Slack still reported the select-all (the Right arrow
             // that dropped it hadn't reached AX yet), so the *selection* path typed the AX selected text (the whole box,
             // its emoji as U+FFFC) "over" a selection that no longer existed. Now only the remembered keys, by
             // Backspace × their count + typing, never through a selection read.
@@ -893,7 +893,7 @@ import Foundation
         case .boxEmpty where job.source == .copiedSelection:
             // P3-40 (b): ⌘C copied nothing; only ⌘C was posted. P3-55 QA: the old way (type over the AX text) is what
             // wrote a copy of the box at the end in Slack: AX can report a selection that is no longer there (right
-            // after Kytkin's own ⌘A / Right arrow / ⌘V, e.g. a second double-Shift), and a real selection would have
+            // after Kytkin's own ⇧⌘↑ / Right arrow / ⌘V, e.g. a second double-Shift), and a real selection would have
             // been copied. The clipboard path only runs where AX can't write the selection, so the old way is always
             // typing AX's text: never. Just switch; the buffer is forgotten (a selection may be there).
             if r.snapshot.hasRun { finish.bufferAfter = [] }
@@ -903,15 +903,15 @@ import Foundation
             if r.snapshot.hasRun { finish.bufferAfter = [] }
             return await toggle(r, because: .fieldUnreadable)
         case .boxEmpty where r.snapshot.hasRun:
-            // P3-37 QA: ⌘A (and the Right arrow that dropped its selection) were posted, so the caret is at the end of
-            // the box, or one character further right if ⌘A did nothing: not where the remembered buffer ends. Typing
-            // the buffer by keys now would backspace over the wrong text. Forget it and beep.
+            // P3-37 QA / P3-62: ⇧⌘↑ (and maybe a Right arrow to drop its selection) were posted, so the caret may not
+            // be where the remembered buffer ends. Typing the buffer by keys now could backspace over the wrong text.
+            // Forget it and beep.
             finish.bufferAfter = []
             beep()
             return .noop(.replacement(.exhausted))
         case .boxEmpty:
-            // P3-55 QA: ⌘A and the Right arrow were posted (nothing copied, nothing remembered): a fallback would read
-            // the focus again while AX may still report the ⌘A selection, and type the box over it. Just switch.
+            // P3-55 QA: ⇧⌘↑ (and maybe the Right arrow) were posted (nothing copied, nothing remembered): a fallback
+            // would read the focus again while AX may still report that selection, and type over it. Just switch.
             return await toggle(r, because: .nothingToConvert)
         case .unavailable:
             // `.unavailable`: nothing was posted (no snapshot, the first event refused), so the caret is where it was.
@@ -929,12 +929,12 @@ import Foundation
         }
     }
 
-    /// P3-55: after a rich copy whose box text ends with the remembered run (the ⌘A selection dropped with Right arrow,
+    /// P3-55: after a rich copy whose text ends with the remembered run (the ⇧⌘↑ selection dropped with Right arrow,
     /// so the caret is right after it): Backspace × the run's graphemes, then its re-rendering, from the key buffer's
     /// own strokes, never from any text read from the box. Refused (just switch, buffer forgotten) when the run can't be
     /// counted or typed, holds a `:` (Slack turns `:smile:` into one emoji) or an object, or the focus looks secure or
     /// composing. Events are queued after the Right arrow, so the Backspaces start at the end even when AX still shows
-    /// the old ⌘A selection.
+    /// the old ⇧⌘↑ selection.
     /// nil = refused (the caller just switches and forgets the buffer).
     private func richCopyKeyDecision(_ r: ConvertRequest, layouts: LayoutSnapshot) -> Decision? {
         if CopiedContent.appKind(bundleID: r.bundleID) == .chat { return nil }   // P3-58 QA: never keys in chat apps
@@ -1136,7 +1136,7 @@ import Foundation
             return .noop(.replacement(.exhausted))
         case .unavailable(.timedOut):
             // P3-42 QA: the budget is spent and the B3 claim is taken: the hold-back flush (deadline + hard cap) is
-            // near, so a second path (⌘A / ⌘C / ⌘V or keys) could run while the user's held keys replay. Nothing was
+            // near, so a second path (⇧⌘↑ / ⌘C / ⌘V or keys) could run while the user's held keys replay. Nothing was
             // typed; beep instead.
             beep()
             return .noop(.replacement(.timedOut))

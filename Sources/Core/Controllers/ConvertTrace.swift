@@ -19,7 +19,7 @@ struct ConvertTrace: Sendable, Equatable {
         case ax
         /// P3-42: select + type over changed pieces in a Chromium/Electron web box.
         case chromiumAX
-        /// P3-37: ⌘A ⌘C, convert, ⌘V, restore.
+        /// P3-37 / P3-62: ⇧⌘↑ ⌘C (or ⌘C on a selection), convert, ⌘V, restore.
         case clipboard
         /// The remembered buffer by Backspace + typing.
         case keys
@@ -88,7 +88,7 @@ struct ConvertTrace: Sendable, Equatable {
         return parts.joined(separator: " ")
     }
 
-    /// P3-48 QA: the atoms' roles as counts per role, in first-seen order (`AXStaticText:1,AXQuoteText:37`), `-` = none.
+    /// P3-48 QA: the atoms' roles as counts per role, in first-seen order (`AXStaticText:1,AXLink:2`), `-` = none.
     static func roleCounts(_ roles: [String]) -> String {
         guard !roles.isEmpty else { return "-" }
         var order: [String] = []
