@@ -2,7 +2,7 @@
 // preview is drawn exactly like the real item. AppKit only; nothing here reads or changes any state.
 // P6-0e (docs/design/artwork/Colors.md): Claude Design's artwork. Eight template PDFs, 18 × 18 pt:
 // `kytkin-menubar-{active,paused,attention,off}-{a,b}.pdf`, the filled half = the language that is on (`-a` the
-// pair's first language, `-b` the second). The whole item is one template image: the glyph, 4 pt, then the letters
+// pair's first language, `-b` the second). The whole item is one template image: the glyph, 5 pt (P6-0g), then the letters
 // (SF Pro Text 13 pt medium) in a fixed 20 pt frame, so the item's width never changes; when Kytkin is off the
 // letters fade to 35 % like the glyph. macOS tints it for every menu bar.
 

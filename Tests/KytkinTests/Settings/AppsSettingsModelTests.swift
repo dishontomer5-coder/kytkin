@@ -110,7 +110,7 @@ final class AppsSettingsModelTests: XCTestCase {
     }
 
     func testConvertOffCopySaysDoubleShiftOnlySwitches() {
-        XCTAssertEqual(AppsSettingsModel.convertOffText, "When off, double-Shift only switches the language.")
+        XCTAssertEqual(AppsSettingsModel.convertOffText, "When off, Double-Shift only switches the language.")
     }
 
     // MARK: - Writes store only differences

@@ -57,7 +57,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertTrue(sut.keyboardProblemText?.hasPrefix("Stopped") == true)
 
         set { $0.paused = true }
-        XCTAssertNil(sut.keyboardProblemText, "paused is the user's choice, not a setup problem")
+        XCTAssertNil(sut.keyboardProblemText, "paused is the user’s choice, not a setup problem")
     }
 
     // MARK: - Rows
@@ -105,8 +105,8 @@ final class PermissionsSettingsModelTests: XCTestCase {
         set { $0.accessibility = .notDetermined; $0.inputMonitoring = .notDetermined }
         // P6-0c (copy review P-1, P-2, P-3): every use of Accessibility (websites too); Input Monitoring is a backup.
         XCTAssertEqual(row(.accessibility).enables,
-                       "Lets Kytkin read and replace the text you convert, and see which website you're on.")
-        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("website rules don't work"))
+                       "Lets Kytkin read and replace the text you convert, and see which website you’re on.")
+        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("website rules don’t work"))
         XCTAssertTrue(row(.inputMonitoring).enables.hasPrefix("Usually not needed."))
         XCTAssertFalse(row(.inputMonitoring).enables.contains("learn"), "v1 learns nothing from typed words")
     }
@@ -143,7 +143,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertEqual(row(.inputMonitoring).status, .notNeeded)
         XCTAssertEqual(row(.inputMonitoring).statusText, "Not needed (Accessibility covers it)")
 
-        set { $0.showsQuitAndReopen = true }   // even a stale hint can't bring the button back
+        set { $0.showsQuitAndReopen = true }   // even a stale hint can’t bring the button back
         XCTAssertEqual(row(.inputMonitoring).status, .notNeeded)
         XCTAssertFalse(row(.inputMonitoring).showsQuitAndReopen)
 
@@ -213,7 +213,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
 
     func testQuitAndReopenOnlyWhileTheHintShows() {
         sut.quitAndReopen()
-        XCTAssertEqual(relaunches, 0, "a stale click can't quit the app")
+        XCTAssertEqual(relaunches, 0, "a stale click can’t quit the app")
         state.showsQuitAndReopen = true   // not reloaded yet: quitAndReopen reads fresh
         sut.quitAndReopen()
         XCTAssertEqual(relaunches, 1)
@@ -257,7 +257,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertTrue(text({ $0.accessibility = .notDetermined }, desired: .off).hasPrefix("Off: allow Accessibility"))
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .off).hasPrefix("Off in Double-Shift settings"))
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .active)
-            .hasPrefix("Stopped: Kytkin couldn't start it."))
+            .hasPrefix("Stopped: Kytkin couldn’t start it."))
         // P2-57 item 1: a start that timed out (or a failed restart) says what the menu says.
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .active)
             .hasSuffix("Part of it is off. Use Start Double-Shift Again in the Kytkin menu."))
@@ -297,7 +297,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         set { $0.conflicts = Conflicts(runningSwitchers: ["FlicKey"], perDocumentInputEnabled: true) }
         XCTAssertEqual(sut.conflictLines.count, 2)
         XCTAssertTrue(sut.conflictLines[0].hasPrefix("FlicKey also switches languages, so the two may undo each other."))
-        XCTAssertTrue(sut.conflictLines[1].contains("Automatically switch to a document's input source"))
+        XCTAssertTrue(sut.conflictLines[1].contains("Automatically switch to a document’s input source"))
     }
 
     // MARK: - P2-46: the retry after a grant shows in the tab
@@ -315,7 +315,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         let tab = PermissionsSettingsModel(permissions: fake, store: appStore,
                                            polling: PermissionPollingDemand(permissions: fake), appName: "Kytkin",
                                            state: { controller.menuState }, relaunch: { XCTFail("no relaunch") })
-        controller.onDisplayChange = { tab.reload() }   // the root's fan-out
+        controller.onDisplayChange = { tab.reload() }   // the root’s fan-out
         fake.onChange = { controller.permissionsDidChange($0) }
         controller.start()
         XCTAssertEqual(watcher.starts, [])

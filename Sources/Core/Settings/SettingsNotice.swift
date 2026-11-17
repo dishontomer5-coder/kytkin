@@ -16,18 +16,18 @@ struct SettingsNotice: Equatable, Sendable, Identifiable {
         var result: [SettingsNotice] = []
         if isReadOnly {
             let message = if loadIssue == .newerSchemaReadOnly {
-                "These settings come from a newer Kytkin, so you can't change them here. "   // P6-0c (S-1)
+                "These settings come from a newer Kytkin, so you can’t change them here. "   // P6-0c (S-1)
                     + "Update Kytkin to change them."
             } else {
                 // P6-0c (copy review S-2): a way out.
-                "Kytkin couldn't read its settings, so it is using the defaults. Your file is left as it is. "
+                "Kytkin couldn’t read its settings, so it is using the defaults. Your file is left as it is. "
                     + "To start fresh, move it out of the Settings folder (Advanced → Open Settings Folder)."
             }
             result.append(SettingsNotice(kind: .readOnly, message: message))
         }
         if lastSaveFailed, !isReadOnly {
             result.append(SettingsNotice(kind: .saveFailed,
-                                         message: "Settings couldn't be saved. Your changes work until "
+                                         message: "Settings couldn’t be saved. Your changes work until "
                                              + "Kytkin quits."))   // P6-0c (S-3)
         }
         if case .corruptQuarantined(let url)? = loadIssue {
@@ -36,7 +36,7 @@ struct SettingsNotice: Equatable, Sendable, Identifiable {
                                              + "The old file was moved to \(display(url))."))
         }
         if loadWasLossy {
-            var message = "Some settings couldn't be read and were reset."
+            var message = "Some settings couldn’t be read and were reset."
             if let url = originalBackupURL { message += " The original file is kept at \(display(url))." }
             result.append(SettingsNotice(kind: .lossy, message: message))
         }

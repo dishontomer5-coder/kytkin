@@ -17,11 +17,12 @@ struct RowLabel: View {
     }
 
     var body: some View {
+        // P6-0g (review P2): one row style, a 13 pt regular title and an 11 pt secondary line.
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
+            Text(title).font(.system(size: 13))
             if let subtitle {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -92,12 +93,12 @@ struct NoticeSection: View {
     }
 }
 
-/// P6-0e QA (Colors.md: Link, light #0E7A66, dark #6FD9C2): Kytkin's link colour, for every link and link-style
-/// button (the system `.link` style draws the system blue). A dynamic colour, so it follows the appearance.
+/// P6-0e QA (Colors.md: Link, light #0E7A66): Kytkin's link colour, for every link and link-style button (the system
+/// `.link` style draws the system blue). A dynamic colour, so it follows the appearance. P6-0g (review P2): dark #5FD3B5.
 extension Color {
     static let kytkinLink = Color(nsColor: NSColor(name: "KytkinLink") { appearance in
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(srgbRed: 0x6F / 255, green: 0xD9 / 255, blue: 0xC2 / 255, alpha: 1)
+        return dark ? NSColor(srgbRed: 0x5F / 255, green: 0xD3 / 255, blue: 0xB5 / 255, alpha: 1)
             : NSColor(srgbRed: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255, alpha: 1)
     })
 }

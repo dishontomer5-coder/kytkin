@@ -8,6 +8,7 @@
 //   Advanced     app exceptions (was Apps), keyboard layouts (Languages' import/export), diagnostics (Permissions'
 //                keyboard status and typing protection), the Settings folder (was in About)
 //   About        unchanged, minus the Settings folder
+// P6-0g (design v2): app exceptions moved into Rules; Advanced is one pane (Keyboard Layouts, Troubleshooting).
 // The window draws them as toolbar tabs (icon over title, `NSTabViewController.tabStyle = .toolbar`).
 
 import Foundation
@@ -50,17 +51,3 @@ enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// P6-0c: the parts of the Advanced tab (a segmented control at its top).
-enum AdvancedSection: String, CaseIterable, Sendable, Identifiable {
-    case apps, keyboardLayouts, diagnostics
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .apps: "App Exceptions"
-        case .keyboardLayouts: "Keyboard Layouts"
-        case .diagnostics: "Diagnostics"
-        }
-    }
-}

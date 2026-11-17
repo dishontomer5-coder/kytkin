@@ -24,7 +24,7 @@ struct LanguagePairOption: Identifiable, Equatable, Sendable {
             case .enabled: "In your Keyboard settings"   // P6-0c (copy review L-3)
             case .imported: "Imported"
             case .installed: "On this Mac, not added (convert only)"
-            case .inputMethod: "Can't convert"
+            case .inputMethod: "Can’t convert"
             case .missing: "Missing"
             }
         }
@@ -59,9 +59,9 @@ struct LanguagePairOption: Identifiable, Equatable, Sendable {
                         baseName: (InputSourceID) -> String) -> [LanguagePairOption] {
         var result: [LanguagePairOption] = []
         var seen = Set<InputSourceID>()
-        func name(_ info: InputSourceInfo) -> String {
-            info.name.isEmpty ? DefaultBehaviorOption.fallbackName(info.id) : info.name
-        }
+        // P6-0g: the language ("English") for messages; the picker shows "English (ABC)".
+        func name(_ info: InputSourceInfo) -> String { LanguageNames.friendly(info) }
+        func layout(_ info: InputSourceInfo) -> String { LanguageNames.pickerTitle(info) }
         for info in installed where !info.id.rawValue.isEmpty && seen.insert(info.id).inserted {
             let source = inputSource(info.id)
             if !systemIDs.contains(info.id) {
@@ -70,14 +70,14 @@ struct LanguagePairOption: Identifiable, Equatable, Sendable {
                 result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(name(info)) (imported, \(suffix))",
                                                  kind: .imported, inputSource: source))
             } else if info.isEnabled {
-                result.append(LanguagePairOption(id: info.id, name: name(info), title: name(info), kind: .enabled, inputSource: source))
+                result.append(LanguagePairOption(id: info.id, name: name(info), title: layout(info), kind: .enabled, inputSource: source))
             } else {
-                result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(name(info)) (not added)",
+                result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(layout(info)) (not added)",
                                                  kind: .installed, inputSource: source))
             }
         }
         for info in inputMethods where !info.id.rawValue.isEmpty && seen.insert(info.id).inserted {
-            result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(name(info)) (can't convert)", kind: .inputMethod,
+            result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(layout(info)) (can’t convert)", kind: .inputMethod,
                                              inputSource: nil))
         }
         for saved in [pair.a, pair.b] where seen.insert(saved).inserted {

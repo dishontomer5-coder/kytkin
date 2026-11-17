@@ -65,11 +65,11 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
         return PermissionRow(
             pane: .accessibility, title: "Accessibility", status: status, statusText: text(for: status),
             // P6-0c (copy review P-1, P1): every use, the website one too (the page address is read through it).
-            enables: "Lets Kytkin read and replace the text you convert, and see which website you're on.",
+            enables: "Lets Kytkin read and replace the text you convert, and see which website you’re on.",
             // P6-0c (P-2): website rules need it too (the browser watch attaches only with Accessibility).
             withoutIt: status == .granted ? nil
-                : "Without it, Kytkin still switches the language for each app, but double-Shift and website rules "
-                    + "don't work.",
+                : "Without it, Kytkin still switches the language for each app, but Double-Shift and website rules "
+                    + "don’t work.",
             hint: requestHint(state: state, pane: "Accessibility", appName: appName),
             showsGrant: showsButtons(state), grantTitle: "Allow Accessibility…",
             showsOpenSettings: showsButtons(state), showsQuitAndReopen: false)
@@ -98,7 +98,7 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
             // P6-0c (visual review P2): optional, so never a red "Not allowed".
             statusText: status == .notGranted ? "Optional" : text(for: status),
             // P6-0c (copy review P-3, P1): v1 learns nothing from typed words; it's only a double-Shift backup.
-            enables: "Usually not needed. A backup so Kytkin can notice double-Shift when Accessibility is off.",
+            enables: "Usually not needed. A backup so Kytkin can notice Double-Shift when Accessibility is off.",
             withoutIt: withoutIt,
             hint: hint,
             showsGrant: buttons, grantTitle: "Allow Input Monitoring…",

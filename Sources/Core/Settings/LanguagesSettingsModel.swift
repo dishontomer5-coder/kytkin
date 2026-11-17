@@ -142,18 +142,18 @@ import Observation
             guard let option = all.first(where: { $0.id == id }) else { continue }
             switch option.kind {
             case .missing:
-                result.append("\(option.name) isn't on this Mac any more, so double-Shift can't convert. "
+                result.append("\(option.name) isn’t on this Mac any more, so Double-Shift can’t convert. "
                               + "Choose another language.")
             case .inputMethod:
                 // P6-0c (copy review L-7).
-                result.append("Double-Shift can't convert \(option.name), because it's not a plain keyboard. "
+                result.append("Double-Shift can’t convert \(option.name), because it’s not a plain keyboard. "
                               + "Choose another language.")
             case .installed:
                 // P6-0c (copy review L-8): effect first, then the fix, with the current macOS path.
-                result.append("Kytkin can convert to \(option.name) but can't switch to it. To fix this, add it in "
+                result.append("Kytkin can convert to \(option.name) but can’t switch to it. To fix this, add it in "
                               + "System Settings → Keyboard → Text Input → Edit….")
             case .imported where option.inputSource == nil:
-                result.append("\(option.name) needs a keyboard that isn't installed. Choose another language.")
+                result.append("\(option.name) needs a keyboard that isn’t installed. Choose another language.")
             case .imported, .enabled:
                 break
             }
@@ -180,8 +180,8 @@ import Observation
     var skippedFilesNotice: String? {
         let files = imported.skippedFiles
         guard !files.isEmpty else { return nil }
-        return "Kytkin couldn't load \(files.count == 1 ? "this file" : "these files") in its layouts folder: "
-            + files.joined(separator: ", ") + ". Import \(files.count == 1 ? "it" : "them") again to see what's wrong."
+        return "Kytkin couldn’t load \(files.count == 1 ? "this file" : "these files") in its layouts folder: "
+            + files.joined(separator: ", ") + ". Import \(files.count == 1 ? "it" : "them") again to see what’s wrong."
     }
 
     /// The file the user picked in the open panel.
@@ -205,7 +205,7 @@ import Observation
             }
             status = Status(text: text, isError: false)
         } catch {
-            status = Status(text: "Couldn't import “\(file)”: \(error.message)", isError: true)
+            status = Status(text: "Couldn’t import “\(file)”: \(error.message)", isError: true)
         }
     }
 
@@ -220,7 +220,7 @@ import Observation
             try imported.remove(id: id)
             status = Status(text: "Removed “\(map.name)”.", isError: false)
         } catch {
-            status = Status(text: "Couldn't remove “\(map.name)”: \(error.message)", isError: true)
+            status = Status(text: "Couldn’t remove “\(map.name)”: \(error.message)", isError: true)
         }
         if exportSelection == id.rawValue { exportSelection = pair.a.rawValue }
     }
@@ -247,7 +247,7 @@ import Observation
     func export(to url: URL) {
         let id = InputSourceID(exportSelection)
         guard let map = catalog.exportMap(for: id) else {
-            status = Status(text: "Couldn't export: that layout isn't available any more.", isError: true)
+            status = Status(text: "Couldn’t export: that layout isn’t available any more.", isError: true)
             return
         }
         do {
@@ -264,25 +264,26 @@ import Observation
             }
             status = Status(text: "Exported “\(map.name)” to \(url.lastPathComponent).", isError: false)
         } catch let error as LayoutImportError {
-            status = Status(text: "Couldn't export “\(map.name)”: \(error.message)", isError: true)
+            status = Status(text: "Couldn’t export “\(map.name)”: \(error.message)", isError: true)
         } catch {
-            status = Status(text: "Couldn't export “\(map.name)”.", isError: true)
+            status = Status(text: "Couldn’t export “\(map.name)”.", isError: true)
         }
     }
 
     // MARK: - Names
 
     func name(of id: InputSourceID) -> String {
-        if let info = systemLayouts.first(where: { $0.id == id }), !info.name.isEmpty { return info.name }
+        // P6-0g: the language ("English"), not the layout ("ABC").
+        if let info = systemLayouts.first(where: { $0.id == id }) { return LanguageNames.friendly(info) }
         if let map = imported.map(for: id) { return map.name }
         return DefaultBehaviorOption.fallbackName(id)
     }
 
     private func detail(for map: LayoutMap) -> String {
         let kind = map.source == .user ? "Changes some keys of" : "Full layout, types with"
-        guard let base = map.base else { return "Full layout. It can't be in the pair: it names no keyboard to type with." }
+        guard let base = map.base else { return "Full layout. It can’t be in the pair: it names no keyboard to type with." }
         if catalog.inputSource(for: map.id) == nil {
-            return "\(kind) \(DefaultBehaviorOption.fallbackName(base)), which isn't installed."
+            return "\(kind) \(DefaultBehaviorOption.fallbackName(base)), which isn’t installed."
         }
         return "\(kind) \(name(of: base))."
     }

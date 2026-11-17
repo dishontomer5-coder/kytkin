@@ -25,8 +25,8 @@ import Observation
     private(set) var candidates: [AppCandidate] = []
 
     /// Under the Convert switch (P2-54(c)): exactly what "convert off" means.
-    static let convertOffText = "When off, double-Shift only switches the language."
-    static let kytkinOffText = "When off, Kytkin doesn't switch the language, learn, or convert in this app."
+    static let convertOffText = "When off, Double-Shift only switches the language."
+    static let kytkinOffText = "When off, Kytkin doesn’t switch the language, learn, or convert in this app."
 
     init(store: PreferencesStore, appName: @escaping @MainActor (String) -> String?,
          runningApps: @escaping @MainActor () -> [AppCandidate], ownBundleID: String) {
@@ -72,7 +72,7 @@ import Observation
     }
 
     var emptyText: String {
-        "No apps here yet. Add an app to turn Kytkin or double-Shift off in it."   // P6-0c (A-9)
+        "No apps here yet. Add an app to turn Kytkin or Double-Shift off in it."   // P6-0c (A-9)
     }
 
     func methodOptions(for row: AppRow) -> [AppMethodOption] {
