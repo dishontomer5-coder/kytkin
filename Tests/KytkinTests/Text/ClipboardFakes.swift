@@ -72,7 +72,12 @@ import Foundation
 
     /// Someone else (the user, another app) copies now.
     func externalCopy(_ text: String) {
-        items = [[PasteboardEntry(type: Self.plain, data: Data(text.utf8))]]
+        externalCopy([[PasteboardEntry(type: Self.plain, data: Data(text.utf8))]])
+    }
+
+    /// P3-65: another app (a password manager) put these items on the clipboard.
+    func externalCopy(_ newItems: [[PasteboardEntry]]) {
+        items = newItems
         count += 1
     }
 

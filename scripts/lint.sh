@@ -3,10 +3,12 @@
 #   1. Core import rule (design.md, 001 §2): files in Sources/Core may import only
 #      Foundation, Observation, CryptoKit.
 #   2. Logging rule (design.md privacy invariants, 001 §7 B12):
-#      - nowhere in Sources: print, debugPrint, NSLog, dump (a shipped app has no console;
-#        use os.Logger outside Keyboard/ and Text/ for non-sensitive events).
-#      - in any Keyboard/, Text/ or Browser/ folder: no logging at all (no os_log, os.Logger, OSLog import),
-#        because that code handles keystrokes, typed text and browser addresses (P3-6, 001 §14.3.6).
+#      - nowhere in Sources: print, debugPrint, NSLog, dump (a shipped app has no console).
+#      - P3-65 (P3-18 audit L2): no logging at all (os_log, os_signpost, Logger, `import os` / `import OSLog`)
+#        anywhere in Sources except the one allowlisted file, App/ConvertDiagnosticsLog.swift (the DEBUG convert
+#        trace), and there every Logger( line must sit inside `#if DEBUG` (before its `#else` / `#endif`).
+#        Was: only Keyboard/, Text/ and Browser/ folders (P3-6); text and hosts also pass through Controllers/,
+#        Context/, App/ and UI/.
 # `./scripts/lint.sh --self-test` checks that the rules still catch what they should (run by build.sh test).
 # Lines whose first non-blank characters are `//` or `*` (comments) are ignored.
 set -euo pipefail
@@ -37,7 +39,16 @@ if [[ "${1:-}" == "--self-test" ]]; then
   expect fail "Core/Text/A.swift" 'import OSLog'
   expect fail "App/A.swift" 'print("x")'
   expect fail "Core/Browser/A.swift" 'import AppKit'
-  expect pass "System/Other/A.swift" 'let log = Logger(subsystem: "x", category: "y")'
+  # P3-65 (audit L2): everywhere now, not only Keyboard/ Text/ Browser/.
+  expect fail "System/Other/A.swift" 'let log = Logger(subsystem: "x", category: "y")'
+  expect fail "Core/Controllers/A.swift" 'let log = Logger(subsystem: "x", category: "y")'
+  expect fail "Core/Context/A.swift" 'import os'
+  expect fail "UI/A.swift" 'os_log("x")'
+  expect fail "App/A.swift" 'import OSLog'
+  expect pass "App/ConvertDiagnosticsLog.swift" $'import os\n#if DEBUG\nlet l = Logger(subsystem: "x", category: "y")\n#else\nlet l: Int? = nil\n#endif'
+  expect fail "App/ConvertDiagnosticsLog.swift" 'let l = Logger(subsystem: "x", category: "y")'
+  expect fail "App/ConvertDiagnosticsLog.swift" $'#if DEBUG\n#else\nlet l = Logger(subsystem: "x", category: "y")\n#endif'
+  expect fail "App/Other/ConvertDiagnosticsLog.swift" $'#if DEBUG\nlet l = Logger()\n#endif'
   expect pass "Core/Browser/A.swift" '// Logger( in a comment is fine'
   expect pass "Core/Browser/A.swift" 'struct SiteReader {}'
   exit 0
@@ -74,14 +85,26 @@ while IFS= read -r hit; do
   problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): no print/debugPrint/NSLog/dump in Sources (privacy, design.md)")
 done < <(scan "$SRC" "$PRINT_RE")
 
-# 2b. Any logging inside Keyboard/, Text/ and Browser/ folders (P3-6: Browser/ code sees page addresses).
+# 2b. P3-65 (audit L2): any logging anywhere in Sources, except the allowlisted DEBUG trace file.
 LOG_RE='(^|[^.[:alnum:]_]|os\.)(os_log|os_signpost|Logger)[[:space:]]*\(|^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)*import[[:space:]]+(os|OSLog)([[:space:].]|$)'
-while IFS= read -r dir; do
-  while IFS= read -r hit; do
-    [[ -z "$hit" ]] && continue
-    problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): no logging in Keyboard/, Text/ or Browser/ (keystrokes, typed text, browser addresses: B12)")
-  done < <(scan "$dir" "$LOG_RE")
-done < <(find "$SRC" -type d \( -name Keyboard -o -name Text -o -name Browser \) 2>/dev/null)
+LOG_ALLOWED="$SRC/App/ConvertDiagnosticsLog.swift"
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  [[ "${hit%%:*}" == "$LOG_ALLOWED" ]] && continue
+  problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): no logging in Sources except App/ConvertDiagnosticsLog.swift (keystrokes, typed text, addresses: B12)")
+done < <(scan "$SRC" "$LOG_RE")
+# The allowlisted file: every Logger( / os_log( line inside `#if DEBUG`, before its `#else` / `#endif`.
+if [[ -f "$LOG_ALLOWED" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    problems+=("$LOG_ALLOWED:$line: a Logger in ConvertDiagnosticsLog.swift must be inside #if DEBUG (Release logs nothing)")
+  done < <(awk '
+    /^[[:space:]]*(\/\/|\*)/ { next }
+    /^[[:space:]]*#if[[:space:]]+DEBUG/ { debug = 1; next }
+    /^[[:space:]]*#(else|endif)/ { debug = 0; next }
+    /(^|[^.[:alnum:]_]|os\.)(os_log|os_signpost|Logger)[[:space:]]*\(/ { if (!debug) print NR }
+  ' "$LOG_ALLOWED")
+fi
 
 if (( ${#problems[@]} > 0 )); then
   echo "❌ Lint failed:" >&2

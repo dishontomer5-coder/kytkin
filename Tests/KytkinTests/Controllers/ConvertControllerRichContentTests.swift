@@ -931,6 +931,23 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(rig.field.text, "akuo vh\nOn Tue X wrote:\nnv nmc")
     }
 
+    // MARK: - P3-65 (P3-18 audit H1): a password on the clipboard
+
+    @TextActor func testSlackWithAConcealedClipboardJustSwitchesAndNeverTouchesIt() async {
+        let rig = rig("akuo vh")
+        let secret: [[PasteboardEntry]] = [[PasteboardEntry(type: "public.utf8-plain-text", data: Data("pw".utf8)),
+                                            PasteboardEntry(type: "org.nspasteboard.ConcealedType", data: Data())]]
+        rig.pasteboard.externalCopy(secret)
+        let before = rig.pasteboard.changeCount
+        let out = await rig.sut.handle(request(buffer("vh"), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(rig.pasteboard.items, secret)
+        XCTAssertEqual(rig.pasteboard.changeCount, before, "the password manager's auto-clear still sees its own write")
+        XCTAssertTrue(rig.poster.events.isEmpty, "nothing posted")
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("unavailable(secretClipboard)"), line)
+    }
+
     // MARK: - P3-62 (owner 2026-11-17): a selection, or the box's start up to the cursor — nothing after it
 
     private func keyNames(_ poster: RecordingPoster) -> [String] {

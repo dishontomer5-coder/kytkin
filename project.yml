@@ -37,7 +37,7 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES # menu-bar only, no Dock icon
         INFOPLIST_KEY_CFBundleDisplayName: Kytkin
         # P2-3: shown in the Automation consent prompt (opt-in browser fallback, R3/R8).
-        INFOPLIST_KEY_NSAppleEventsUsageDescription: "Kytkin reads the address of the current browser tab to apply your per-website keyboard language. It never reads page content."
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "Kytkin reads the address of the current browser tab, and whether the window is private, to apply your per-website keyboard language. It never reads page content."
         CODE_SIGN_ENTITLEMENTS: Config/Kytkin.entitlements
         INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License"
         ENABLE_HARDENED_RUNTIME: YES
