@@ -97,7 +97,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         sut.refresh()
         XCTAssertEqual(sut.defaultBehaviorID, DefaultBehaviorOption.keepCurrentID)
         XCTAssertEqual(sut.defaultBehaviorOptions.map(\.title),
-                       ["Leave as is", "Switch to ABC", "Switch to Hebrew"])
+                       ["Leave As Is", "Switch to ABC", "Switch to Hebrew"])
         sut.defaultBehaviorID = "switchTo:" + IDs.hebrew.rawValue
         XCTAssertEqual(store.prefs.general.defaultBehavior, .switchTo(IDs.hebrew))
         XCTAssertEqual(sut.defaultBehaviorID, "switchTo:" + IDs.hebrew.rawValue)
@@ -190,7 +190,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         login.registerError = FakeLoginItems.Failure()
         sut.setLaunchAtLogin(true)
         XCTAssertFalse(sut.launchAtLogin)
-        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login. Try again, or add Kytkin in System Settings → General → Login Items.")
+        XCTAssertEqual(sut.loginItemError, "Couldn’t turn on Open at Login. Try again, or add Kytkin in System Settings → General → Login Items.")
         sut.refresh()
         XCTAssertNil(sut.loginItemError, "cleared when Settings opens again")
     }
@@ -201,7 +201,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         login.unregisterError = FakeLoginItems.Failure()
         sut.setLaunchAtLogin(false)
         XCTAssertTrue(sut.launchAtLogin)
-        XCTAssertEqual(sut.loginItemError, "Couldn't turn off Open at Login.")
+        XCTAssertEqual(sut.loginItemError, "Couldn’t turn off Open at Login.")
     }
 
     /// QA (P2-23): register/unregister returned without an error but the status didn't follow (e.g. `.notFound`):
@@ -211,7 +211,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         login.statusAfterRegister = .notFound
         sut.setLaunchAtLogin(true)
         XCTAssertFalse(sut.launchAtLogin)
-        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login. Try again, or add Kytkin in System Settings → General → Login Items.")
+        XCTAssertEqual(sut.loginItemError, "Couldn’t turn on Open at Login. Try again, or add Kytkin in System Settings → General → Login Items.")
         XCTAssertNil(sut.loginItemHint)
     }
 
@@ -221,7 +221,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         login.statusAfterUnregister = .requiresApproval
         sut.setLaunchAtLogin(false)
         XCTAssertTrue(sut.launchAtLogin)
-        XCTAssertEqual(sut.loginItemError, "Couldn't turn off Open at Login.",
+        XCTAssertEqual(sut.loginItemError, "Couldn’t turn off Open at Login.",
                        "pending approval excuses only a turn-on")
     }
 
