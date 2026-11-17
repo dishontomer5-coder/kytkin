@@ -14,6 +14,8 @@ struct MenuState: Equatable {
     /// P6-0e: the pair as the input sources Kytkin switches to (an imported map's base), so the menu-bar logo fills
     /// the half of the language that is on. nil = unknown.
     var pairInputSources: LanguagePair?
+    /// P6-3: a newer release is out (only while the update check is on).
+    var updateNotice: UpdateNotice?
     var paused = false
     /// `general.enabled` (Settings → General → Enable Kytkin).
     var enabled = true

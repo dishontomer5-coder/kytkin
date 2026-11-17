@@ -32,6 +32,8 @@ struct MenuItemModel: Equatable {
         case restartKeyboard
         /// Show the file in Finder (the kept original or the damaged settings file).
         case revealFile(URL)
+        /// P6-3: the release page, in the browser (a click; Kytkin never downloads anything).
+        case openURL(URL)
         case quit
     }
 

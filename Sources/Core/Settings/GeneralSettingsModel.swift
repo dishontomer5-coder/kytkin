@@ -27,13 +27,27 @@ import Observation
     /// P6-0d: the language selected now, for the "Show in menu bar" preview (read when drawn).
     @ObservationIgnored let currentLanguage: @MainActor () -> InputSourceInfo?
 
+    /// P6-3: the optional update check (nil = not wired, e.g. some tests).
+    @ObservationIgnored let updates: UpdateChecker?
+
     init(store: PreferencesStore, loginItems: any LoginItemManaging,
          sources: @escaping @MainActor () -> [InputSourceInfo],
-         currentLanguage: @escaping @MainActor () -> InputSourceInfo? = { nil }) {
+         currentLanguage: @escaping @MainActor () -> InputSourceInfo? = { nil },
+         updates: UpdateChecker? = nil) {
         self.store = store
         self.loginItems = loginItems
         self.readSources = sources
         self.currentLanguage = currentLanguage
+        self.updates = updates
+    }
+
+    /// P6-3: Settings → General → "Check for updates" (subtitle).
+    static let updateCheckHelp = "Once a day, Kytkin asks GitHub whether a newer version is out. Nothing about you "
+        + "or your typing is sent, and nothing is downloaded."
+
+    /// P6-3: when the last check ran, for the "Check Now" row.
+    var lastUpdateCheckText: String? {
+        store.prefs.general.lastUpdateCheck.map { "Last checked \($0.formatted(date: .abbreviated, time: .shortened))." }
     }
 
     /// P6-0d: how the status item looks with `menuBarDisplay` (the real label model, the normal look).

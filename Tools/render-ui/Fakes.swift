@@ -81,3 +81,8 @@ final class MemoryLayoutFS: LayoutFileSystem, @unchecked Sendable { // @unchecke
     func cancelQueuedAutomationRequests() {}
     func openAutomationSettings() {}
 }
+
+/// P6-3: the update check's client in the renderer: no network, ever.
+struct NoNetwork: HTTPGetting {
+    func get(_ url: URL, headers: [String: String]) async -> (status: Int, body: Data)? { nil }
+}

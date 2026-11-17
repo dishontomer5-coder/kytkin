@@ -70,6 +70,10 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            if let updates = model.updates {
+                UpdatesSection(updates: updates, model: model)   // P6-3
+            }
+
             Section {
                 LabeledContent {
                     Button("Show Setup Again…") { showWelcome() }
@@ -80,5 +84,28 @@ struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// P6-3: the optional update check. Off until the user turns it on; "Check Now" only while it is on.
+private struct UpdatesSection: View {
+    let updates: UpdateChecker
+    let model: GeneralSettingsModel
+
+    var body: some View {
+        Section("Updates") {
+            Toggle(isOn: Binding(get: { updates.isOn }, set: { updates.setOn($0) })) {
+                RowLabel("Check for updates", subtitle: GeneralSettingsModel.updateCheckHelp)
+            }
+            .disabled(!model.isEditable)
+            if updates.isOn {
+                LabeledContent {
+                    Button("Check Now") { Task { await updates.checkNow() } }
+                        .disabled(updates.status == .checking)
+                } label: {
+                    RowLabel("Kytkin \(updates.appVersion)", subtitle: updates.statusText ?? model.lastUpdateCheckText)
+                }
+            }
+        }
     }
 }
