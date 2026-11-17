@@ -429,12 +429,20 @@ import Foundation
 
     /// Pins the current input source for the current (non-Kytkin) app's most specific scope. nil = no context.
     @discardableResult func pinCurrent() -> Rule? {
+        pinCurrent(to: switcher.current)
+    }
+
+    /// P6-0g: pins `source` (a half of the menu's Kytkin key) for the current app's most specific scope. nil = no
+    /// context or no source.
+    @discardableResult func pinCurrent(to source: InputSourceID) -> Rule? {
         guard let info = currentRule else { return nil }
-        let source = switcher.current
         guard !source.rawValue.isEmpty else { return nil }
         let date = now()
         store.update { $0.rules = RuleWriter.pin(info.pinScope, to: source, in: $0.rules, now: date) }
         preferencesDidChange()
+        // P6-0g: "Always Hebrew" from the menu's key selects Hebrew now (a no-op when it is already selected;
+        // nothing while paused, turned off, left alone or while Kytkin's own window is in front).
+        if !isOwnAppActive, let c = context.current, c.generation == info.context.generation { applyRule(for: c) }
         return engine.rule(for: info.pinScope)
     }
 

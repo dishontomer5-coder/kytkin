@@ -335,6 +335,40 @@ final class SwitchControllerTests: XCTestCase {
         XCTAssertEqual(store.prefs.rules.first?.updatedAt, date)
     }
 
+    /// P6-0g (menu's Kytkin key): "Always Hebrew" pins Hebrew whatever is selected, and selects it now.
+    func testPinToAPairLanguagePinsItAndSelectsItNow() {
+        make(prefs(rules: [.app(notes, IDs.abc)]))
+        monitor.activate(notes, pid: 10)
+        let pinned = sut.pinCurrent(to: IDs.hebrew)
+        XCTAssertEqual(pinned?.origin, .pinned)
+        XCTAssertEqual(store.prefs.rules.map(\.inputSource), [IDs.hebrew], "replaces the learned rule (one per scope)")
+        XCTAssertEqual(switcher.selectedIDs.last, IDs.hebrew)
+        XCTAssertEqual(switcher.selects.last?.1, .rule)
+        XCTAssertTrue(sut.unpinCurrent(), "the filled half again: back to learned")
+        XCTAssertEqual(store.prefs.rules.map(\.origin), [.learned])
+        XCTAssertEqual(store.prefs.rules.map(\.inputSource), [IDs.hebrew], "the language is kept")
+    }
+
+    func testPinToWhilePausedWritesButDoesNotSwitch() {
+        make()
+        monitor.activate(notes, pid: 10)
+        sut.setPaused(true)
+        let before = switcher.selects.count
+        sut.pinCurrent(to: IDs.hebrew)
+        XCTAssertEqual(store.prefs.rules.map(\.inputSource), [IDs.hebrew])
+        XCTAssertEqual(switcher.selects.count, before, "paused: nothing switches")
+    }
+
+    func testPinToAnAppLeftAloneDoesNotSwitch() {
+        var p = prefs(rules: [])
+        p.apps[notes] = Preferences.AppOverride(disabled: true)
+        make(p)
+        monitor.activate(notes, pid: 10)
+        let before = switcher.selects.count
+        sut.pinCurrent(to: IDs.hebrew)
+        XCTAssertEqual(switcher.selects.count, before, "Leave Alone: Kytkin doesn't switch there")
+    }
+
     func testPinWhileKytkinIsActiveTargetsThePreviousApp() {
         make()
         monitor.activate(notes, pid: 10)
