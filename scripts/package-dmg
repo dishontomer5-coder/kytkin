@@ -4,11 +4,15 @@
 #
 #   ./scripts/package-dmg
 #
-# Signing: set KYTKIN_RELEASE_SIGN_IDENTITY to the name of the owner's self-signed release certificate (P6-1; the
-# owner creates it in Keychain Access, see docs/manual-test-checklist.md). Without it the app is ad-hoc signed: fine for
-# a test DMG, but permissions (Accessibility, Input Monitoring) would not survive an update, so never publish one.
+# Signing: set KYTKIN_RELEASE_SIGN_IDENTITY to the name (or SHA-1) of the owner's self-signed release certificate
+# ("Kytkin Release", P6-1): KYTKIN_RELEASE_SIGN_IDENTITY="Kytkin Release" ./scripts/package-dmg
+# The app is then re-signed with the hardened runtime, Config/Kytkin.entitlements, no timestamp and a designated
+# requirement pinned to that certificate's SHA-1, verified, and its requirement and Gatekeeper verdict are printed.
+# Without it the app is ad-hoc signed: fine for a test DMG, but permissions (Accessibility, Input Monitoring) would
+# not survive an update, so never publish one.
 #
-# Built-in tools only: xcodegen + xcodebuild, swiftc, tiffutil, hdiutil, codesign, shasum. No AppleScript, no Apple
+# Built-in tools only: xcodegen + xcodebuild, swiftc, tiffutil, hdiutil, codesign, shasum (and, when signing,
+# security find-identity and spctl). No AppleScript, no Apple
 # Events and no Finder window: the Finder layout is written straight into the image's .DS_Store by
 # Tools/dmg-dsstore (compiled here into build/tools/). The image is attached once, -nobrowse -noautoopen at a private
 # mount point under build/, only to write that file, then detached.
@@ -30,22 +34,65 @@ command -v xcodegen >/dev/null 2>&1 || die "xcodegen not found (brew install xco
 [[ -f Resources/Release/dmg-background.png && -f Resources/Release/dmg-background@2x.png ]] \
   || die "Resources/Release/dmg-background(.png|@2x.png) missing"
 
-# 1. Release build.
-SIGN_ARGS=()
-if [[ -n "${KYTKIN_RELEASE_SIGN_IDENTITY:-}" ]]; then
-  SIGN_ARGS=("CODE_SIGN_IDENTITY=$KYTKIN_RELEASE_SIGN_IDENTITY")
-  SIGNED_WITH="$KYTKIN_RELEASE_SIGN_IDENTITY"
-else
-  SIGNED_WITH=""
-fi
-step "Building Release${SIGNED_WITH:+ (signing with \"$SIGNED_WITH\")}…"
+# 1. Release build (ad-hoc signed by Xcode; P6-1 re-signs it below when a release identity is set, so Xcode never
+#    has to find or trust the self-signed certificate itself).
+BUNDLE_ID="io.github.kytkin.Kytkin"
+ENTITLEMENTS="Config/Kytkin.entitlements"
+SIGNED_WITH="${KYTKIN_RELEASE_SIGN_IDENTITY:-}"
+step "Building Release…"
 xcodegen generate --quiet >>"$LOG" 2>&1 || die "xcodegen generate failed"
 xcodebuild -project Kytkin.xcodeproj -scheme Kytkin -configuration Release -destination 'platform=macOS' \
-  -derivedDataPath "$DERIVED" ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} build >>"$LOG" 2>&1 \
-  || die "Release build failed (wrong KYTKIN_RELEASE_SIGN_IDENTITY? see the log)"
+  -derivedDataPath "$DERIVED" build >>"$LOG" 2>&1 || die "Release build failed (see the log)"
 APP="$DERIVED/Build/Products/Release/Kytkin.app"
 [[ -d "$APP" ]] || die "no $APP after the build"
-codesign --verify --strict "$APP" >>"$LOG" 2>&1 || die "codesign --verify failed for $APP"
+
+# P6-1: release signing. Hardened runtime, the one entitlement, no timestamp (a self-signed certificate has no
+# timestamp authority), and an explicit designated requirement pinned to the certificate's SHA-1. macOS stores that
+# requirement with each permission (TCC) grant, so Accessibility / Input Monitoring survive an update signed with the
+# same certificate. Without --requirements, codesign would derive one from the certificate chain, which for a
+# self-signed root is less predictable; pinning the leaf makes the rule explicit and checkable below.
+if [[ -n "$SIGNED_WITH" ]]; then
+  if [[ "$SIGNED_WITH" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+    CERT_SHA1="$(echo "$SIGNED_WITH" | tr a-f A-F)"
+  else
+    # `security find-identity` lines look like:  1) <40 hex SHA-1> "<name>" [(CSSMERR_TP_NOT_TRUSTED)]
+    # Without -v so a self-signed root the system doesn't trust (normal here) is still found; codesign can sign
+    # with it. The same identity is listed under several headings, hence sort -u.
+    CERT_SHA1="$(security find-identity -p codesigning 2>>"$LOG" \
+      | awk -v name="\"$SIGNED_WITH\"" '{ for (i = 3; i <= NF; i++) { s = (i == 3 ? $i : s " " $i) ; if (s == name) { print $2; break } } }' \
+      | sort -u || true)"
+    case "$(printf '%s\n' "$CERT_SHA1" | grep -c .)" in
+      0) die "no code-signing identity named \"$SIGNED_WITH\" in the keychain (security find-identity -p codesigning)" ;;
+      1) ;;
+      *) die "several code-signing identities are named \"$SIGNED_WITH\": set KYTKIN_RELEASE_SIGN_IDENTITY to the SHA-1 of the right one" ;;
+    esac
+  fi
+  REQ="designated => identifier \"$BUNDLE_ID\" and certificate leaf = H\"$CERT_SHA1\""
+  step "Signing with \"$SIGNED_WITH\" (SHA-1 $CERT_SHA1)…"
+  # Sign by SHA-1, so a second certificate with the same name elsewhere can't be picked instead.
+  codesign --force --options runtime --timestamp=none --entitlements "$ENTITLEMENTS" \
+    --requirements "=$REQ" --sign "$CERT_SHA1" "$APP" >>"$LOG" 2>&1 \
+    || die "codesign failed (if macOS asked for keychain access, choose Always Allow and run again)"
+fi
+
+codesign --verify --deep --strict --verbose=2 "$APP" >>"$LOG" 2>&1 || die "codesign --verify failed for $APP"
+if [[ -n "$SIGNED_WITH" ]]; then
+  echo "── codesign --verify --deep --strict: OK"
+  echo "── Designated requirement (codesign -dr -):"
+  DR_OUT="$(codesign -d -r- "$APP" 2>&1)"
+  printf '%s\n' "$DR_OUT" | sed 's/^/   /'
+  # codesign prints the hash in lower case.
+  DR_LOWER="$(printf '%s' "$DR_OUT" | tr A-F a-f)"
+  [[ "$DR_LOWER" == *"certificate leaf = H\"$(printf '%s' "$CERT_SHA1" | tr A-F a-f)\""* ]] \
+    || die "the signed app's designated requirement doesn't name certificate $CERT_SHA1"
+  echo "── Signature (codesign -dv):"
+  DV_OUT="$(codesign -dv --verbose=2 "$APP" 2>&1)"
+  printf '%s\n' "$DV_OUT" | grep -E '^(Identifier|Format|CodeDirectory|Authority|Signed Time|Timestamp|Runtime|TeamIdentifier)' \
+    | sed 's/^/   /' || true
+  [[ "$DV_OUT" =~ flags=[^[:space:]]*runtime ]] || die "the hardened runtime flag is missing"
+  echo "── Gatekeeper (spctl -a -vv; \"rejected\" is expected for a self-signed, unnotarized app):"
+  spctl -a -vv "$APP" 2>&1 | sed 's/^/   /' || true
+fi
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 DMG="build/Kytkin-$VERSION.dmg"
 
