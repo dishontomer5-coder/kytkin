@@ -92,7 +92,7 @@ private struct WelcomeStep: View {
             Text("Typed in the wrong language? Press Shift twice and Kytkin converts it:")
                 .fixedSize(horizontal: false, vertical: true)
             // Copy review B7: the Hebrew sample on its own line, isolated, so bidi never flips it.
-            Text("akuo  →  \u{2068}שלום\u{2069}").font(.title3.monospaced()).padding(.leading, 12)
+            Text("akuo  →  \u{2068}שלום\u{2069}").font(.title3).padding(.leading, 12)
 
             HStack {
                 Text("Your two languages:").foregroundStyle(.secondary)
@@ -205,12 +205,10 @@ private struct PracticeStep: View {
                 .fixedSize(horizontal: false, vertical: true)
             result
             Spacer()
-            HStack(spacing: 4) {
-                Text("Kytkin lives in the menu bar, at the top right of your screen. Look for")
-                Image(systemName: "keyboard").accessibilityLabel("the Kytkin icon")
-                Text("and the language letters.")
-            }
-            .font(.callout).foregroundStyle(.secondary)
+            Text("Kytkin lives in the menu bar, at the top right of your screen. Look for \(Image(systemName: "keyboard")) "
+                 + "and the language letters, like HE or EN.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
             if let error = model.general.loginItemError {
                 StatusLabel(text: error, symbol: "xmark.circle.fill", tint: .red).font(.caption)

@@ -269,7 +269,7 @@ import SwiftUI
                             layouts: { snapshot }, sourceName: { $0 == SampleIDs.hebrew ? "Hebrew" : "English" })
         }
         let m = model()
-        m.begin(firstLaunch: false)
+        m.begin(firstLaunch: true)
         let size = OnboardingView.size
         func shot(_ name: String, _ m: OnboardingModel) throws {
             try r.render(name, size: size) { OnboardingView(model: m, close: {}) }
