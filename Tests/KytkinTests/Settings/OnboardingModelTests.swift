@@ -85,6 +85,8 @@ final class OnboardingModelTests: XCTestCase {
     private final class TestClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000) }
     private let clock = TestClock()
     private var selected: [InputSourceID] = []
+    /// QA (P6-0i): the keyboard that is on (the fake switch below sets it).
+    private var current: InputSourceID?
 
     private func make(_ prefs: Preferences = Preferences(), store custom: PreferencesStore? = nil,
                       layouts: FakeSystemLayouts = .standard(),
@@ -100,13 +102,17 @@ final class OnboardingModelTests: XCTestCase {
         languages = LanguagesSettingsModel(store: store, imported: imported,
                                            catalog: LayoutMapCatalog(system: system, imported: imported),
                                            fileSystem: fs, inputMethods: { [] })
-        let general = GeneralSettingsModel(store: store, loginItems: loginItems, sources: { [] })
+        let general = GeneralSettingsModel(store: store, loginItems: loginItems, sources: { [] },
+                                           currentLanguage: { [unowned self] in
+            self.current.map { InputSourceInfo(id: $0, name: $0.rawValue, languageCode: $0 == IDs.hebrew ? "he" : "en",
+                                               isEnabled: true, isConvertible: true, isInputMethod: false) }
+        })
         let clock = self.clock
         sut = OnboardingModel(store: store, permissions: permissions, polling: polling, general: general,
                               languages: languages, appName: "Kytkin Dev", bundlePath: bundlePath,
                               now: { clock.now }, layouts: { ConvertFixtures.layouts },
                               sourceName: { $0 == IDs.hebrew ? "Hebrew" : "English" },
-                              selectSource: { [unowned self] in self.selected.append($0) })
+                              selectSource: { [unowned self] in self.selected.append($0); self.current = $0 })
     }
 
     private func seen(_ value: Bool) -> Preferences {
@@ -468,5 +474,52 @@ final class OnboardingModelTests: XCTestCase {
         sut.practiceFocused = true
         _ = sut.practiceDoubleShift()
         XCTAssertEqual(sut.practiceShiftPresses, 0, "dark again once converted")
+    }
+
+    // MARK: - QA (P6-0i)
+
+    func testAHalfTypedWordNeitherConvertsNorSwitches() {
+        make()
+        sut.begin(firstLaunch: true, startAt: .practice)
+        sut.practiceFocused = true
+        sut.practiceText = "ak"
+        sut.practiceTextChanged()
+        XCTAssertNil(sut.practiceDoubleShift(), "no switch to a language every next key would be turned away in")
+        XCTAssertEqual(sut.practiceText, "ak")
+        XCTAssertEqual(sut.practicePhase, .typing(filled: 2))
+    }
+
+    func testTheMenuBarChipShowsTheLanguageThatIsOn() {
+        make()
+        current = IDs.hebrew
+        sut.begin(firstLaunch: true)
+        XCTAssertEqual(sut.currentSource, IDs.hebrew)
+        sut.next(); sut.next()
+        XCTAssertEqual(sut.currentSource, IDs.abc, "the step switched to the typing language: the chip says so")
+        XCTAssertEqual(sut.menuBarPreview, sut.general.menuBarPreview)
+        current = IDs.hebrew   // the user's own switch; the root reloads the window on every change
+        sut.reload()
+        XCTAssertEqual(sut.currentSource, IDs.hebrew)
+    }
+
+    func testLeavingThePracticeStepKeepsNoTypedKey() {
+        make()
+        sut.begin(firstLaunch: true, startAt: .practice)
+        sut.practiceText = "akz"
+        sut.practiceTextChanged()
+        sut.practiceText = "akuo"
+        sut.practiceTextChanged()
+        sut.noteShiftPressed()
+        XCTAssertEqual(sut.practiceRejected, "z")
+        sut.back()
+        XCTAssertEqual(sut.practiceText, "")
+        XCTAssertNil(sut.practiceRejected, "not even the one wrong key")
+        XCTAssertEqual(sut.practiceShiftPresses, 0)
+        sut.begin(firstLaunch: false, startAt: .practice)
+        sut.practiceText = "akz"
+        sut.practiceTextChanged()
+        sut.finish()
+        XCTAssertEqual(sut.practiceText, "")
+        XCTAssertNil(sut.practiceRejected)
     }
 }

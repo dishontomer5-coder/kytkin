@@ -145,7 +145,7 @@ private struct WelcomeStep: View {
             Text("akuo  →  \u{2068}שלום\u{2069}").font(.title3).padding(.leading, 28)
             HStack(spacing: 8) {
                 Text("You see it only in the menu bar:").foregroundStyle(.secondary)
-                MenuBarPreview(label: model.general.menuBarPreview)
+                MenuBarPreview(label: model.menuBarPreview)
             }
             .padding(.leading, 28)
 
@@ -280,7 +280,7 @@ private struct PracticeStep: View {
             }
             HStack(spacing: 8) {
                 Text("You see it only in the menu bar:").foregroundStyle(.secondary)
-                MenuBarPreview(label: model.general.menuBarPreview)   // the letters change when it converts
+                MenuBarPreview(label: model.menuBarPreview)   // the letters change when it converts
             }
             Spacer(minLength: 0)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
@@ -301,6 +301,7 @@ private struct PracticeStep: View {
         .onAppear {
             focused = true
             // P6-0i: Shift presses in this window light the key caps (a key-down count only; nothing is read or kept).
+            guard shiftMonitor == nil else { return }   // QA (P6-0i): one monitor, however often it appears
             shiftMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [model] event in
                 if event.keyCode == 56 || event.keyCode == 60, event.modifierFlags.contains(.shift) {
                     MainActor.assumeIsolated { model.noteShiftPressed() }
