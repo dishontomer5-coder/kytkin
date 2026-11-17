@@ -38,10 +38,12 @@ import Observation
 
     /// P3-37: the caption under the clipboard toggle. P6-0c (copy review C-4, P3-18 audit M1 disclosure, P1).
     /// P6-0d (owner: "what happens when it's off?"): the off behaviour, as ConvertController does it (`allowClipboard`).
-    static let clipboardNote = "In apps Kytkin can't read directly (like Slack and VS Code), it copies the text, "
-        + "pastes it back converted, then puts back what you had copied. Clipboard history apps (like Maccy, Raycast "
-        + "or Alfred) may briefly see the copied text and save it. Never in terminals, in password boxes, or while you "
-        + "have a password copied."
+    /// P6-0d QA (Coordinator): two sentences (the "when off" part is its own line); not VS Code (an excluded editor:
+    /// never the clipboard there).
+    static let clipboardNote = "In apps Kytkin can't read directly (like Slack, or Gmail in Zen), it copies the text, "
+        + "pastes it back converted, then puts back what you had copied. Never in terminals, in password boxes, or "
+        + "while you have a password copied, but clipboard history apps (like Maccy, Raycast or Alfred) may briefly "
+        + "see the copied text and save it."
 
     /// P6-0d: what turning it off does, per kind of app.
     static let clipboardOffNote = "When off: apps Kytkin can read (Notes, Mail, most web pages) work as before. In "

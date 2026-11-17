@@ -44,8 +44,13 @@ struct ConvertSettingsView: View {
                 // P3-37; P6-0c (copy review C-3, C-4: the P3-18 M1 clipboard disclosure).
                 Toggle(isOn: $model.useClipboardInUnreadableApps) {
                     // P6-0d (owner): what turning it off does, too.
-                    RowLabel(ConvertSettingsModel.clipboardTitle,
-                             subtitle: ConvertSettingsModel.clipboardNote + "\n" + ConvertSettingsModel.clipboardOffNote)
+                    // P6-0d QA: the "When off" part on its own line, so the row scans.
+                    VStack(alignment: .leading, spacing: 4) {
+                        RowLabel(ConvertSettingsModel.clipboardTitle, subtitle: ConvertSettingsModel.clipboardNote)
+                        Text(ConvertSettingsModel.clipboardOffNote)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .disabled(!model.doubleShiftEnabled)
             }

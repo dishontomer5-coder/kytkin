@@ -90,9 +90,12 @@ final class ConvertSettingsModelTests: XCTestCase {
         XCTAssertTrue(text.contains("terminals"))
         // P6-0c (copy review C-4, P3-18 audit M1): the clipboard detail sits under its own switch.
         let note = ConvertSettingsModel.clipboardNote
-        for part in ["Clipboard history apps", "Never in terminals", "while you have a password copied"] {
+        for part in ["clipboard history apps", "Never in terminals", "while you have a password copied"] {
             XCTAssertTrue(note.contains(part), part)
         }
+        // P6-0d QA: VS Code is an excluded editor (the clipboard never runs there), so it's no example.
+        XCTAssertFalse(note.contains("VS Code"))
+        XCTAssertFalse(ReplacementCapabilities.isEditor("com.tinyspeck.slackmacgap"), "Slack is a fair example")
         // P6-0d (owner): what "off" does, as ConvertController does it.
         let off = ConvertSettingsModel.clipboardOffNote
         for part in ["apps Kytkin can read", "work as before", "since your last click or Return",
