@@ -75,10 +75,10 @@ import SwiftUI
                                            updates: UpdateChecker(store: store, http: NoNetwork(), appVersion: "1.0.0"))
         let languages = LanguagesSettingsModel(store: store, imported: imported, catalog: catalog,
                                                fileSystem: layoutFS, inputMethods: { Sample.enabledSources })
-        let rules = RulesSettingsModel(store: store, appName: Sample.appName, sources: { Sample.allSources },
-                                       now: { Sample.date(17, 12, 0) }, extractor: extractor)
         let apps = AppsSettingsModel(store: store, appName: Sample.appName, runningApps: { Sample.running },
                                      ownBundleID: "io.github.kytkin.Kytkin")
+        let rules = RulesSettingsModel(store: store, appName: Sample.appName, sources: { Sample.allSources },
+                                       now: { Sample.date(17, 12, 0) }, extractor: extractor, apps: apps)
         let permissionsTab = PermissionsSettingsModel(permissions: permissions, store: store, polling: polling,
                                                       appName: "Kytkin", state: { state }, relaunch: {})
         let automationController = BrowserAutomationController(store: store, permissions: permissions,
@@ -90,7 +90,7 @@ import SwiftUI
             support: { support[$0] ?? .notSeenYet },
             automation: automationController,
             lastFrontBrowser: { SampleIDs.safari })
-        let about = AboutInfo(infoDictionary: ["CFBundleDisplayName": "Kytkin", "CFBundleShortVersionString": "0.0.1",
+        let about = AboutInfo(infoDictionary: ["CFBundleDisplayName": "Kytkin Dev", "CFBundleShortVersionString": "1.0.0",
                                                "CFBundleVersion": "1"],
                               suffixListVersion: PublicSuffixList.version(inHeader: suffixText.prefix(4096)))
         general.refresh()
@@ -122,24 +122,56 @@ import SwiftUI
         return s
     }()
 
-    private func panes(_ w: World, tab: SettingsTab, advanced: AdvancedSection = .apps) -> SettingsPanes {
-        SettingsPanes(selection: SettingsSelection(tab: tab, advancedSection: advanced), general: w.general,
-                      about: w.about, rules: w.rules, convert: w.convert, apps: w.apps, permissions: w.permissionsTab,
-                      browsers: w.browsers, openSettingsFolder: {}, showWelcome: {}, select: { _ in })
+    /// P6-0g: the heights the panes report (the window sizes itself to them).
+    final class Heights {
+        var natural: [SettingsTab: CGFloat] = [:]
+    }
+
+    private func panes(_ w: World, tab: SettingsTab, heights: Heights? = nil) -> SettingsPanes {
+        SettingsPanes(selection: SettingsSelection(tab: tab), general: w.general,
+                      about: w.about, rules: w.rules, convert: w.convert, permissions: w.permissionsTab,
+                      browsers: w.browsers, openSettingsFolder: {}, showWelcome: {}, select: { _ in },
+                      reportHeight: { tab, h in heights?.natural[tab] = max(heights?.natural[tab] ?? 0, h) })
     }
 
     /// P6-0c: the window's toolbar tabs can't be drawn offscreen (they are window chrome), so a stand-in of the same
     /// icons and titles sits above the real tab pane (MenuMock.swift).
-    private func settingsView(_ w: World, tab: SettingsTab, advanced: AdvancedSection = .apps) -> some View {
+    private func settingsView(_ w: World, tab: SettingsTab, height: CGFloat) -> some View {
         VStack(spacing: 0) {
             ToolbarTabsMock(selected: tab)
-            SettingsView(panes: panes(w, tab: tab, advanced: advanced))
+            SettingsView(panes: panes(w, tab: tab), height: height)
                 .environment(w.languages)
         }
     }
 
-    private func settingsSize(height: CGFloat? = nil) -> CGSize {
-        CGSize(width: SettingsView.size.width, height: (height ?? SettingsView.size.height) + ToolbarTabsMock.height)
+    private func settingsSize(height: CGFloat) -> CGSize {
+        CGSize(width: SettingsMetrics.width, height: height + ToolbarTabsMock.height)
+    }
+
+    /// P6-0g: the tab's natural content height, measured as the window measures it (one drawing, not saved).
+    private func naturalHeight(_ w: World, tab: SettingsTab, _ r: Renderer) throws -> CGFloat {
+        let heights = Heights()
+        let p = panes(w, tab: tab, heights: heights)
+        try r.render("measure", size: CGSize(width: SettingsMetrics.width, height: 1600), inWindow: tab == .rules,
+                     write: false) {
+            SettingsTabPane(tab: tab, panes: p, height: 1600).environment(w.languages)
+        }
+        return heights.natural[tab] ?? SettingsMetrics.minHeight
+    }
+
+    /// One Settings shot at the window's size for that tab (380–640 pt); with `full`, at the content's own height too
+    /// when it scrolls in the window.
+    private func shot(_ name: String, _ w: World, tab: SettingsTab, _ r: Renderer, full: Bool = false) throws {
+        let natural = try naturalHeight(w, tab: tab, r)
+        let height = SettingsMetrics.height(for: natural)
+        try r.render(name, size: settingsSize(height: height), inWindow: tab == .rules) {
+            settingsView(w, tab: tab, height: height)
+        }
+        if full, natural > SettingsMetrics.maxHeight {
+            try r.render(name + "-full", size: settingsSize(height: ceil(natural)), inWindow: tab == .rules) {
+                settingsView(w, tab: tab, height: ceil(natural))
+            }
+        }
     }
 
     // MARK: - Render everything
@@ -154,80 +186,46 @@ import SwiftUI
     }
 
     private func renderSettings(_ r: Renderer) throws {
-        let w = try world(support: [SampleIDs.safari: .works, SampleIDs.chrome: .worksWithAutomation,
+        let w = try world(support: [SampleIDs.safari: .works, SampleIDs.chrome: .cantRead,
                                     SampleIDs.zen: .notSeenYet])
-        let size = settingsSize()
         for tab in SettingsTab.allCases {
-            try r.render("settings-\(tab.rawValue)", size: size, inWindow: tab == .rules) { settingsView(w, tab: tab) }
-        }
-        for section in AdvancedSection.allCases where section != .apps {
-            try r.render("settings-advanced-\(section.rawValue)", size: size) {
-                settingsView(w, tab: .advanced, advanced: section)
-            }
+            try shot("settings-\(tab.rawValue)", w, tab: tab, r, full: true)
         }
 
-        // The tabs whose grouped Form scrolls in the window, drawn tall so nothing is cut off.
-        let tall: [(SettingsTab, CGFloat)] = [(.general, 760), (.doubleShift, 640), (.websites, 820)]
-        for (tab, height) in tall {
-            try r.render("settings-\(tab.rawValue)-full", size: settingsSize(height: height)) {
-                VStack(spacing: 0) {
-                    ToolbarTabsMock(selected: tab)
-                    SettingsTabPane(tab: tab, panes: panes(w, tab: tab), height: height).environment(w.languages)
-                }
-            }
-        }
-        try r.render("settings-advanced-apps-full", size: settingsSize(height: 900)) {
-            VStack(spacing: 0) {
-                ToolbarTabsMock(selected: .advanced)
-                SettingsTabPane(tab: .advanced, panes: panes(w, tab: .advanced), height: 900).environment(w.languages)
-            }
-        }
-
-        // Websites with Automation on, Chrome chosen and allowed.
+        // Websites with Automation on and Chrome allowed.
         var auto = Sample.preferences()
         auto.browsers.useAutomation = true
-        let wa = try world(prefs: auto, support: [SampleIDs.chrome: .worksWithAutomation],
+        let wa = try world(prefs: auto, support: [SampleIDs.safari: .works, SampleIDs.chrome: .worksWithAutomation,
+                                                  SampleIDs.zen: .cantRead],
                            automation: [SampleIDs.chrome: .granted])
-        wa.browsers.selectedBrowserID = SampleIDs.chrome
-        try r.render("settings-websites-chrome-automation", size: size) { settingsView(wa, tab: .websites) }
-        // Zen (Firefox-based, no Automation), not checked yet.
-        w.browsers.selectedBrowserID = SampleIDs.zen
-        try r.render("settings-websites-zen", size: size) { settingsView(w, tab: .websites) }
+        try shot("settings-websites-automation", wa, tab: .websites, r)
+        // Website rules off: everything under the switch dimmed.
+        var off = Sample.preferences()
+        off.browsers.siteRulesOn = false
+        let wo = try world(prefs: off)
+        try shot("settings-websites-off", wo, tab: .websites, r)
 
         // Setup needs attention: Accessibility off, Secure Input on, conflicts.
         let wt = try world(state: Self.troubledState)
-        try r.render("settings-general-setup-missing", size: settingsSize(height: 900)) {
-            VStack(spacing: 0) {
-                ToolbarTabsMock(selected: .general)
-                SettingsTabPane(tab: .general, panes: panes(wt, tab: .general), height: 900).environment(wt.languages)
-            }
-        }
-        try r.render("settings-advanced-diagnostics-troubled", size: size) {
-            settingsView(wt, tab: .advanced, advanced: .diagnostics)
-        }
+        try shot("settings-general-setup-missing", wt, tab: .general, r, full: true)
+        try shot("settings-advanced-troubled", wt, tab: .advanced, r)
 
         // Read-only preferences (a file from a newer Kytkin): the notice and disabled controls.
         let wr = try world(readOnly: true)
-        try r.render("settings-general-readonly", size: size) { settingsView(wr, tab: .general) }
-        try r.render("settings-rules-readonly", size: size, inWindow: true) { settingsView(wr, tab: .rules) }
+        try shot("settings-general-readonly", wr, tab: .general, r)
+        try shot("settings-rules-readonly", wr, tab: .rules, r)
 
-        // Empty states: no rules, no app settings, no imported layouts.
+        // Empty states: no rules, no imported layouts.
         var empty = Preferences()
         empty.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew)
         let we = try world(prefs: empty)
-        try r.render("settings-rules-empty", size: size, inWindow: true) { settingsView(we, tab: .rules) }
-        try r.render("settings-advanced-apps-empty", size: size) { settingsView(we, tab: .advanced) }
+        try shot("settings-rules-empty", we, tab: .rules, r)
 
         // A pair warning: the second language is on this Mac but not added.
         var badPair = Sample.preferences()
         badPair.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrewQWERTY)
         let wb = try world(prefs: badPair)
-        try r.render("settings-general-pair-warning", size: settingsSize(height: 760)) {
-            VStack(spacing: 0) {
-                ToolbarTabsMock(selected: .general)
-                SettingsTabPane(tab: .general, panes: panes(wb, tab: .general), height: 760).environment(wb.languages)
-            }
-        }
+        try shot("settings-general-pair-warning", wb, tab: .general, r, full: true)
     }
 
     private func renderSheets(_ r: Renderer) throws {
@@ -299,10 +297,14 @@ import SwiftUI
     // MARK: - Menu-bar menu and label (SwiftUI stand-ins, MenuMock.swift)
 
     private func menuItems(_ state: MenuState, current: InputSourceInfo) -> [MenuItemModel] {
-        let names: [InputSourceID: String] = [SampleIDs.abc: "ABC", SampleIDs.hebrew: "Hebrew"]
+        // P6-0g: the menu says "English", not "ABC"; the key shows the pair's letters.
+        let names: [InputSourceID: String] = [SampleIDs.abc: "English", SampleIDs.hebrew: "Hebrew"]
+        let codes: [InputSourceID: String] = [SampleIDs.abc: "EN", SampleIDs.hebrew: "HE"]
+        var state = state
+        if state.pairInputSources == nil { state.pairInputSources = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew) }
         return MenuModel.items(state: state, currentSource: current, settingsAvailable: true,
                                includeDebug: false, sourceName: { names[$0] ?? $0.rawValue },
-                               appName: { Sample.appName($0) ?? $0 })
+                               sourceCode: { codes[$0] }, appName: { Sample.appName($0) ?? $0 })
     }
 
     private func current(_ c: Context, rules: [Rule] = Sample.rules) -> SwitchController.CurrentRule {

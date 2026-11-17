@@ -29,6 +29,12 @@ MainActor.assumeIsolated {
     // process can't show a Dock icon (activation policy .prohibited), so this only changes what is drawn.
     NSApplication.shared.applicationIconImage = NSImage(contentsOf: repoRoot.appendingPathComponent(
         "Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"))
+    // P6-0g: About's icon (light and dark) from the asset catalog's PNGs; no app icons from this Mac in Rules.
+    let aboutIcons = repoRoot.appendingPathComponent("Resources/Assets.xcassets/AboutIcon.imageset")
+    AboutSettingsView.iconImage = { dark in
+        NSImage(contentsOf: aboutIcons.appendingPathComponent(dark ? "AboutIcon-dark-256.png" : "AboutIcon-256.png"))
+    }
+    RuleIcon.appIcon = { _ in nil }
     do {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let renderer = Renderer(outDir: outDir, filter: filter)
