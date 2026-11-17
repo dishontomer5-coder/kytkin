@@ -51,7 +51,7 @@ final class RulesSettingsModelTests: XCTestCase {
         XCTAssertNil(rows[0].detail, "no second copy of the bundle ID")
         XCTAssertEqual(rows.map(\.kindTitle), ["App", "App"])
         XCTAssertEqual(rows.map(\.languageName), ["ABC", "Hebrew"])
-        XCTAssertEqual(rows.map(\.originTitle), ["Pinned", "Learned"])
+        XCTAssertEqual(rows.map(\.originTitle), ["Always", "Learned"], "P6-0g: the menu's words")
     }
 
     func testLanguageNameForADisabledOrUnknownSource() {
