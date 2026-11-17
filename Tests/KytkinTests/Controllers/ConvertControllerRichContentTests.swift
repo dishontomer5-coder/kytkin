@@ -918,4 +918,76 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(log.finishes.last, .finish(gen: 1, newRendering: nil, bufferAfter: []))
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
+
+    // MARK: - P3-58 QA (Coordinator 2026-11-16): no keys and no AX writes in chat apps, ever
+
+    private func noKeys(_ poster: RecordingPoster, _ file: StaticString = #filePath, _ line: UInt = #line) {
+        let allowed: Set<UInt16> = [ClipboardShortcut.selectAll.keyCode, ClipboardShortcut.copy.keyCode,
+                                    ClipboardShortcut.paste.keyCode, KeyCode.rightArrow]
+        for e in poster.events where e.isKeyDown && !(e.modifierFlags != 0 && allowed.contains(e.keyCode))
+            && e.keyCode != KeyCode.rightArrow {
+            XCTFail("a key other than select-all / copy / paste / Right arrow was posted: \(e.keyCode)", file: file, line: line)
+        }
+    }
+
+    @TextActor func testSlackWithTheClipboardOffJustSwitchesForABuffer() async {
+        let rig = rig("akuo vh")
+        let r = ConvertRequest(snapshot: buffer("vh"), gen: 1, bundleID: slack, mode: .convert,
+                               pair: ConvertFixtures.pair, currentSource: IDs.abc, switchAfterConvert: true,
+                               useClipboard: false, allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertTrue(log.performs.isEmpty, "no Backspace + typing in a chat app")
+        XCTAssertEqual(rig.field.text, "akuo vh")
+        noKeys(rig.poster)
+    }
+
+    @TextActor func testSlackWithTheClipboardOffJustSwitchesForASelection() async {
+        let rig = rig("ok akuo ok", selection: 3..<7)
+        let r = ConvertRequest(snapshot: empty(), gen: 1, bundleID: slack, mode: .convert,
+                               pair: ConvertFixtures.pair, currentSource: IDs.abc, switchAfterConvert: true,
+                               useClipboard: false, allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertTrue(log.performs.isEmpty, "no type-over of the selection")
+        XCTAssertEqual(rig.field.text, "ok akuo ok")
+        XCTAssertTrue(rig.poster.events.isEmpty)
+    }
+
+    @TextActor func testSlackWhenTheClipboardCantStartJustSwitches() async {
+        // The clipboard path couldn't start (its snapshot failed): the fallback that would use keys elsewhere switches.
+        let rig = rig("akuo vh")
+        rig.pasteboard.snapshotFails = true
+        let out = await rig.sut.handle(request(buffer("vh"), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable), sink.traces.first?.line ?? "")
+        XCTAssertTrue(log.performs.isEmpty)
+        noKeys(rig.poster)
+    }
+
+    @TextActor func testSlackSecondPressAlsoOnlyCopiesAndPastes() async {
+        let rig = rig("akuo vh")
+        _ = await rig.sut.handle(request(buffer("vh"), gen: 1, app: slack), layouts: layouts)
+        _ = await rig.sut.handle(request(empty(), gen: 2, app: slack), layouts: layouts)
+        XCTAssertTrue(log.performs.isEmpty)
+        noKeys(rig.poster)
+    }
+
+    func testShortcodeBoundaries() {
+        func convert(_ text: String) -> String? {
+            let w = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                                reachesFieldEnd: true)
+            guard case .convert(let p) = BoxConversion.plan(w, classify: layouts.runClass, direction: .a,
+                                                            convert: { side, g in
+                self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
+            }) else { return nil }
+            let u = Array(text.utf16)
+            return String(decoding: u[..<p.edit.offset], as: UTF16.self) + p.text
+                + String(decoding: u[(p.edit.offset + p.edit.length)...], as: UTF16.self)
+        }
+        XCTAssertEqual(convert("vh :smile: vh"), "הי :smile: הי", "a shortcode stays")
+        XCTAssertEqual(convert("vh:smile:vh"), "הי:smile:הי", "inside a word too")
+        XCTAssertEqual(convert("vh https://x.com/vh"), "הי https://x.com/vh", "a web address stays whole")
+        XCTAssertEqual(convert("vh 10:30:45"), "הי 10:30:45", "a time: digits never convert anyway")
+        XCTAssertEqual(convert("vh @tomer vh"), "הי @tomer הי", "a mention word stays")
+    }
 }

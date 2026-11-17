@@ -138,6 +138,8 @@ import Foundation
     private let diagnose: (@Sendable (ConvertTrace) -> Void)?
     /// P3-44: the trace of the request being handled (enum names and counts only).
     private var trace: ConvertTrace?
+    /// P3-58 QA: a chat app's request reached a key / AX write path, which never runs there: just switch.
+    private var chatWriteRefused = false
     /// P3-53: when the request being handled arrived (the shared budget clock, B5).
     private var requestStart: UInt64 = 0
     /// P3-53: the page check's answer for the request being handled (asked at most once per request).
@@ -202,6 +204,7 @@ import Foundation
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
         requestStart = clock.nowNanos   // P3-53
+        chatWriteRefused = false        // P3-58 QA
         // P3-49: for browsers, whether the page's host was known for this request.
         if BrowserCatalog.known[request.bundleID] != nil {
             trace?.siteKnown = !request.browserSiteUnknown
@@ -296,6 +299,14 @@ import Foundation
 
     private func apply(_ decision: Decision, _ r: ConvertRequest, layouts: LayoutSnapshot,
                        finish: inout Finish) async -> ConvertOutcome {
+        // P3-58 QA (Coordinator 2026-11-16): in a chat app nothing but the clipboard convert writes; a request that
+        // needed keys or an AX write (the clipboard switch off, a selection the clipboard can't take, a fallback) just
+        // switches the language, and the buffer is forgotten.
+        if chatWriteRefused {
+            chatWriteRefused = false
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
+        }
         switch decision {
         case .clipboard(let job):
             return await runClipboard(job, r, layouts: layouts, finish: &finish)
@@ -572,6 +583,12 @@ import Foundation
     private func runChain(_ request: ReplacementRequest, focus: FocusInfo?, old: String?, gen: UInt64,
                           replacer: any TextReplacing, locateField: ((FieldWindow) -> FieldEdit?)?,
                           convert: (String) -> String?) -> ReplacementOutcome {
+        // P3-58 QA: never a key or an AX write in a chat app (Slack, Discord, Teams): the caller switches instead.
+        if CopiedContent.appKind(bundleID: request.bundleID) == .chat {
+            chatWriteRefused = true
+            note(.switchOnly, "chatAppNoKeys")
+            return ReplacementOutcome(result: .refused(.disabledForApp), attempts: [])
+        }
         let plan = ReplacementPlanner.plan(request, caps: capabilities, focus: focus)
         var caps = capabilities
         // P3-53 QA: the chain (AX writes, keys) runs inside what is left of the request's B5 budget, not a fresh one:
@@ -936,6 +953,7 @@ import Foundation
     /// the old ⌘A selection.
     /// nil = refused (the caller just switches and forgets the buffer).
     private func richCopyKeyDecision(_ r: ConvertRequest, layouts: LayoutSnapshot) -> Decision? {
+        if CopiedContent.appKind(bundleID: r.bundleID) == .chat { return nil }   // P3-58 QA: never keys in chat apps
         let snap = r.snapshot
         let source = snap.renderedIn ?? r.currentSource
         func justSwitch() -> Decision? { nil }

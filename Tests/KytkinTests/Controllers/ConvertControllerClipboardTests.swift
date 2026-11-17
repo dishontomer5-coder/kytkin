@@ -282,7 +282,8 @@ final class ConvertControllerClipboardTests: XCTestCase {
     @TextActor func testTheUsersKeysOnlyChoiceMeansNoClipboard() async {
         let rig = rig(box: "akuo", caps: ReplacementCapabilities(overrides: [slack: .keysOnly]))
         let out = await rig.sut.handle(request(empty(), gen: 1, app: slack), layouts: layouts)
-        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .nothingToConvert))
+        // P3-58 QA: in a chat app the keys path never runs either: just switch.
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
         XCTAssertTrue(rig.poster.events.isEmpty)
     }
 
