@@ -107,9 +107,9 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     static let siteRulesToggleTitle = "Use website rules"
     /// P3-26: the one note for the global switches (e.g. Automation for Zen).
     static let browserPickerTitle = "Browser"
-    static let privateToggleTitle = "Don't use website rules in private windows"
-    static let privateExplanation = "Kytkin never learns from private windows. With this on, it doesn't look at "
-        + "their address at all."   // P6-0c (copy review B-4)
+    /// P6-0g (design v2, P2): no double negative; on by default (`Preferences.Browsers`).
+    static let privateToggleTitle = "Ignore private windows"
+    static let privateExplanation = "Kytkin doesn’t look at addresses in private windows."
     /// P3-4: how websites are grouped, and why gov.il is different.
     /// P6-0c (copy review B-6): the gov.il / github.io detail is where it matters (the Add Website sheet, R-9).
     static let groupingText = "A website rule covers the whole website: ynet.co.il also covers news.ynet.co.il. "
@@ -125,7 +125,7 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         }
         if known?.appleScript == .arc { return "Private windows: recognized only with Automation." }
         if known?.privateSignal == .safari { return "Private windows: recognized when Safari is in English." }
-        if engine == .gecko { return "Kytkin can't tell private windows apart yet." }
+        if engine == .gecko { return "Kytkin can’t tell private windows apart yet." }
         return nil
     }
     static let noBrowsersText = "No browsers found."
@@ -139,19 +139,87 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         return inventory.installedCatalog.union(inventory.webLinkHandlers).filter { !isOwn($0) && !$0.isEmpty }
     }
 
-    /// Catalog browsers first, then other browsers; each group by name.
+    /// P6-0g (design v2, P1): only real browsers (`BrowserCatalog`), by name. Other apps that open web links (a
+    /// terminal like cmux) aren't listed; they still count for an old file's "Use website rules" (`siteRulesOn`).
     var rows: [BrowserRow] {
         _ = statusGeneration
-        let ids = listedBrowserIDs
-        let catalog = ids.filter { BrowserCatalog.known[$0] != nil }
-        let others = ids.filter { BrowserCatalog.known[$0] == nil }
+        let catalog = listedBrowserIDs.filter { BrowserCatalog.known[$0] != nil }
         let byName = { (a: BrowserRow, b: BrowserRow) in
             let c = a.name.localizedStandardCompare(b.name)
             return c == .orderedSame ? a.bundleID < b.bundleID : c == .orderedAscending
         }
         let on = siteRulesOn
         return catalog.map { row(for: $0, siteRulesOn: on) }.sorted(by: byName)
-            + others.map { row(for: $0, siteRulesOn: on) }.sorted(by: byName)
+    }
+
+    // MARK: - P6-0g: one status line per browser
+
+    /// What a browser's row shows: one status ("Works", "Needs permission", "Not supported", "Not checked yet",
+    /// "Off") and the one button that fixes it, if any.
+    struct StatusLine: Equatable, Sendable {
+        enum Action: Equatable, Sendable {
+            /// Accessibility: General's setup section.
+            case openSetup
+            /// The Automation question for this browser (a click only).
+            case askAutomation
+            case openAutomationSettings
+        }
+
+        let text: String
+        let action: Action?
+        /// A tooltip with the longer reason.
+        let help: String?
+
+        var actionTitle: String? {
+            switch action {
+            case .openSetup: "Open Setup"
+            case .askAutomation: "Allow…"
+            case .openAutomationSettings: "Open System Settings"
+            case nil: nil
+            }
+        }
+    }
+
+    func statusLine(for row: BrowserRow) -> StatusLine {
+        switch row.support {
+        case .works, .worksWithAutomation:
+            return StatusLine(text: "Works", action: nil, help: nil)
+        case .needsAccessibility:
+            return StatusLine(text: "Needs permission", action: .openSetup, help: row.statusHint)
+        case .notSeenYet:
+            return StatusLine(text: "Not checked yet", action: nil, help: row.statusHint)
+        case .off:
+            return StatusLine(text: "Off", action: nil, help: row.statusHint)
+        case .siteDataMissing:
+            return StatusLine(text: "Not supported", action: nil, help: Self.dataMissingText)
+        case .cantRead:
+            guard case .available(let state) = row.automation else {
+                return StatusLine(text: "Not supported", action: nil, help: row.statusHint)
+            }
+            if state.status == .allowed {
+                return StatusLine(text: "Not supported", action: nil, help: row.statusHint)
+            }
+            guard useAutomation else {
+                return StatusLine(text: "Needs permission", action: nil,
+                                  help: "Turn on “\(Self.automationToggleTitle)” above.")
+            }
+            let action: StatusLine.Action? = switch state.action {
+            case .ask: state.actionEnabled ? .askAutomation : nil
+            case .openSystemSettings: .openAutomationSettings
+            case nil: nil
+            }
+            return StatusLine(text: "Needs permission", action: action,
+                              help: state.action == .ask && !state.actionEnabled
+                                  ? "Open \(row.name) to allow it." : row.statusHint)
+        }
+    }
+
+    /// The footer under the browsers (P6-0g, proposed-websites).
+    var footerText: String {
+        let count = websiteRuleCount
+        let saved = count == 1 ? "1 website rule is saved." : "\(count) website rules are saved."
+        if !siteRulesOn { return "Website rules are off, so the settings above are paused. " + saved }
+        return count == 0 ? "No website rules yet. " + Self.groupingText : saved + " " + Self.groupingText
     }
 
     func row(for bundleID: String) -> BrowserRow {
@@ -171,9 +239,9 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         let automation: BrowserRow.Automation = if known?.appleScript != nil {
             .available(automationState(for: bundleID))
         } else if engine == .gecko {
-            .notAvailable("Automation isn't available for \(name): Firefox-based browsers don't support it.")
+            .notAvailable("Automation isn’t available for \(name): Firefox-based browsers don’t support it.")
         } else {
-            .notAvailable("Automation isn't available for \(name).")
+            .notAvailable("Automation isn’t available for \(name).")
         }
         let (status, hint, action) = Self.statusTexts(support, name: name, siteRulesOn: on, automation: automation)
         return BrowserRow(bundleID: bundleID, name: name, engineText: engineText, isCatalogued: known != nil,
@@ -204,13 +272,13 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
             // permission (Ask / Open System Settings) is below, next to this status.
             if case .available(let state) = automation {
                 let hint = switch state.status {
-                case .allowed: "Kytkin can't see the page address, even with Automation."
-                case .denied, .notAsked, .checking: "Kytkin can't see the page address. Allow Automation below."
-                default: "Kytkin can't see the page address. Turn on \"Use Automation\" above."
+                case .allowed: "Kytkin can’t see the page address, even with Automation."
+                case .denied, .notAsked, .checking: "Kytkin can’t see the page address. Allow Automation below."
+                default: "Kytkin can’t see the page address. Turn on \"Use Automation\" above."
                 }
-                return ("Can't read this browser", hint, nil)
+                return ("Can’t read this browser", hint, nil)
             }
-            return ("Can't read this browser", "Kytkin can't see the page address here. Not supported yet.", nil)
+            return ("Can’t read this browser", "Kytkin can’t see the page address here. Not supported yet.", nil)
         case .needsAccessibility:
             return ("Needs Accessibility", "Kytkin needs Accessibility to read the page address.", .openPermissions)
         case .siteDataMissing: return ("Website rules are unavailable", nil, nil)
@@ -270,9 +338,9 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
 
     // MARK: - Address bar (P3-29, plan.md decision 2026-11-08)
 
-    static let addressBarToggleTitle = "Use the browser's language in the address bar"
-    static let addressBarExplanation = "In the address bar, Kytkin uses the browser's language (English unless you "
-        + "set one). On web pages, it uses the website's language."   // P6-0c (B-3)
+    static let addressBarToggleTitle = "Use the browser’s language in the address bar"
+    static let addressBarExplanation = "In the address bar, Kytkin uses the browser’s language (English unless you "
+        + "set one). On web pages, it uses the website’s language."   // P6-0c (B-3)
 
     /// P3-29: `browsers.browserLanguageInAddressBar` (on by default).
     var browserLanguageInAddressBar: Bool {
@@ -285,9 +353,9 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
 
     // MARK: - Automation (P3-7, 001 §14.7–14.8; P3-26: one global switch)
 
-    // P6-0c (copy review B-1, B-2).
-    static let automationToggleTitle = "Ask the browser for the page address (Automation)"
-    static let automationExplanation = "Only for browsers Kytkin can't read by itself. macOS asks you once for each "
+    // P6-0c (copy review B-1, B-2). P6-0g (design v2, P2): says what you gain.
+    static let automationToggleTitle = "Work in more browsers"
+    static let automationExplanation = "For browsers Kytkin can’t read by itself. macOS asks you once for each "
         + "browser."
 
     /// The global "Use Automation" (`browsers.useAutomation`).

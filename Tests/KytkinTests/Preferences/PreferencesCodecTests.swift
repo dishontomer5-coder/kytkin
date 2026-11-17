@@ -14,7 +14,34 @@ final class PreferencesCodecTests: XCTestCase {
         try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
+    /// P6-0g: what a file that leaves a key out reads as: the defaults, except "Ignore private windows", which keeps
+    /// its pre-P6-0g default (off) so an existing user's behaviour never changes. Only a new install starts with it on.
+    static var existingFileDefaults: Preferences {
+        var p = Preferences()
+        p.browsers.ignorePrivateWindowsCompletely = false
+        return p
+    }
+
     // MARK: - Defaults
+
+    /// P6-0g: "Ignore private windows" (on for a new install) keeps every existing file's behaviour: a stored value
+    /// stays as it is, and a file without the key (or without a `browsers` section) reads as the old default, off.
+    func testIgnorePrivateWindowsKeepsTheExistingBehaviour() throws {
+        XCTAssertTrue(Preferences().browsers.ignorePrivateWindowsCompletely, "new install: on")
+        XCTAssertFalse(try decode(#"{"browsers":{"siteRulesOn":true}}"#).prefs.browsers.ignorePrivateWindowsCompletely)
+        XCTAssertFalse(try decode(#"{"general":{}}"#).prefs.browsers.ignorePrivateWindowsCompletely)
+        XCTAssertFalse(try decode(#"{"browsers":{"ignorePrivateWindowsCompletely":false}}"#)
+            .prefs.browsers.ignorePrivateWindowsCompletely)
+        XCTAssertTrue(try decode(#"{"browsers":{"ignorePrivateWindowsCompletely":true}}"#)
+            .prefs.browsers.ignorePrivateWindowsCompletely)
+        // A new install's choice survives a save and a load.
+        let data = try PreferencesCodec.encode(Preferences(), schemaVersion: Preferences.currentSchemaVersion)
+        XCTAssertTrue(try PreferencesCodec.decodeDetailed(data).prefs.browsers.ignorePrivateWindowsCompletely)
+        var off = Preferences()
+        off.browsers.ignorePrivateWindowsCompletely = false
+        let offData = try PreferencesCodec.encode(off, schemaVersion: Preferences.currentSchemaVersion)
+        XCTAssertFalse(try PreferencesCodec.decodeDetailed(offData).prefs.browsers.ignorePrivateWindowsCompletely)
+    }
 
     func testDefaultsMatch001Schema() {
         let p = Preferences()
@@ -35,7 +62,7 @@ final class PreferencesCodecTests: XCTestCase {
         XCTAssertEqual(p.autoFix.mode, .confidentOnly)
         XCTAssertTrue(p.autoFix.switchLanguageAfterFix)
         XCTAssertTrue(p.autoFix.backspaceUndoes)
-        XCTAssertFalse(p.browsers.ignorePrivateWindowsCompletely)
+        XCTAssertTrue(p.browsers.ignorePrivateWindowsCompletely, "P6-0g: \"Ignore private windows\" is on for a new install")
         XCTAssertFalse(p.browsers.useAutomation)
         XCTAssertTrue(p.browsers.siteRulesOn)
         XCTAssertEqual(p.rules, [])
@@ -47,19 +74,19 @@ final class PreferencesCodecTests: XCTestCase {
 
     func testMinimalFixtureDecodesToDefaults() throws {
         let r = try PreferencesCodec.decodeDetailed(Fixtures.data("preferences/v1-minimal.json"))
-        XCTAssertEqual(r.prefs, Preferences())
+        XCTAssertEqual(r.prefs, Self.existingFileDefaults)
         XCTAssertNil(r.migratedFrom)
         XCTAssertNil(r.newerSchemaVersion)
     }
 
     func testEmptySectionsDecodeToDefaults() throws {
         let r = try decode(#"{"general":{},"convert":{},"autoFix":{},"browsers":{},"rules":[],"apps":{},"autoFixExceptions":{}}"#)
-        XCTAssertEqual(r.prefs, Preferences())
+        XCTAssertEqual(r.prefs, Self.existingFileDefaults)
     }
 
     func test001ContractDecodeReturnsMigratedFromNilForV1() throws {
         let (p, from) = try PreferencesCodec.decode(Data(#"{"schemaVersion":1}"#.utf8))
-        XCTAssertEqual(p, Preferences())
+        XCTAssertEqual(p, Self.existingFileDefaults)
         XCTAssertNil(from)
     }
 

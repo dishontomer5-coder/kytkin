@@ -38,7 +38,13 @@ extension Preferences: Codable {
         if let v = c.lenient(General.self, .general) { general = v }
         if let v = c.lenient(Convert.self, .convert) { convert = v }
         if let v = c.lenient(AutoFix.self, .autoFix) { autoFix = v }
-        if let v = c.lenient(Browsers.self, .browsers) { browsers = v }
+        if let v = c.lenient(Browsers.self, .browsers) {
+            browsers = v
+        } else {
+            // P6-0g: an existing file keeps the old default for "Ignore private windows" (off); only a new install
+            // (no file) starts with it on.
+            browsers.ignorePrivateWindowsCompletely = false
+        }
         if let v = c.lenient([Lossy<Rule>].self, .rules) {
             rules = v.compactMap(\.value).map(Self.trimmed)
         }
