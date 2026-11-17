@@ -70,7 +70,7 @@ final class ConvertControllerChromiumTests: XCTestCase {
     private func request(_ snapshot: WordSnapshot, gen: UInt64, app: String? = nil, useClipboard: Bool = true,
                          allows: Bool = true, inAddressBar: Bool = false,
                          current: InputSourceID = IDs.abc) -> ConvertRequest {
-        ConvertRequest(snapshot: snapshot, gen: gen, bundleID: app ?? slack, mode: .convert, pair: ConvertFixtures.pair,
+        ConvertRequest(snapshot: snapshot, gen: gen, bundleID: app ?? chrome, mode: .convert, pair: ConvertFixtures.pair,
                        currentSource: current, switchAfterConvert: true, useClipboard: useClipboard,
                        inAddressBar: inAddressBar, allowsChromiumAX: allows)
     }
@@ -95,9 +95,20 @@ final class ConvertControllerChromiumTests: XCTestCase {
         XCTAssertEqual(log.beeps, 0)
     }
 
-    @TextActor func testEveryChromiumBrowserAndChatAppGetsIt() async {
+    @TextActor func testChatAppsNeverGetIt() async {
+        // P3-58 (owner 2026-11-17): Slack, Discord and Teams use the clipboard only.
+        for app in ["com.tinyspeck.slackmacgap", "com.hnc.Discord", "com.microsoft.teams2"] {
+            reset()
+            let rig = rig("akuo")
+            let out = await rig.sut.handle(request(empty(), gen: 1, app: app), layouts: layouts)
+            XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true), app)
+            XCTAssertTrue(rig.field.rangeWrites.isEmpty, app)
+        }
+    }
+
+    @TextActor func testEveryChromiumBrowserGetsIt() async {
         for app in ["com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser",
-                    "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "com.hnc.Discord", "com.microsoft.teams2"] {
+                    "com.vivaldi.Vivaldi", "com.operasoftware.Opera"] {
             reset()
             let rig = rig("akuo")
             let out = await rig.sut.handle(request(empty(), gen: 1, app: app), layouts: layouts)

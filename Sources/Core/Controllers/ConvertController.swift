@@ -138,6 +138,8 @@ import Foundation
     private let diagnose: (@Sendable (ConvertTrace) -> Void)?
     /// P3-44: the trace of the request being handled (enum names and counts only).
     private var trace: ConvertTrace?
+    /// P3-58 QA: a chat app's request reached a key / AX write path, which never runs there: just switch.
+    private var chatWriteRefused = false
     /// P3-53: when the request being handled arrived (the shared budget clock, B5).
     private var requestStart: UInt64 = 0
     /// P3-53: the page check's answer for the request being handled (asked at most once per request).
@@ -202,6 +204,7 @@ import Foundation
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
         requestStart = clock.nowNanos   // P3-53
+        chatWriteRefused = false        // P3-58 QA
         // P3-49: for browsers, whether the page's host was known for this request.
         if BrowserCatalog.known[request.bundleID] != nil {
             trace?.siteKnown = !request.browserSiteUnknown
@@ -296,6 +299,14 @@ import Foundation
 
     private func apply(_ decision: Decision, _ r: ConvertRequest, layouts: LayoutSnapshot,
                        finish: inout Finish) async -> ConvertOutcome {
+        // P3-58 QA (Coordinator 2026-11-16): in a chat app nothing but the clipboard convert writes; a request that
+        // needed keys or an AX write (the clipboard switch off, a selection the clipboard can't take, a fallback) just
+        // switches the language, and the buffer is forgotten.
+        if chatWriteRefused {
+            chatWriteRefused = false
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
+        }
         switch decision {
         case .clipboard(let job):
             return await runClipboard(job, r, layouts: layouts, finish: &finish)
@@ -572,6 +583,12 @@ import Foundation
     private func runChain(_ request: ReplacementRequest, focus: FocusInfo?, old: String?, gen: UInt64,
                           replacer: any TextReplacing, locateField: ((FieldWindow) -> FieldEdit?)?,
                           convert: (String) -> String?) -> ReplacementOutcome {
+        // P3-58 QA: never a key or an AX write in a chat app (Slack, Discord, Teams): the caller switches instead.
+        if CopiedContent.appKind(bundleID: request.bundleID) == .chat {
+            chatWriteRefused = true
+            note(.switchOnly, "chatAppNoKeys")
+            return ReplacementOutcome(result: .refused(.disabledForApp), attempts: [])
+        }
         let plan = ReplacementPlanner.plan(request, caps: capabilities, focus: focus)
         var caps = capabilities
         // P3-53 QA: the chain (AX writes, keys) runs inside what is left of the request's B5 budget, not a fresh one:
@@ -682,6 +699,14 @@ import Foundation
         return 0
     }
 
+    /// P3-58: the focused box's mention pill texts (read only), inside what is left of the B5 budget (≤ 100 ms).
+    private func pillTexts() -> [String] {
+        let elapsed = clock.nowNanos &- requestStart
+        let left = ReplacementChain.defaultBudgetNanos > elapsed ? ReplacementChain.defaultBudgetNanos - elapsed : 0
+        guard left > 0 else { return [] }
+        return currentReplacer().focusedInlineAtomTexts(budgetNanos: min(100_000_000, left))
+    }
+
     /// P3-50 / P3-53: the focused box's page category, asked at most once per request, inside what is left of the
     /// B5 budget (none left → `.unknown`, nothing asked).
     private func pageCategory(for r: ConvertRequest) -> PageCategory {
@@ -709,11 +734,48 @@ import Foundation
                               finish: inout Finish) async -> ConvertOutcome {
         guard let cb = currentClipboard() else { return await fallBack(r, layouts: layouts, finish: &finish) }
         var target: InputSourceID?
+        // P3-58 (owner 2026-11-17): a chat app (Slack, Discord, Teams): copy → convert the plain text → paste, box and
+        // selection alike, even over a rich copy (bold / italic may become plain). `:shortcode:` words (Slack's emoji,
+        // pasted back as text, turn into emoji again) and mentions never convert: `BoxConversion`'s atomic tokens plus
+        // the box's mention pills read from AX (read only, full multi-word names). Line breaks are pasted as they
+        // were. No AX path, no keys; nothing copied → just switch.
+        let chat = CopiedContent.appKind(bundleID: r.bundleID) == .chat
+        let chatAtoms: [String] = chat ? pillTexts() : []
+        if chat { trace?.chatClipboard = job.source == .box ? "box" : "selection" }
         let convert: (String) -> ClipboardConvert.Conversion = { text in
             // P3-40 (b): the copy must be the selection AX reported. Only the visible characters are compared: AX may
             // have dropped or changed the line breaks and spaces (that is why the copy is used).
-            if case .copiedSelection = job.source, let ax = job.axSelection,
+            // P3-58: not in a chat app: Slack's AX text shows emoji as objects or odd units, its copy as `:name:`.
+            if !chat, case .copiedSelection = job.source, let ax = job.axSelection,
                !Self.sameVisibleText(text, ax) { return .mismatch }
+            if chat {
+                guard text.utf16.count <= ReplacementPlanner.maxFieldReadChars else { return .tooLong }
+                let direction: PairSide?
+                switch job.source {
+                case .box: direction = job.direction
+                case .copiedSelection:
+                    guard let g = layouts.convertGuessing(text), let side = layouts.side(of: g.source) else {
+                        return .nothing
+                    }
+                    direction = side
+                }
+                let window = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                                         reachesFieldEnd: true)
+                switch BoxConversion.plan(window, classify: layouts.runClass, direction: direction,
+                                          atomicTexts: chatAtoms, convert: { side, grapheme in
+                                              layouts.converter(from: layouts.source(of: side))?.convert(grapheme).text
+                                                  ?? grapheme
+                                          }) {
+                case .nothing: return .nothing
+                case .tooLong: return .tooLong
+                case .convert(let p):
+                    let units = Array(text.utf16)
+                    let head = String(decoding: units[..<p.edit.offset], as: UTF16.self)
+                    let tail = String(decoding: units[(p.edit.offset + p.edit.length)...], as: UTF16.self)
+                    target = layouts.source(of: p.side.other)
+                    return .replace(head + p.text + tail)
+                }
+            }
             // P3-37 QA: in an unseeded app a line break (or any control character) is never pasted (ClipJob).
             if !job.mayPasteLineBreaks, ReplacementPlanner.containsUnsafeCharacter(text) { return .unsafe }
             switch job.source {
@@ -792,7 +854,7 @@ import Foundation
         let gen = r.gen
         let (result, pending) = await cb.run(job.source, typedTail: job.typedTail,
                                              app: CopiedContent.appKind(bundleID: r.bundleID), startedAt: requestStart,
-                                             convert: convert,
+                                             pasteRichAsPlain: chat, convert: convert,
                                              htmlPlanner: htmlPlanner,
                                              focusIsSame: focusIsSame, mayWrite: { self.claim(gen) })
         pendingRestore = pending
@@ -852,6 +914,10 @@ import Foundation
             // typing AX's text: never. Just switch; the buffer is forgotten (a selection may be there).
             if r.snapshot.hasRun { finish.bufferAfter = [] }
             return await toggle(r, because: .fieldUnreadable)
+        case .boxEmpty where chat:
+            // P3-58: nothing copied in a chat app: just switch (never keys there); the caret moved, forget the buffer.
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
+            return await toggle(r, because: .fieldUnreadable)
         case .boxEmpty where r.snapshot.hasRun:
             // P3-37 QA: ⌘A (and the Right arrow that dropped its selection) were posted, so the caret is at the end of
             // the box, or one character further right if ⌘A did nothing: not where the remembered buffer ends. Typing
@@ -887,6 +953,7 @@ import Foundation
     /// the old ⌘A selection.
     /// nil = refused (the caller just switches and forgets the buffer).
     private func richCopyKeyDecision(_ r: ConvertRequest, layouts: LayoutSnapshot) -> Decision? {
+        if CopiedContent.appKind(bundleID: r.bundleID) == .chat { return nil }   // P3-58 QA: never keys in chat apps
         let snap = r.snapshot
         let source = snap.renderedIn ?? r.currentSource
         func justSwitch() -> Decision? { nil }
@@ -935,6 +1002,12 @@ import Foundation
             trace?.chromiumSkipped = Self.chromiumSkipReason(r, focus: focus, element: element,
                                                              enabled: chromiumAXEnabled && makeChromiumAX != nil,
                                                              family: capabilities.family(for: r.bundleID))
+        }
+        // P3-58 (owner 2026-11-17): Slack, Discord and Teams never get the Chromium AX path (Slack's AX offsets broke
+        // once the box held Hebrew, and its late selections once typed a piece at the wrong place): the clipboard only.
+        if CopiedContent.appKind(bundleID: r.bundleID) == .chat {
+            if trace != nil { trace?.chromiumSkipped = "chatAppClipboard" }
+            return nil
         }
         guard chromiumAXEnabled, makeChromiumAX != nil, r.allowsChromiumAX, !r.inAddressBar,
               capabilities.family(for: r.bundleID) == .chromiumAX,

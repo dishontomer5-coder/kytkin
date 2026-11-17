@@ -11,7 +11,8 @@ import XCTest
 final class ConvertControllerRunTests: XCTestCase {
     private let app = "com.apple.TextEdit"
     private let terminal = "com.apple.Terminal"
-    private let slack = "com.tinyspeck.slackmacgap"
+    /// P3-58 QA: the keys-only app of these tests (chat apps never use keys since P3-58, so Chrome stands in).
+    private let slack = "com.google.Chrome"
     private let layouts = ConvertFixtures.layouts
 
     private var log: ConvertLog!

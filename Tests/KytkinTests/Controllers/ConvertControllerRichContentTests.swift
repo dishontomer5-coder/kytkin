@@ -75,7 +75,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
 
     private func request(_ snapshot: WordSnapshot, gen: UInt64 = 1, app: String? = nil,
                          siteUnknown: Bool = false) -> ConvertRequest {
-        ConvertRequest(snapshot: snapshot, gen: gen, bundleID: app ?? slack, mode: .convert, pair: ConvertFixtures.pair,
+        ConvertRequest(snapshot: snapshot, gen: gen, bundleID: app ?? chrome, mode: .convert, pair: ConvertFixtures.pair,
                        currentSource: IDs.abc, switchAfterConvert: true, useClipboard: true, allowsChromiumAX: true,
                        browserSiteUnknown: siteUnknown)
     }
@@ -199,9 +199,10 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     @TextActor func testARichSelectionIsNeverPastedOver() async {
+        // P3-58: in a browser (Slack now pastes plain text over anything); an image can't take the HTML paste either.
         let rig = rig("ok akuo ok", selection: 3..<7, chromium: false)
         rig.pasteboard.userSelection = "akuo"
-        rig.pasteboard.copiedExtras = [.html("<b>akuo</b>")]
+        rig.pasteboard.copiedExtras = [.html("<b>akuo</b><img src=\"x\">")]
         let out = await rig.sut.handle(request(empty()), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
         XCTAssertEqual(pastes(rig.poster), 0)
@@ -238,20 +239,19 @@ final class ConvertControllerRichContentTests: XCTestCase {
 
     // MARK: - P3-46 (owner retest: Slack pill + emoji + bold pasted back as plain text)
 
-    @TextActor func testSlackCopyWithoutHTMLIsNeverPasted() async {
+    @TextActor func testSlackPlainCopyIsPastedWithTheMentionAndShortcodeKept() async {
+        // P3-58 (owner): Slack: copy → convert → paste, whatever the copy's verdict; the pill and `:joy:` stay.
         let rig = rig("@Tomer Dishon :joy: תומר\nakuo vh", bold: 20..<24)
-        axNeverSelects(rig)
+        rig.replacer?.inlineAtomTexts = ["@Tomer Dishon"]
         rig.pasteboard.copiedExtras = []   // Slack: plain text only (its rich data is not HTML)
-        let out = await rig.sut.handle(request(buffer("vh")), layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .backspaceAndType(count: 2), switched: true),
-                       "only the typed run, by keys")
-        XCTAssertEqual(pastes(rig.poster), 0)
-        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+        let out = await rig.sut.handle(request(buffer("vh"), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "@Tomer Dishon :joy: תומר\nשלום הי")
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty, "no AX selection in Slack")
+        XCTAssertTrue(log.performs.isEmpty, "no keys in Slack")
         guard let t = sink.traces.first else { return XCTFail("no trace") }
-        XCTAssertEqual(t.copy?.reason, .noHTMLInChatApp)
-        XCTAssertEqual(t.copy?.types?.html, 0)
-        XCTAssertTrue(t.line.contains("copyVerdict=noHTMLInChatApp"))
-        XCTAssertTrue(t.line.contains("copiedTypes{items=1 html=0 rtf=0 plain=1"))
+        XCTAssertEqual(t.chromiumSkipped, "chatAppClipboard")
+        XCTAssertTrue(t.line.contains("slackClipboard=box"), t.line)
         for text in ["Tomer", "Dishon", "תומר", "akuo", "joy"] { XCTAssertFalse(t.line.contains(text), text) }
     }
 
@@ -348,13 +348,14 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
     }
 
-    @TextActor func testChatAppsNeverGetAnHTMLPaste() async {
+    @TextActor func testChatAppsGetAPlainPasteNeverAnHTMLOne() async {
+        // P3-58: the owner accepted bold becoming plain in Slack.
         let rig = rig("שלום akuo vh", bold: 0..<4)
-        axNeverSelects(rig)
         rig.pasteboard.copiedExtras = [.html("<b>שלום</b> akuo vh")]
-        let out = await rig.sut.handle(request(empty()), layouts: layouts)   // Slack
-        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
-        XCTAssertEqual(pastes(rig.poster), 0)
+        let out = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "שלום שלום הי")
+        XCTAssertEqual(rig.pasteboard.transientHTMLWrites.last ?? "-", nil, "plain text only")
         XCTAssertNil(sink.traces.first?.copy?.htmlPaste, "not tried in a chat app")
     }
 
@@ -793,7 +794,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let snap = WordSnapshot(strokes: ConvertFixtures.strokes("hello"), previousWords: [], renderedIn: IDs.hebrew,
                                 isValid: true)
         var r = request(snap)
-        r = ConvertRequest(snapshot: snap, gen: 1, bundleID: slack, mode: .convert, pair: ConvertFixtures.pair,
+        r = ConvertRequest(snapshot: snap, gen: 1, bundleID: chrome, mode: .convert, pair: ConvertFixtures.pair,
                            currentSource: IDs.hebrew, switchAfterConvert: true, useClipboard: true,
                            allowsChromiumAX: true)
         let out = await rig.sut.handle(r, layouts: layouts)
@@ -815,19 +816,6 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let out = await rig.sut.handle(request(snap), layouts: layouts)
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
         XCTAssertTrue(log.performs.isEmpty)
-    }
-
-    @TextActor func testAnUnexplainedPrefixMismatchInAChatAppJustSwitches() async {
-        // The `:shortcode:` emoji shape: the prefix disagrees with no U+FFFC / emoji on either side.
-        let rig = rig("akuo akuo vh")
-        rig.field.stringForRangeOverride = "akuo xxxx vh"
-        rig.pasteboard.copiedExtras = [PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
-        let out = await rig.sut.handle(request(buffer("vh")), layouts: layouts)
-        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
-        XCTAssertTrue(log.performs.isEmpty, "no keys")
-        XCTAssertFalse(rig.poster.events.contains { $0.modifierFlags != 0 }, "no ⌘A / ⌘C")
-        XCTAssertTrue(sink.traces.first?.line.contains("prefixUnexplained=true") == true)
-        XCTAssertTrue(sink.traces.first?.line.contains("valueUnits=12") == true)
     }
 
     // MARK: - P3-55 QA: nothing acts on a selection AX may still report after Kytkin's own select-all / arrows
@@ -874,5 +862,132 @@ final class ConvertControllerRichContentTests: XCTestCase {
         let line = sink.traces.first?.line ?? ""
         XCTAssertTrue(line.contains("oddUnits=2:U+E000,U+E001") && line.contains("oddRunsStripped=1"), line)
         XCTAssertFalse(line.contains("akuo") || line.contains("hello"), "no text in the trace")
+    }
+
+    // MARK: - P3-58 (owner 2026-11-17): Slack = copy → convert → paste, shortcodes and mentions kept
+
+    @TextActor func testSlackEmojiShortcodeIsKeptAndTheRestConverts() async {
+        // `vh 🔥 vh vh` copies as `vh :fire: vh vh`; Slack turns the pasted `:fire:` back into the emoji.
+        let rig = rig("vh :fire: vh vh")
+        rig.pasteboard.copiedExtras = [PasteboardEntry(type: "org.chromium.web-custom-data", data: Data([1]))]
+        let out = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "הי :fire: הי הי")
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard, "the user's clipboard is back")
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty)
+        XCTAssertTrue(log.performs.isEmpty)
+    }
+
+    @TextActor func testSlackMentionPillAndTwoLines() async {
+        let rig = rig("@Tomer Dishon\nakuo vh")
+        rig.replacer?.inlineAtomTexts = ["@Tomer Dishon"]
+        let out = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.transientWrites.last, "@Tomer Dishon\nשלום הי", "mention kept, line break kept")
+    }
+
+    @TextActor func testSlackSecondPressConvertsBack() async {
+        let rig = rig("vh :smile: vh")
+        _ = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(rig.pasteboard.box, "הי :smile: הי")
+        let back = ConvertRequest(snapshot: empty(), gen: 2, bundleID: slack, mode: .convert, pair: ConvertFixtures.pair,
+                                  currentSource: IDs.hebrew, switchAfterConvert: true, useClipboard: true,
+                                  allowsChromiumAX: true)
+        let out = await rig.sut.handle(back, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.abc, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "vh :smile: vh")
+    }
+
+    @TextActor func testSlackSelectionKeepsItsShortcode() async {
+        let rig = rig("ok akuo :fire: ok", selection: 3..<14)
+        rig.pasteboard.userSelection = "akuo :fire:"
+        let out = await rig.sut.handle(request(empty(), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(rig.pasteboard.box, "ok שלום :fire: ok")
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty)
+        XCTAssertTrue(sink.traces.first?.line.contains("slackClipboard=selection") == true)
+    }
+
+    @TextActor func testSlackNothingCopiedJustSwitches() async {
+        let rig = rig("akuo")
+        rig.pasteboard.copiesInstead = ""
+        let out = await rig.sut.handle(request(buffer("akuo"), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertTrue(log.performs.isEmpty, "never keys in Slack")
+        XCTAssertFalse(rig.poster.events.contains { $0.keyCode == KeyCode.delete })
+        XCTAssertEqual(log.finishes.last, .finish(gen: 1, newRendering: nil, bufferAfter: []))
+        XCTAssertTrue(rig.pasteboard.holdsUserClipboard)
+    }
+
+    // MARK: - P3-58 QA (Coordinator 2026-11-16): no keys and no AX writes in chat apps, ever
+
+    private func noKeys(_ poster: RecordingPoster, _ file: StaticString = #filePath, _ line: UInt = #line) {
+        let allowed: Set<UInt16> = [ClipboardShortcut.selectAll.keyCode, ClipboardShortcut.copy.keyCode,
+                                    ClipboardShortcut.paste.keyCode, KeyCode.rightArrow]
+        for e in poster.events where e.isKeyDown && !(e.modifierFlags != 0 && allowed.contains(e.keyCode))
+            && e.keyCode != KeyCode.rightArrow {
+            XCTFail("a key other than select-all / copy / paste / Right arrow was posted: \(e.keyCode)", file: file, line: line)
+        }
+    }
+
+    @TextActor func testSlackWithTheClipboardOffJustSwitchesForABuffer() async {
+        let rig = rig("akuo vh")
+        let r = ConvertRequest(snapshot: buffer("vh"), gen: 1, bundleID: slack, mode: .convert,
+                               pair: ConvertFixtures.pair, currentSource: IDs.abc, switchAfterConvert: true,
+                               useClipboard: false, allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertTrue(log.performs.isEmpty, "no Backspace + typing in a chat app")
+        XCTAssertEqual(rig.field.text, "akuo vh")
+        noKeys(rig.poster)
+    }
+
+    @TextActor func testSlackWithTheClipboardOffJustSwitchesForASelection() async {
+        let rig = rig("ok akuo ok", selection: 3..<7)
+        let r = ConvertRequest(snapshot: empty(), gen: 1, bundleID: slack, mode: .convert,
+                               pair: ConvertFixtures.pair, currentSource: IDs.abc, switchAfterConvert: true,
+                               useClipboard: false, allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertTrue(log.performs.isEmpty, "no type-over of the selection")
+        XCTAssertEqual(rig.field.text, "ok akuo ok")
+        XCTAssertTrue(rig.poster.events.isEmpty)
+    }
+
+    @TextActor func testSlackWhenTheClipboardCantStartJustSwitches() async {
+        // The clipboard path couldn't start (its snapshot failed): the fallback that would use keys elsewhere switches.
+        let rig = rig("akuo vh")
+        rig.pasteboard.snapshotFails = true
+        let out = await rig.sut.handle(request(buffer("vh"), app: slack), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable), sink.traces.first?.line ?? "")
+        XCTAssertTrue(log.performs.isEmpty)
+        noKeys(rig.poster)
+    }
+
+    @TextActor func testSlackSecondPressAlsoOnlyCopiesAndPastes() async {
+        let rig = rig("akuo vh")
+        _ = await rig.sut.handle(request(buffer("vh"), gen: 1, app: slack), layouts: layouts)
+        _ = await rig.sut.handle(request(empty(), gen: 2, app: slack), layouts: layouts)
+        XCTAssertTrue(log.performs.isEmpty)
+        noKeys(rig.poster)
+    }
+
+    func testShortcodeBoundaries() {
+        func convert(_ text: String) -> String? {
+            let w = FieldWindow(text: text, location: 0, caret: text.utf16.count, reachesFieldStart: true,
+                                reachesFieldEnd: true)
+            guard case .convert(let p) = BoxConversion.plan(w, classify: layouts.runClass, direction: .a,
+                                                            convert: { side, g in
+                self.layouts.converter(from: self.layouts.source(of: side))?.convert(g).text ?? g
+            }) else { return nil }
+            let u = Array(text.utf16)
+            return String(decoding: u[..<p.edit.offset], as: UTF16.self) + p.text
+                + String(decoding: u[(p.edit.offset + p.edit.length)...], as: UTF16.self)
+        }
+        XCTAssertEqual(convert("vh :smile: vh"), "הי :smile: הי", "a shortcode stays")
+        XCTAssertEqual(convert("vh:smile:vh"), "הי:smile:הי", "inside a word too")
+        XCTAssertEqual(convert("vh https://x.com/vh"), "הי https://x.com/vh", "a web address stays whole")
+        XCTAssertEqual(convert("vh 10:30:45"), "הי 10:30:45", "a time: digits never convert anyway")
+        XCTAssertEqual(convert("vh @tomer vh"), "הי @tomer הי", "a mention word stays")
     }
 }

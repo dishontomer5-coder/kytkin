@@ -40,6 +40,8 @@ struct ConvertTrace: Sendable, Equatable {
     var richCopy: Bool?
     /// P3-46: the clipboard copy's type categories (counts) and the rich / plain verdict's reason (an enum name).
     var copy: ClipboardConvert.CopyDiagnostic?
+    /// P3-58: a chat app's clipboard convert (`box` / `selection`), nil = not one.
+    var chatClipboard: String?
     /// P3-49: a browser request: whether the page's host was known (nil = not a browser).
     var siteKnown: Bool?
     /// P3-49: a browser request: the page state Kytkin had (an enum name: page, editingAddress, unknown…).
@@ -56,6 +58,7 @@ struct ConvertTrace: Sendable, Equatable {
     var line: String {
         var parts = ["paths=" + (steps.isEmpty ? "none" : steps.map { "\($0.path.rawValue):\($0.reason)" }
             .joined(separator: " > "))]
+        if let chatClipboard { parts.append("slackClipboard=\(chatClipboard)") }
         if let siteKnown { parts.append("siteKnown=\(siteKnown)") }
         if let pageState { parts.append("pageState=\(pageState)") }
         if let siteWatch { parts.append("siteWatch=\(siteWatch)") }
