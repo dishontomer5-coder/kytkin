@@ -259,26 +259,40 @@ import SwiftUI
         var state = MenuState()
         state.accessibility = .notDetermined
         let w = try world(prefs: prefs, state: state)
-        let model = OnboardingModel(store: w.store, permissions: w.permissions, polling: w.polling, general: w.general,
-                                    languages: w.languages, appName: "Kytkin")
-        model.begin(firstLaunch: false)
-        let size = OnboardingView.size
-        func shot(_ name: String) throws {
-            try r.render(name, size: size) { OnboardingView(model: model, close: {}) }
+        let maps = try layouts().maps
+        let snapshot = maps[SampleIDs.abc].flatMap { a in maps[SampleIDs.hebrew].flatMap { b in
+            LayoutSnapshot(pair: LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew), a: a, b: b)
+        } }
+        func model(bundlePath: String = "/Applications/Kytkin.app") -> OnboardingModel {
+            OnboardingModel(store: w.store, permissions: w.permissions, polling: w.polling, general: w.general,
+                            languages: w.languages, appName: "Kytkin", bundlePath: bundlePath,
+                            layouts: { snapshot }, sourceName: { $0 == SampleIDs.hebrew ? "Hebrew" : "English" })
         }
-        try shot("onboarding-1-welcome")
-        model.next()
-        try shot("onboarding-2-languages")
-        model.next()
-        try shot("onboarding-3-accessibility")
-        model.grantAccessibility()   // the fake records nothing and asks nothing: the step shows "Waiting for you…"
-        try shot("onboarding-3-accessibility-waiting")
+        let m = model()
+        m.begin(firstLaunch: false)
+        let size = OnboardingView.size
+        func shot(_ name: String, _ m: OnboardingModel) throws {
+            try r.render(name, size: size) { OnboardingView(model: m, close: {}) }
+        }
+        try shot("onboarding-1-welcome", m)
+        m.next()
+        try shot("onboarding-2-permissions", m)
+        m.grantAccessibility()   // the fake records nothing and asks nothing: the step shows "Waiting…"
+        try shot("onboarding-2-permissions-waiting", m)
         w.permissions.status.grants.accessibility = .granted
-        model.reload()
-        try shot("onboarding-3-accessibility-granted")
-        model.next()
-        try shot("onboarding-4-finish")
-        model.finish()
+        m.reload()
+        try shot("onboarding-2-permissions-granted", m)
+        m.next()
+        try shot("onboarding-3-practice", m)
+        m.practiceText = "akuo"
+        m.practiceFocused = true
+        _ = m.practiceDoubleShift()
+        try shot("onboarding-3-practice-converted", m)
+        m.finish()
+
+        let moving = model(bundlePath: "/Volumes/Kytkin/Kytkin.app")
+        moving.begin(firstLaunch: true)
+        try shot("onboarding-0-move-to-applications", moving)
     }
 
     // MARK: - Menu-bar menu and label (SwiftUI stand-ins, MenuMock.swift)

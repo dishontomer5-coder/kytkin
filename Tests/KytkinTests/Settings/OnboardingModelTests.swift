@@ -81,8 +81,13 @@ final class OnboardingModelTests: XCTestCase {
     private var languages: LanguagesSettingsModel!
     private var sut: OnboardingModel!
 
+    /// P6-0c: the wall clock the "waiting long" hint reads.
+    private final class TestClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000) }
+    private let clock = TestClock()
+
     private func make(_ prefs: Preferences = Preferences(), store custom: PreferencesStore? = nil,
-                      layouts: FakeSystemLayouts = .standard()) {
+                      layouts: FakeSystemLayouts = .standard(),
+                      bundlePath: String = "/Applications/Kytkin.app") {
         permissions = RecordingPermissions()
         polling = PermissionPollingDemand(permissions: permissions)
         store = custom ?? makeStore(prefs, clock: FakeClock())
@@ -95,8 +100,11 @@ final class OnboardingModelTests: XCTestCase {
                                            catalog: LayoutMapCatalog(system: system, imported: imported),
                                            fileSystem: fs, inputMethods: { [] })
         let general = GeneralSettingsModel(store: store, loginItems: loginItems, sources: { [] })
+        let clock = self.clock
         sut = OnboardingModel(store: store, permissions: permissions, polling: polling, general: general,
-                              languages: languages, appName: "Kytkin Dev")
+                              languages: languages, appName: "Kytkin Dev", bundlePath: bundlePath,
+                              now: { clock.now }, layouts: { ConvertFixtures.layouts },
+                              sourceName: { $0 == IDs.hebrew ? "Hebrew" : "English" })
     }
 
     private func seen(_ value: Bool) -> Preferences {
@@ -155,13 +163,14 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(sut.primaryTitle, "Continue")
         sut.back()
         XCTAssertEqual(sut.step, .welcome)
-        sut.next(); XCTAssertEqual(sut.step, .languages)
-        sut.next(); XCTAssertEqual(sut.step, .accessibility)
-        sut.next(); XCTAssertEqual(sut.step, .finish)
+        // P6-0c (owner 2026-11-17): three screens.
+        sut.next(); XCTAssertEqual(sut.step, .permissions)
+        sut.next(); XCTAssertEqual(sut.step, .practice)
         XCTAssertTrue(sut.isLastStep)
         XCTAssertEqual(sut.primaryTitle, "Done")
-        sut.next(); XCTAssertEqual(sut.step, .finish)
-        sut.back(); XCTAssertEqual(sut.step, .accessibility)
+        XCTAssertEqual(sut.stepDescription, "Step 3 of 3")
+        sut.next(); XCTAssertEqual(sut.step, .practice)
+        sut.back(); XCTAssertEqual(sut.step, .permissions)
     }
 
     func testReopeningStartsAtTheWelcomeStep() {
@@ -303,5 +312,101 @@ final class OnboardingModelTests: XCTestCase {
         sut.general.setLaunchAtLogin(true)
         XCTAssertEqual(loginItems.actions, [.register])
         XCTAssertTrue(sut.general.launchAtLogin)
+    }
+
+    // MARK: - P6-0c: move to Applications, waiting long, Open at Login, the practice box
+
+    func testFromTheDiskImageOnlyTheMoveScreenAndNothingIsAskedOrSaved() {
+        make(bundlePath: "/Volumes/Kytkin/Kytkin.app")
+        XCTAssertTrue(OnboardingModel.shouldShowAtLaunch(store, bundlePath: "/Volumes/Kytkin/Kytkin.app"))
+        XCTAssertTrue(OnboardingModel.shouldShowAtLaunch(
+            store, bundlePath: "/private/var/folders/x/AppTranslocation/ABC/d/Kytkin.app"))
+        sut.begin(firstLaunch: true)
+        XCTAssertTrue(sut.mustMoveToApplications)
+        sut.grantAccessibility()
+        sut.openAccessibilitySettings()
+        sut.finish()
+        XCTAssertEqual(permissions.promptingCalls, [], "flows M2: no permission from the disk image")
+        XCTAssertFalse(store.prefs.general.onboardingSeen, "the setup shows again once it runs from Applications")
+    }
+
+    func testFromApplicationsNoMoveScreen() {
+        make()
+        XCTAssertFalse(sut.mustMoveToApplications)
+        XCTAssertFalse(InstallLocation.needsMove(bundlePath: "/Users/me/Applications/Kytkin.app"))
+    }
+
+    func testWaitingLongShowsTheStaleEntryHint() {
+        make()
+        permissions.set(accessibility: .notDetermined)
+        sut.begin(firstLaunch: true)
+        sut.grantAccessibility()
+        permissions.set(accessibility: .denied)
+        sut.reload()
+        XCTAssertEqual(sut.accessibilityPhase, .waiting)
+        clock.now += OnboardingModel.waitingLongSeconds
+        XCTAssertEqual(sut.accessibilityPhase, .waitingLong)
+    }
+
+    func testOpenAtLoginIsCheckedOnFirstLaunchAndAppliedOnlyOnDone() {
+        make()
+        sut.begin(firstLaunch: true)
+        XCTAssertTrue(sut.openAtLogin, "owner 2026-11-17: on by default")
+        sut.finish()   // Skip / close: nothing registered without Done
+        XCTAssertFalse(sut.general.launchAtLogin)
+        sut.begin(firstLaunch: true)
+        sut.done()
+        XCTAssertTrue(sut.general.launchAtLogin)
+        sut.begin(firstLaunch: false)
+        XCTAssertTrue(sut.openAtLogin, "reopened: shows the current state")
+        sut.openAtLogin = false
+        sut.done()
+        XCTAssertFalse(sut.general.launchAtLogin)
+    }
+
+    func testThePracticeBoxConvertsInProcessAndBack() {
+        make()
+        sut.begin(firstLaunch: true)
+        sut.next(); sut.next()
+        XCTAssertEqual(sut.step, .practice)
+        sut.practiceText = "akuo"
+        XCTAssertNil(sut.practiceDoubleShift(), "only while the box has the keyboard")
+        sut.practiceFocused = true
+        XCTAssertEqual(sut.practiceDoubleShift(), IDs.hebrew)
+        XCTAssertEqual(sut.practiceText, "שלום")
+        XCTAssertEqual(sut.practiceResult, .converted("Hebrew"))
+        sut.practiceTextChanged()   // the box reports its own new text: not an edit
+        XCTAssertEqual(sut.practiceResult, .converted("Hebrew"))
+        XCTAssertEqual(sut.practiceDoubleShift(), IDs.abc)
+        XCTAssertEqual(sut.practiceText, "akuo")
+        XCTAssertEqual(sut.practiceResult, .convertedBack)
+        XCTAssertEqual(permissions.promptingCalls, [], "no AX, no clipboard, nothing asked")
+    }
+
+    func testThePracticeTextIsClearedWhenLeavingTheScreen() {
+        make()
+        sut.begin(firstLaunch: true)
+        sut.next(); sut.next()
+        sut.practiceText = "akuo"
+        sut.practiceFocused = true
+        sut.back()
+        XCTAssertEqual(sut.practiceText, "", "typed text is never kept")
+        XCTAssertNil(sut.practiceDoubleShift(), "not on the practice screen")
+    }
+
+    func testNothingToConvertSaysSo() {
+        make()
+        sut.begin(firstLaunch: true)
+        sut.next(); sut.next()
+        sut.practiceFocused = true
+        XCTAssertNil(sut.practiceDoubleShift())
+        XCTAssertEqual(sut.practiceResult, .nothingToConvert)
+    }
+
+    func testTheHintUsesTheUsersPair() {
+        make()
+        XCTAssertEqual(sut.practiceHint,
+                       "With the English keyboard on, type akuo and press Shift twice. It becomes \u{2068}שלום\u{2069}.")
+        XCTAssertEqual(PracticeConvert.hint(layouts: nil, name: { $0.rawValue }), PracticeConvert.genericHint)
     }
 }

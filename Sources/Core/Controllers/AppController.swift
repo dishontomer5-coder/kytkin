@@ -55,6 +55,9 @@ import Observation
     private let keyWatcher: any KeyWatching
     private let ticker: any RepeatingTicking
     private(set) var convert: any ConvertControlling
+    /// P6-0c (flows §5.4): the setup window's practice box (AppEnvironment wires it). Called for a double-Shift while
+    /// Kytkin's own window is in front; returns the language the box's text is in now, nil = nothing converted.
+    var practiceDoubleShift: (@MainActor () -> InputSourceID?)?
 
     private var lastPrefs: Preferences?
     private var lastConfig: KeyProcessorConfig?
@@ -521,8 +524,19 @@ import Observation
 
     private func route(snapshot: WordSnapshot, gen: UInt64) {
         let prefs = store.prefs
-        guard !switching.paused, prefs.general.enabled, !switching.isOwnAppActive,
-              let c = context.current else { return finish(gen) }
+        guard !switching.paused, prefs.general.enabled else { return finish(gen) }
+        if switching.isOwnAppActive {
+            // P6-0c (flows §5.4): Kytkin's own windows are never converted (P2-39); only the setup window's practice
+            // box, in process (no AX, no clipboard, no posted keys). The after-convert switch is a real one, so the
+            // menu-bar letters change too.
+            finish(gen)
+            if let target = practiceDoubleShift?(), prefs.convert.switchLanguageAfterConvert {
+                switching.selectAfterConvert(target)
+            }
+            onDisplayChange?()
+            return
+        }
+        guard let c = context.current else { return finish(gen) }
         let app = prefs.apps[c.bundleID]
         guard app?.disabled != true else { return finish(gen) }
         let mode: ConvertRequest.Mode

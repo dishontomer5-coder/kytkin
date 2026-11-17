@@ -336,6 +336,28 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(convert?.requests.map(\.mode), [.toggleOnly])
     }
 
+    /// P6-0c (flows §5.4): in Kytkin's own window a double-Shift never reaches ConvertController (no AX, no
+    /// clipboard, no posted keys); only the setup window's practice box, which converts in process. Its after-convert
+    /// switch is a real one, so the menu-bar letters change too.
+    func testInKytkinsOwnWindowOnlyThePracticeBoxGetsTheDoubleShift() {
+        make(withConvert: true)
+        monitor.activate(notes, pid: 10)
+        sut.kytkinDidBecomeActive()
+        var asked = 0
+        sut.practiceDoubleShift = { asked += 1; return IDs.hebrew }
+        sut.keySignal(.doubleShift(snapshot, gen: 3))
+        XCTAssertEqual(asked, 1)
+        XCTAssertEqual(convert?.requests, [], "never the real convert in Kytkin's own window")
+        XCTAssertEqual(watcher.finishes, [3], "finished at once: the held keys replay")
+        XCTAssertEqual(switcher.selectedIDs.last, IDs.hebrew)
+
+        sut.practiceDoubleShift = { nil }   // not the practice box: nothing happens
+        let selected = switcher.selectedIDs.count
+        sut.keySignal(.doubleShift(snapshot, gen: 4))
+        XCTAssertEqual(switcher.selectedIDs.count, selected)
+        XCTAssertEqual(watcher.finishes, [3, 4])
+    }
+
     func testDoubleShiftIsFinishedWhenItMustNotRun() {
         var p = Preferences()
         p.apps[notes] = .init(convertEnabled: false)

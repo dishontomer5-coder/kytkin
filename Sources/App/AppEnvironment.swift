@@ -162,10 +162,17 @@ import AppKit
 
     /// P2-26: the welcome window. `firstLaunch` = shown by itself at launch; otherwise the user asked for it.
     func openOnboarding(firstLaunch: Bool = false) {
+        let convert = self.convert
+        let store = self.store
+        let languages = sharedModels.languages
         let window = onboardingWindow ?? OnboardingWindowController(model: OnboardingModel(
             store: store, permissions: permissions, polling: sharedModels.polling, general: sharedModels.general,
-            languages: sharedModels.languages, appName: Self.appName))
+            languages: languages, appName: Self.appName, bundlePath: Bundle.main.bundlePath,
+            // P6-0c: the practice box converts with the pair's layouts, in process.
+            layouts: { convert.snapshot(for: store.prefs.languagePair) },
+            sourceName: { id in languages.options.first { $0.inputSource == id }?.name ?? id.rawValue }))
         onboardingWindow = window
+        controller.practiceDoubleShift = { [weak window] in window?.practiceDoubleShift() }
         window.show(firstLaunch: firstLaunch)
     }
 
