@@ -234,6 +234,7 @@ final class ClipboardConvertTests: XCTestCase {
         XCTAssertEqual(pb.items, clipboard, "untouched")
         XCTAssertEqual(pb.restores, 0, "never written back (that would stop its auto-clear)")
         XCTAssertTrue(sut.refusedSecretClipboard)
+        XCTAssertEqual(pb.snapshotReads, 0, "P3-65 QA: decided from type names; the secret's data is never read")
     }
 
     @TextActor func testATransientClipboardIsNeverTouched() async {

@@ -17,6 +17,10 @@ import Foundation
     /// read, or more than `maxBytes` in all. The clipboard convert then isn't used (it could not restore exactly).
     func snapshot(maxBytes: Int) -> PasteboardSnapshot?
 
+    /// P3-65 QA: the type names of every item, without reading any data (so a password manager's promised data is
+    /// never asked for). nil = can't tell.
+    func currentTypes() -> [String]?
+
     /// Puts `snapshot` back exactly (clear, then write every item with every type). False if the write failed.
     @discardableResult func restore(_ snapshot: PasteboardSnapshot) -> Bool
 

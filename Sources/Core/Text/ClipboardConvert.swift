@@ -191,9 +191,17 @@ import Foundation
         let start = startedAt ?? clock.nowNanos
         // P3-53: too late to copy and still paste inside the budget: nothing is posted.
         if clock.nowNanos &- start > timing.copyStartBudgetNanos { return (.timedOut, nil) }
-        guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
         // P3-65 (audit H1): a password manager's concealed / transient item is never snapshotted, copied over or put
         // back (that would stop its auto-clear). Nothing is posted; the caller falls back (a chat app just switches).
+        // P3-65 QA: decided from the type names alone, before any data is read (reading would make the manager deliver
+        // the secret); a pasteboard whose types can't be listed is not used either.
+        guard let types = pasteboard.currentTypes() else { return (.unavailable, nil) }
+        if types.contains(where: PasteboardSnapshot.secretMarkers.contains) {
+            refusedSecretClipboard = true
+            return (.unavailable, nil)
+        }
+        guard let snapshot = pasteboard.snapshot(maxBytes: Self.maxSnapshotBytes) else { return (.unavailable, nil) }
+        // Belt and braces: the same check on what was read (a marker added in between).
         if snapshot.isConcealedOrTransient {
             refusedSecretClipboard = true
             return (.unavailable, nil)
