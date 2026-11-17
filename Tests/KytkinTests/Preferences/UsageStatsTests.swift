@@ -109,6 +109,43 @@ final class UsageStatsTests: XCTestCase {
         XCTAssertEqual(fs.writes.count, 1)
     }
 
+    /// QA (P6-0k): a count never delays a settings change already waiting for its 0.5 s save.
+    func testACountNeverDelaysAPendingSettingsSave() throws {
+        let fs = InMemoryPreferencesFileSystem()
+        let clock = FakeClock()
+        let store = makeStore(fs, clock: clock)
+        store.update { $0.general.enabled = false }
+        clock.advance(byMilliseconds: 200)
+        for _ in 0..<20 { store.recordStat(.converted) }
+        XCTAssertEqual(store.saveIfDue(), 300_000_000, "still the settings deadline")
+        clock.advance(byMilliseconds: 300)
+        XCTAssertNil(store.saveIfDue())
+        XCTAssertEqual(fs.writes.count, 1)
+        let saved = try PreferencesCodec.decodeDetailed(XCTUnwrap(fs[fileURL]))
+        XCTAssertFalse(saved.prefs.general.enabled)
+        XCTAssertEqual(saved.stats?.converted, 20)
+    }
+
+    /// QA (P6-0k): a file with counts is neither lossy (no backup) nor read-only, and the counts hold only the four
+    /// numbers-and-date keys (no app names, hosts or text).
+    func testAFileWithCountsLoadsCleanlyAndHoldsOnlyTheCounts() throws {
+        let stats = UsageStats(converted: 4, switchedByApp: 3, switchedByWebsite: 2, since: fixedDate)
+        let fs = InMemoryPreferencesFileSystem(files: [fileURL: try PreferencesCodec.encode(Preferences(), stats: stats)])
+        let clock = FakeClock()
+        let store = makeStore(fs, clock: clock)
+        XCTAssertNil(store.loadIssue)
+        XCTAssertFalse(store.loadWasLossy)
+        XCTAssertFalse(store.isReadOnly)
+        store.recordStat(.switchedByApp)
+        clock.advance(byMilliseconds: 30_000)
+        store.saveIfDue()
+        XCTAssertEqual(fs.writes.count, 1, "the preferences file only, no backup")
+        let json = try XCTUnwrap(savedJSON(fs)["stats"] as? [String: Any])
+        XCTAssertEqual(Set(json.keys), ["converted", "switchedByApp", "switchedByWebsite", "since"])
+        XCTAssertTrue(json.values.allSatisfy { $0 is Int || $0 is String })
+        XCTAssertEqual(json["switchedByApp"] as? Int, 4)
+    }
+
     func testQuitFlushesPendingCounts() throws {
         let fs = InMemoryPreferencesFileSystem()
         let store = makeStore(fs, clock: FakeClock())
