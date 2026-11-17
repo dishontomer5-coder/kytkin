@@ -2,11 +2,14 @@
 // per double-Shift, for the DEBUG log only (`AppEnvironment` wires `ConvertController`'s `diagnose` hook to an
 // `os.Logger`, subsystem `io.github.kytkin.Kytkin.dev`, category `convert`, in Debug builds; Release passes nil).
 //
-// What it holds: the app's bundle ID, the paths tried in order (`ax`, `chromiumAX`, `clipboard`, `keys`, `switchOnly`)
-// each with a stop reason that is an enum case name, and a few counts (pieces, units the caret read past the value…).
-// **Never text**: no typed text, box text, clipboard content, selection or lengths of them other than these counts.
-// Every `reason` is built from Kytkin's own enums (`String(describing:)` of a result / outcome enum, whose payloads
-// are enums, step kinds, counts and input-source IDs), never from anything read from an app.
+// What it holds (P3-60 wording, DEBUG builds only): enum names (the paths tried in order: `ax`, `chromiumAX`,
+// `clipboard`, `keys`, `switchOnly`, each with its result enum; check, verdict and skip reasons), counts (pieces,
+// atoms, shifts, tag / attribute counts, copied type categories…), bundle IDs, input-source IDs, box lengths (UTF-16
+// counts), AX role names, and the code points of characters that are not letters, digits or spaces near a prefix
+// mismatch or among `AXValue`'s odd units (P3-57; a letter is only ever `L`, a digit `N`, a space `Z`). **Never
+// letters or words**: no typed text, box text, clipboard content, selection, URL, host or title. Every `reason` is
+// built from Kytkin's own enums (`String(describing:)` of a result / outcome enum, whose payloads are enums, step
+// kinds, counts and input-source IDs), never from text read from an app.
 
 import Foundation
 
@@ -58,7 +61,7 @@ struct ConvertTrace: Sendable, Equatable {
     var line: String {
         var parts = ["paths=" + (steps.isEmpty ? "none" : steps.map { "\($0.path.rawValue):\($0.reason)" }
             .joined(separator: " > "))]
-        if let chatClipboard { parts.append("slackClipboard=\(chatClipboard)") }
+        if let chatClipboard { parts.append("chatClipboard=\(chatClipboard)") }
         if let siteKnown { parts.append("siteKnown=\(siteKnown)") }
         if let pageState { parts.append("pageState=\(pageState)") }
         if let siteWatch { parts.append("siteWatch=\(siteWatch)") }

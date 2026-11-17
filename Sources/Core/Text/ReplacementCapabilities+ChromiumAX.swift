@@ -5,13 +5,11 @@
 import Foundation
 
 extension ReplacementCapabilities {
-    /// P3-42: the Chromium browsers and Electron chat apps seeded `.keysOnly` (lowercased bundle IDs). Teams
-    /// (`com.microsoft.teams2`) may be WebKit rather than Chromium (research p3-37 open question 3); the path's checks
-    /// (web-content attributes, read-back of every selected piece) hold either way, and it falls back if they fail.
+    /// P3-42: the Chromium browsers seeded `.keysOnly` (lowercased bundle IDs). P3-60: the chat apps (Slack, Discord,
+    /// Teams) are no longer here: since P3-58 they use the clipboard only (`chatAppBundleIDs`).
     static let chromiumAXBundleIDs: Set<String> = [
         "com.google.chrome", "com.microsoft.edgemac", "com.brave.browser", "company.thebrowser.browser",
         "com.vivaldi.vivaldi", "com.operasoftware.opera", "org.chromium.chromium",
-        "com.tinyspeck.slackmacgap", "com.hnc.discord", "com.microsoft.teams2",
     ]
 
     /// P3-42: the family hint for an app: `.chromiumAX` for the bundles above while their shipped method is in force

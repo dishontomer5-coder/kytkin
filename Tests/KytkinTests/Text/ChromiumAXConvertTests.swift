@@ -967,4 +967,18 @@ final class ChromiumAXConvertTests: XCTestCase {
             XCTAssertTrue(ok.contains(f.text), "\(result): \(f.text)")
         }
     }
+
+    // MARK: - P3-61: a piece selection that swallows a paragraph break is never typed over
+
+    @TextActor func testAPieceSelectionThatSwallowsALineBreakTypesNothing() async {
+        // Owner, Gmail reply in Chrome: `akuo vh` then the quote header; the selection of `vh` also took the line
+        // break, `AXSelectedText` (line breaks dropped) still read `vh`, and typing joined the lines.
+        let f = field("akuo vh\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:")
+        f.selectedTextDropsLineBreaks = true
+        f.rangeWriteExtendsBy = 1
+        let (result, _) = await runWithAtoms(f)
+        XCTAssertEqual(result, .unavailable(.selectionMismatch))
+        XCTAssertTrue(poster.events.isEmpty, "nothing typed")
+        XCTAssertEqual(f.text, "akuo vh\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:", "the line break stays")
+    }
 }

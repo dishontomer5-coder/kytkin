@@ -58,12 +58,9 @@ enum CopiedContent {
         case other
     }
 
-    /// P3-46: the chat apps (lowercased bundle IDs) whose copies are plain only with positive evidence.
-    static let chatBundleIDs: Set<String> = ["com.tinyspeck.slackmacgap", "com.hnc.discord", "com.microsoft.teams2",
-                                             "com.microsoft.teams"]
-
+    /// P3-46 / P3-60: the chat apps (`ReplacementCapabilities.chatAppBundleIDs`, the one list) are `.chat`.
     static func appKind(bundleID: String) -> AppKind {
-        chatBundleIDs.contains(bundleID.lowercased()) ? .chat : .other
+        ReplacementCapabilities.isChatApp(bundleID) ? .chat : .other
     }
 
     /// P3-46: Chromium's copy metadata (where the copy came from), never content.

@@ -33,6 +33,9 @@ final class FakeChromiumField: AXTextElement {
     /// `AXStringForRange`, `AXSelectedText`) leaves out entirely, while `AXValue` holds these odd units at `at` (units of
     /// `doc`). `imageCount` AXImage elements are reported by the atom walk.
     var oddValueUnits: (at: Int, units: [UInt16])?
+    /// P3-61: a non-caret range write that ends right before a line break also selects it (with
+    /// `selectedTextDropsLineBreaks`, the selection reads back as the piece alone).
+    var rangeWriteExtendsBy = 0
     var imageCount = 0
     /// Setting `AXSelectedTextRange` takes the AX offsets as DOM offsets (they drift after `hidden`).
     var setRangeDrifts = false
@@ -343,6 +346,9 @@ final class FakeChromiumField: AXTextElement {
             lo = fromObject(value.location)
             hi = fromObject(value.end)
         }
+        // P3-61: Chromium extends a range write over the following paragraph break (Gmail in Chrome).
+        if rangeWriteExtendsBy > 0, !value.isCaret, hi + rangeWriteExtendsBy <= doc.count,
+           doc[hi..<(hi + rangeWriteExtendsBy)].allSatisfy({ $0 == 0x0A }) { hi += rangeWriteExtendsBy }
         guard lo <= hi, hi <= doc.count else { return .failure(.failed) }
         rangeWrites.append(value)
         previousSelection = domSelection

@@ -457,7 +457,7 @@ import Foundation
         for d in candidates {   // bounded: ≤ maxShiftTries
             if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
             var k = 0
-            var outcome = await select(el, window, shift: d, windowText)
+            var outcome = await select(el, window, shift: d, windowText, exactLength: window == piece.range)
             // Hidden units inside the window: widen it (bounded: k only grows, d + k ≤ bound).
             while case .otherText(let got) = outcome, d + k < bound {
                 // `got` is the visible text of a selection `window.length + k` long: a proper prefix of the window's
@@ -503,7 +503,7 @@ import Foundation
             }
             for shift in inner {
                 if clock.nowNanos &- start > timing.budgetNanos { return .stop(.timedOut) }
-                switch await select(el, piece.range, shift: shift, piece.original) {
+                switch await select(el, piece.range, shift: shift, piece.original, exactLength: true) {
                 case .matched: return .found(shift)
                 case .notShown: return .stop(timedOut ? .readFailed : .selectionNotShown)
                 case .otherText:
@@ -904,8 +904,11 @@ import Foundation
     /// write (shape A reports in value units); it is then judged by the text alone. P3-44 QA: when the selection
     /// before already reads like the target (or can't be read), it is first moved to a caret, so a stale read of the old
     /// AX tree can never pass for the new selection. The first check is immediate.
-    private func select(_ el: any AXTextElement, _ range: TextRange, shift: Int, _ original: String) async
-        -> SelectOutcome {
+    /// P3-61: `exactLength` (a piece about to be typed over): the app must report a selection exactly as long as the
+    /// piece. Chromium's `AXSelectedText` drops line breaks, so a selection that swallowed the paragraph break after the
+    /// piece read back "right" and typing over it joined two lines (owner, Gmail reply in Chrome).
+    private func select(_ el: any AXTextElement, _ range: TextRange, shift: Int, _ original: String,
+                        exactLength: Bool = false) async -> SelectOutcome {
         let target = TextRange(location: range.location + shift, length: range.length)
         var before: TextRange? = if case .success(let r) = track(el.range(.selectedTextRange)) { r } else { nil }
         if timedOut { return .notShown }
@@ -937,6 +940,7 @@ import Foundation
                 guard case .success(let selected) = track(el.string(.selectedText)).map(stripIfNeeded) else {
                     return .notShown
                 }
+                if exactLength, r.length != range.length { return .otherText(selected) }   // P3-61
                 if selected.unicodeScalars.elementsEqual(original.unicodeScalars) { return .matched }
                 if original.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, original) {
                     return .matched

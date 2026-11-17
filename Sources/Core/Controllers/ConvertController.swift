@@ -144,6 +144,11 @@ import Foundation
     private var requestStart: UInt64 = 0
     /// P3-53: the page check's answer for the request being handled (asked at most once per request).
     private var requestPage: (gen: UInt64, category: PageCategory)?
+    /// P3-61: the element and time of the last Chromium convert whose typed keys never showed (`notSettled`).
+    private var lastNotSettled: (element: any FocusedElementIdentity, atNanos: UInt64)?
+    /// P3-61: how long after a `notSettled` the same element gets no AX path.
+    static let notSettledCooldownNanos: UInt64 = 2_000_000_000
+
     /// P3-53: the page check gets at most this much, and never more than what is left of the B5 budget.
     static let pageCheckBudgetNanos: UInt64 = 100_000_000
 
@@ -1024,8 +1029,25 @@ import Foundation
             case .unknown where source == .box:
                 trace?.chromiumSkipped = "siteUnknownBox"
                 return nil
+            case .webmail:
+                trace?.chromiumSkipped = "webmailClipboard"
+                return nil
             default: break
             }
+        }
+        // P3-61 (Coordinator 2026-11-17; owner video, a Gmail reply in Chrome: a typed piece swallowed the line break
+        // before the quote header, later presses rewrote the header's case): webmail pages never get the AX editing
+        // path; they use the clipboard HTML path (quote skipping + text boundary), as in Zen (owner-verified).
+        if r.webmailPage {
+            trace?.chromiumSkipped = "webmailClipboard"
+            return nil
+        }
+        // P3-61: after typed keys didn't show (`notSettled`), the box's state is unknown: no AX path in the same
+        // element for `notSettledCooldownNanos` (the next press uses the clipboard, or switches).
+        if let last = lastNotSettled, clock.nowNanos &- last.atNanos < Self.notSettledCooldownNanos,
+           last.element.isSameElement(as: element) {
+            trace?.chromiumSkipped = "afterNotSettled"
+            return nil
         }
         return ChromiumJob(source: source, element: element)
     }
@@ -1162,16 +1184,10 @@ import Foundation
             // typed; beep instead.
             beep()
             return .noop(.replacement(.timedOut))
-        case .unavailable(.inconsistent) where ax.lastDiagnostic.readCheck == .prefix
-                && ax.lastDiagnostic.prefixUnexplained && CopiedContent.appKind(bundleID: r.bundleID) == .chat:
-            // P3-55 (owner: a Slack box with a `:smile:`-entered emoji): the prefix disagreed with nothing the walk can
-            // explain (no U+FFFC, no emoji on either side), and in chat apps the next paths (clipboard → keys) once
-            // wrote a wrong copy of the box. Until that shape is understood: just switch, forget the buffer.
-            if r.snapshot.hasRun { finish.bufferAfter = [] }
-            return await toggle(r, because: .fieldUnreadable)
         case .unavailable:
             return await fallBackFromChromium(r, layouts: layouts, finish: &finish)
         case .partial, .failed:
+            if case .failed(_, .notSettled) = result { lastNotSettled = (job.element, clock.nowNanos) }   // P3-61
             finish.bufferAfter = []
             beep()
             return .noop(.replacement(.halted(after: .axSelectAndType)))
