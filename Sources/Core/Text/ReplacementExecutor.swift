@@ -39,6 +39,11 @@ import Foundation
     private(set) var wordBeforeCaret: String?
     /// P3-35: the last read's range ends at the caret (a key fallback could delete exactly it).
     private(set) var readRangeEndsAtCaret = true
+    /// P6-0j QA: `beginInlineCompletion` was called: `readField` takes a selected field tail's start as the caret.
+    private var inlineCompletion = false
+    /// P6-0j QA: the inline completion `readField` read (the selected tail) and the unchanged text between the range it
+    /// found and the completion. The AX write replaces range + that text + the completion, as typing would.
+    private var pendingCompletion: (selection: TextRange, middle: String)?
 
     /// P2-59c: the element `focusInfo` read as safe, for same-element checks (identity only).
     var focusedElement: (any FocusedElementIdentity)? { focusIsSafe ? element?.inner : nil }
@@ -56,7 +61,14 @@ import Foundation
         pendingRestoreCaret = nil
         wordBeforeCaret = nil
         readRangeEndsAtCaret = true
+        inlineCompletion = false
+        pendingCompletion = nil
         latch.reset()
+    }
+
+    /// P6-0j QA: see `TextReplacing.beginInlineCompletion`.
+    func beginInlineCompletion() {
+        inlineCompletion = true
     }
 
     // MARK: - Focus
@@ -125,10 +137,21 @@ import Foundation
             if let range, range.isCaret, range.location >= 0 {
                 readsCaret = try optional(el.supportsStringForRange()) ?? false
             }
+            // P6-0j QA: a selection that runs from inside the field to its end may be an inline completion (Spotlight,
+            // Safari's address bar): ranges only; whether the text before it can be read.
+            var tail = false
+            var readsBeforeSelection = false
+            if let range, range.length > 0, range.location > 0,
+               let n = try optional(el.integer(.numberOfCharacters)), n == range.end {
+                tail = true
+                readsBeforeSelection = try optional(el.supportsStringForRange()) ?? false
+            }
             element = el
             focusIsSafe = true
             return FocusInfo(role: role, isSecure: false, hasMarkedText: false, selTextSettable: textSettable,
-                             selRangeSettable: rangeSettable, selection: selection, canReadBeforeCaret: readsCaret)
+                             selRangeSettable: rangeSettable, selection: selection, canReadBeforeCaret: readsCaret,
+                             selectedLength: range.map { max(0, $0.length) },   // P6-0j
+                             selectionIsFieldTail: tail, canReadBeforeSelection: readsBeforeSelection)
         } catch {
             return nil
         }
@@ -181,6 +204,11 @@ import Foundation
     /// then read back.
     private func axWriteSelection(old: String, new: String, verify: Bool) -> StepOutcome {
         guard let el = element, !old.isEmpty, !new.isEmpty else { return .unavailable }
+        if let completion = pendingCompletion, let pending = pendingRange {
+            pendingRange = nil
+            pendingCompletion = nil
+            return completionWrite(el, old: old, new: new, verify: verify, run: pending, completion: completion)
+        }
         guard let pending = pendingRange else { return axWrite(el, old: old, new: new, verify: verify, select: nil) }
         // P2-18 QA: the stale path selected the word itself. Whatever happens, never leave a selection behind:
         // the user's next key would replace it (the word, or the converted word) and their text would be lost.
@@ -209,6 +237,52 @@ import Foundation
             collapseSelection(el, to: nil)           // unknown text: only drop the selection, at its end
         }
         return outcome
+    }
+
+    /// P6-0j QA: an inline completion's convert, as typing the converted text would do it: the completion must still be
+    /// selected where `readField` saw it and the text before it must still be `old` + the unchanged middle; then
+    /// `run.start ..< completion.end` is selected and set to `new` + middle in one `AXSelectedText` write. The app
+    /// recomputes its completion; a new completion selected right after the written text passes the read-back.
+    /// Anything that fails before the write puts the completion's selection back (untouched).
+    private func completionWrite(_ el: any AXTextElement, old: String, new: String, verify: Bool, run: TextRange,
+                                 completion: (selection: TextRange, middle: String)) -> StepOutcome {
+        guard case .success(true) = el.isSettable(.selectedText) else { return .unavailable }
+        let sel = completion.selection
+        let oldBefore = old + completion.middle, newText = new + completion.middle
+        let before = TextRange(location: run.location, length: sel.location - run.location)
+        guard run.end <= sel.location, before.length == oldBefore.utf16.count,
+              case .success(sel) = el.range(.selectedTextRange) else { return .unavailable }
+        let stillBefore: () -> Bool = {
+            guard case .success(let s) = el.string(in: before) else { return false }
+            return s.unicodeScalars.elementsEqual(oldBefore.unicodeScalars)
+        }
+        guard stillBefore() else { return .unavailable }
+        /// The completion selected again, and the text before it unchanged: nothing was written.
+        let restored: () -> Bool = {
+            guard case .success = el.setRange(sel, for: .selectedTextRange),
+                  case .success(sel) = el.range(.selectedTextRange) else { return false }
+            return stillBefore()
+        }
+        let span = TextRange(location: run.location, length: sel.end - run.location)
+        guard case .success = el.setRange(span, for: .selectedTextRange),
+              case .success(span) = el.range(.selectedTextRange) else {
+            return StepOutcome(verdict: .unavailable, fieldUntouched: restored())
+        }
+        guard case .success = el.setString(newText, for: .selectedText) else {
+            return StepOutcome(verdict: .unavailable, fieldUntouched: restored())
+        }
+        guard verify else { return .done }
+        let written = TextRange(location: run.location, length: newText.utf16.count)
+        if case .success(let s) = el.string(in: written), Self.readsBackAs(s, newText),
+           case .success(let now) = el.range(.selectedTextRange) {
+            if now == written {
+                collapseSelection(el, to: written.end)
+                return .done
+            }
+            // A caret after the text, or the app's new completion selected after it.
+            if now.location == written.end { return .done }
+        }
+        return StepOutcome(verdict: .failedVerify, fieldUntouched: restored())
     }
 
     /// Range only (never text): if something is selected, put a caret at `location` (nil = the selection's end),
@@ -450,10 +524,17 @@ import Foundation
         pendingRange = nil
         pendingCaretAfter = nil
         pendingRestoreCaret = nil
+        pendingCompletion = nil
         wordBeforeCaret = nil
         readRangeEndsAtCaret = true
-        guard focusIsSafe, let el = element, maxChars > 0, let caret = try? currentSelectedRange(el),
-              caret.isCaret else { return .unavailable }
+        guard focusIsSafe, let el = element, maxChars > 0, let current = try? currentSelectedRange(el) else {
+            return .unavailable
+        }
+        // P6-0j QA: an inline completion (a selected tail of the field): its start is the caret; only the text before
+        // it is planned (P3-62), and the completion itself is never converted.
+        let completion: TextRange? = current.isCaret ? nil : current
+        if completion != nil && (!inlineCompletion || current.location <= 0) { return .unavailable }
+        let caret = TextRange(location: current.location, length: 0)
         var total: Int?
         switch el.integer(.numberOfCharacters) {
         case .success(let n) where n >= caret.location: total = n
@@ -461,6 +542,7 @@ import Foundation
         default: total = nil
         }
         if latch.tripped { return .unavailable }
+        if let completion, total != completion.end { return .unavailable }   // no longer the field's tail
         let read = StepOutcome(verdict: .done, fieldUntouched: true)
         if total == 0 { return read }   // an empty field: nothing there
 
@@ -495,6 +577,21 @@ import Foundation
         }
         if let after = edit.caretAfter, after < 0 { return .unavailable }
         let range = TextRange(location: found.range.location + edit.offset, length: edit.length)
+        if let completion {
+            // P6-0j QA: the unchanged text between the range and the completion is written back as it is; the key
+            // fallback never runs (Backspace would delete the completion first).
+            let from = range.end - found.range.location, to = caret.location - found.range.location
+            guard from <= to, to <= units.count else { return .unavailable }
+            let middle = String(decoding: units[from..<to], as: UTF16.self)
+            guard Array(middle.utf16) == Array(units[from..<to]), !ReplacementPlanner.containsFieldStop(middle) else {
+                return .unavailable
+            }
+            pendingRange = range
+            pendingCompletion = (completion, middle)
+            readRangeEndsAtCaret = false
+            wordBeforeCaret = text
+            return read
+        }
         pendingRange = range
         pendingCaretAfter = edit.caretAfter
         pendingRestoreCaret = caret.location

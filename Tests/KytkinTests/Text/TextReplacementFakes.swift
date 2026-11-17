@@ -56,6 +56,9 @@ final class FakeTextField: AXTextElement {
     /// P3-40: Chromium-like: `AXSelectedText` leaves out the line breaks inside the selection (Slack's contenteditable
     /// joins paragraphs in it). `AXStringForRange` and the field itself keep them.
     var selectedTextDropsLineBreaks = false
+    /// P6-0j QA: an inline-completion field (Spotlight): after each successful `AXSelectedText` write, this text is
+    /// inserted after the caret and selected (the app completes again).
+    var recompletes: String?
     /// P2-59: every range `AXStringForRange` was asked for.
     private(set) var stringRangesRead: [TextRange] = []
 
@@ -167,6 +170,11 @@ final class FakeTextField: AXTextElement {
         case .timesOut: return timedOut()
         case .noBreakSpacesBecomeSpaces:
             replaceSelection(with: String(decoding: value.utf16.map { $0 == 0xA0 ? 0x20 : $0 }, as: UTF16.self))
+        }
+        if let recompletes, writeBehavior == .normal {
+            let at = selection.location
+            units.insert(contentsOf: Array(recompletes.utf16), at: at)
+            selection = TextRange(location: at, length: recompletes.utf16.count)
         }
         return .success(())
     }

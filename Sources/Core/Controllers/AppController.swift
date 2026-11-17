@@ -80,6 +80,9 @@ import Observation
     static let resignRecheckAttempts = 3
     private let ownPID: Int32
     private let frontmostPID: @MainActor () -> Int32?
+    /// P6-0j: the app that owns the system-wide focused element (AX), nil = unknown. Spotlight and other system
+    /// panels take the keys without becoming frontmost, so a double-Shift is decided for this app, not the frontmost.
+    private let focusOwner: @MainActor () -> FocusOwner?
     private let scheduler: (any OneShotScheduling)?
 
     /// P3-14 (D11): the bundled Public Suffix List loaded. Without it no browser is watched and Settings says why.
@@ -102,6 +105,7 @@ import Observation
          now: @escaping () -> Date = Date.init, scheduler: (any OneShotScheduling)? = nil,
          ownPID: Int32 = ProcessInfo.processInfo.processIdentifier,
          frontmostPID: @escaping @MainActor () -> Int32? = { nil },
+         focusOwner: @escaping @MainActor () -> FocusOwner? = { nil },
          suffixListLoaded: Bool = false,
          webLinkHandlers: @escaping @MainActor () -> Set<String> = { [] },
          addressBarLanguage: (@MainActor (LanguagePair) -> InputSourceID?)? = nil) {
@@ -110,6 +114,7 @@ import Observation
         self.scheduler = scheduler
         self.ownPID = ownPID
         self.frontmostPID = frontmostPID
+        self.focusOwner = focusOwner
         self.switcher = switcher
         self.context = context
         self.store = store
@@ -549,7 +554,20 @@ import Observation
             onDisplayChange?()
             return
         }
-        guard let c = context.current else { return finish(gen) }
+        guard var c = context.current else { return finish(gen) }
+        // P6-0j (owner 2026-11-18): Spotlight's panel takes the keys while the frontmost app stays (cmux, a terminal),
+        // so the request was decided for the terminal: blind Backspace × N + type. Decide it for the app that owns the
+        // focused element instead (its capabilities, kind, page check and trace). The frontmost app's browser facts
+        // (host, page state) are not the panel's.
+        var focusOwnerDiffers = false
+        if let owner = focusOwner(), owner.pid != c.pid {
+            // P2-39: a Kytkin window (Settings, setup) is never converted.
+            if owner.pid == ownPID || owner.bundleID.hasPrefix(KnownSwitchers.ownBundleIDPrefix) {
+                return finish(gen)
+            }
+            c = Context(bundleID: owner.bundleID, pid: owner.pid, generation: c.generation)
+            focusOwnerDiffers = true
+        }
         let app = prefs.apps[c.bundleID]
         guard app?.disabled != true else { return finish(gen) }
         let mode: ConvertRequest.Mode
@@ -578,6 +596,7 @@ import Observation
                                        browserSiteUnknown: BrowserCatalog.known[c.bundleID] != nil
                                            && (c.host ?? "").isEmpty)
         request.pageState = c.pageState   // P3-49: for the DEBUG trace only
+        request.focusOwnerDiffers = focusOwnerDiffers   // P6-0j
         request.webmailPage = PageCategory.isWebmail(host: c.host)   // P3-53 QA: a category only
         // P3-50: for the DEBUG trace only: is this browser watched (site reads), or why not.
         if BrowserCatalog.known[c.bundleID] != nil {

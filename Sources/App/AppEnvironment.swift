@@ -99,6 +99,14 @@ import AppKit
                                    ticker: MainRunLoopTicker(), convert: convert, clock: clock,
                                    scheduler: MainRunLoopOneShot(),          // P2-52 item 1
                                    frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+                                   // P6-0j: the focused element's app (Spotlight's panel is not frontmost);
+                                   // a short AX timeout: asked on main, once per double-Shift.
+                                   focusOwner: {
+                                       guard let pid = AXFocusedElementProvider().focusedElementPID(timeout: 0.1),
+                                             let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+                                       else { return nil }
+                                       return FocusOwner(pid: pid, bundleID: id)
+                                   },
                                    suffixListLoaded: extractor != nil,                // P3-14 (D11)
                                    webLinkHandlers: { BrowserInventory.webLinkHandlers() },
                                    addressBarLanguage: { [layoutCatalog] pair in       // P3-29: imported maps too

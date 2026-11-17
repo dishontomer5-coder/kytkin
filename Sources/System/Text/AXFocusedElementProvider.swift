@@ -33,4 +33,20 @@ final class AXFocusedElementProvider: FocusedElementProviding {
         }
         return pid
     }
+
+    /// P6-0j: the pid of the app that owns the system-wide focused element (identity only, no attribute values read
+    /// from it). Spotlight's panel owns the focus while another app stays frontmost.
+    func focusedElementPID(timeout: Double) -> Int32? {
+        guard AXIsProcessTrusted() else { return nil }
+        let systemWide = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(systemWide, Float(timeout))
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(unsafeDowncast(value, to: AXUIElement.self), &pid) == .success, pid > 0 else {
+            return nil
+        }
+        return pid
+    }
 }
