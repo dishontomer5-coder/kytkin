@@ -20,9 +20,13 @@ struct FocusInfo: Sendable, Equatable {
     /// field or a composition can't be ruled out), not from a secure role or subrole or a real marked range. Only then
     /// may a terminal post its buffer's keys anyway (`ConvertController.terminalFallback`).
     let fromFailedRead: Bool
+    /// P6-0j: the length of `AXSelectedTextRange` (UTF-16 units), nil = unreadable. Spotlight's inline completion is a
+    /// selected range after the typed text (its selected text may not even read): Backspace would delete only it.
+    let selectedLength: Int?
 
     init(role: String?, isSecure: Bool, hasMarkedText: Bool, selTextSettable: Bool, selRangeSettable: Bool,
-         selection: String?, canReadBeforeCaret: Bool = false, fromFailedRead: Bool = false) {
+         selection: String?, canReadBeforeCaret: Bool = false, fromFailedRead: Bool = false,
+         selectedLength: Int? = nil) {
         self.role = role
         self.isSecure = isSecure
         self.hasMarkedText = hasMarkedText
@@ -31,6 +35,13 @@ struct FocusInfo: Sendable, Equatable {
         self.selection = selection
         self.canReadBeforeCaret = canReadBeforeCaret
         self.fromFailedRead = fromFailedRead
+        self.selectedLength = selectedLength
+    }
+
+    /// P6-0j: AX reports something selected in the box (a selected range, or selected text). Backspace would delete
+    /// the selection first, so the blind key path (Backspace × N + type) must never run.
+    var hasSelectedRange: Bool {
+        (selectedLength ?? 0) > 0 || !(selection ?? "").isEmpty
     }
 
     /// The AX role of a password field.

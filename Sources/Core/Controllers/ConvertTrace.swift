@@ -54,6 +54,9 @@ struct ConvertTrace: Sendable, Equatable {
     /// P3-50: the convert's own check of the focused page (`ConvertController`): ordinary / wholeDocument / unknown,
     /// nil = not asked.
     var pageCheck: String?
+    /// P6-0j: the focused element belongs to another app than the frontmost one (Spotlight and other system panels);
+    /// `bundleID` is the focus owner's.
+    var focusOwnerDiffers = false
     /// The final outcome, as an enum case name.
     var outcome: String = ""
 
@@ -61,6 +64,7 @@ struct ConvertTrace: Sendable, Equatable {
     var line: String {
         var parts = ["paths=" + (steps.isEmpty ? "none" : steps.map { "\($0.path.rawValue):\($0.reason)" }
             .joined(separator: " > "))]
+        if focusOwnerDiffers { parts.append("focusOwner≠frontmost") }
         if let chatClipboard { parts.append("chatClipboard=\(chatClipboard)") }
         if let siteKnown { parts.append("siteKnown=\(siteKnown)") }
         if let pageState { parts.append("pageState=\(pageState)") }

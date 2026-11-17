@@ -17,6 +17,8 @@ final class AppControllerTests: XCTestCase {
     private var store: PreferencesStore!
     private var sut: AppController!
     private var displayChanges = 0
+    /// P6-0j: what the focus-owner lookup answers (nil = unknown).
+    private var focusOwnerAnswer: FocusOwner?
     private let notes = "com.apple.Notes"
     private let snapshot = WordSnapshot(strokes: [], previousWords: [], renderedIn: nil, isValid: true)
 
@@ -36,7 +38,8 @@ final class AppControllerTests: XCTestCase {
         convert = withConvert ? FakeConvert() : nil
         store = customStore ?? makeStore(prefs, clock: clock)
         sut = AppController(switcher: switcher, context: monitor, store: store, permissions: permissions,
-                            conflicts: conflicts, keyWatcher: watcher, ticker: ticker, convert: convert, clock: clock)
+                            conflicts: conflicts, keyWatcher: watcher, ticker: ticker, convert: convert, clock: clock,
+                            focusOwner: { [unowned self] in self.focusOwnerAnswer })
         switcher.onChange = { [unowned self] in self.sut.inputSourceDidChange($0) }
         monitor.onChange = { [unowned self] in self.sut.contextDidChange($0) }
         permissions.onChange = { [unowned self] in self.sut.permissionsDidChange($0) }
@@ -487,6 +490,58 @@ final class AppControllerTests: XCTestCase {
 
     /// P3-37 (b): the first key of a terminal buffer asks the convert controller to note the focused element.
     /// (P3-40: it no longer also drops an undo record.)
+    // MARK: - P6-0j: the focused element's app, not the frontmost one
+
+    /// Spotlight's panel takes the keys while cmux (a terminal) stays frontmost: the request is Spotlight's.
+    func testTheFocusOwnerDecidesTheRequestWhenItIsNotTheFrontmostApp() {
+        make(withConvert: true)
+        monitor.activate("com.cmuxterm.app", pid: 40)
+        focusOwnerAnswer = FocusOwner(pid: 41, bundleID: "com.apple.Spotlight")
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        let r = try! XCTUnwrap(convert?.requests.first)
+        XCTAssertEqual(r.bundleID, "com.apple.Spotlight")
+        XCTAssertEqual(r.processID, 41)
+        XCTAssertTrue(r.focusOwnerDiffers)
+        XCTAssertTrue(r.useClipboard)
+        XCTAssertFalse(r.inAddressBar)
+    }
+
+    func testTheFrontmostAppIsUsedWhenItOwnsTheFocusOrTheOwnerIsUnknown() {
+        make(withConvert: true)
+        monitor.activate("com.cmuxterm.app", pid: 40)
+        focusOwnerAnswer = FocusOwner(pid: 40, bundleID: "com.cmuxterm.app")
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        focusOwnerAnswer = nil
+        sut.keySignal(.doubleShift(snapshot, gen: 2))
+        XCTAssertEqual(convert?.requests.map(\.bundleID), ["com.cmuxterm.app", "com.cmuxterm.app"])
+        XCTAssertEqual(convert?.requests.map(\.focusOwnerDiffers), [false, false])
+    }
+
+    /// The panel's request carries none of the frontmost browser's page facts, and the panel's own app settings apply.
+    func testABrowsersPageFactsAndAppSettingsDoNotFollowTheFocusOwner() {
+        var p = Preferences()
+        p.apps["com.apple.Spotlight"] = .init(convertEnabled: false)
+        make(p, withConvert: true)
+        monitor.activate("com.google.Chrome", pid: 50)
+        focusOwnerAnswer = FocusOwner(pid: 51, bundleID: "com.apple.Spotlight")
+        sut.keySignal(.doubleShift(snapshot, gen: 1))
+        let r = try! XCTUnwrap(convert?.requests.first)
+        XCTAssertEqual(r.mode, .toggleOnly, "Spotlight's own setting")
+        XCTAssertFalse(r.browserSiteUnknown)
+        XCTAssertNil(r.pageState)
+        XCTAssertNil(r.siteWatch)
+    }
+
+    /// P2-39: a Kytkin window owning the focus is never converted.
+    func testAKytkinWindowOwningTheFocusIsNeverConverted() {
+        make(withConvert: true)
+        monitor.activate(notes, pid: 10)
+        focusOwnerAnswer = FocusOwner(pid: 99, bundleID: KnownSwitchers.ownBundleIDPrefix + "Kytkin")
+        sut.keySignal(.doubleShift(snapshot, gen: 5))
+        XCTAssertEqual(convert?.requests, [])
+        XCTAssertEqual(watcher.finishes, [5])
+    }
+
     func testATerminalBufferStartIsAnchored() {
         make(withConvert: true)
         monitor.activate("com.apple.Terminal", pid: 77)

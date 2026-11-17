@@ -49,6 +49,8 @@ struct ConvertRequest: Sendable, Equatable {
     var siteWatch: String?
     /// P3-53 QA: the page's host is a webmail host (`PageCategory.isWebmail`; the host itself is not kept).
     var webmailPage = false
+    /// P6-0j: `bundleID` / `processID` are the app that owns the focused element (Spotlight…), not the frontmost one.
+    var focusOwnerDiffers = false
 
     init(snapshot: WordSnapshot, gen: UInt64, bundleID: String, mode: Mode, pair: LanguagePair = .default,
          currentSource: InputSourceID = LanguagePair.default.a, switchAfterConvert: Bool = true,
@@ -79,6 +81,7 @@ struct ConvertRequest: Sendable, Equatable {
         copy.pageState = pageState
         copy.siteWatch = siteWatch
         copy.webmailPage = webmailPage
+        copy.focusOwnerDiffers = focusOwnerDiffers
         return copy
     }
 }

@@ -19,6 +19,9 @@ enum ConvertOutcome: Sendable, Equatable {
         /// P3-44: the clipboard copy was rich (bold, mentions, emoji, links…), so nothing was pasted, and no typed run
         /// could be converted by keys at the caret: double-Shift just switches the language.
         case richContent
+        /// P6-0j: AX reports a selection (Spotlight's inline completion…) that couldn't be converted: never Backspace +
+        /// type over it, just switch the language.
+        case selectionPresent
     }
 
     enum NoopReason: Sendable, Equatable {

@@ -128,7 +128,8 @@ import Foundation
             element = el
             focusIsSafe = true
             return FocusInfo(role: role, isSecure: false, hasMarkedText: false, selTextSettable: textSettable,
-                             selRangeSettable: rangeSettable, selection: selection, canReadBeforeCaret: readsCaret)
+                             selRangeSettable: rangeSettable, selection: selection, canReadBeforeCaret: readsCaret,
+                             selectedLength: range.map { max(0, $0.length) })   // P6-0j
         } catch {
             return nil
         }

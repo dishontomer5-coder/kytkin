@@ -208,6 +208,7 @@ import Foundation
 
     private func handleAndFinish(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
         trace = diagnose == nil ? nil : ConvertTrace(bundleID: request.bundleID)
+        trace?.focusOwnerDiffers = request.focusOwnerDiffers   // P6-0j
         requestStart = clock.nowNanos   // P3-53
         chatWriteRefused = false        // P3-58 QA
         // P3-49: for browsers, whether the page's host was known for this request.
@@ -280,6 +281,8 @@ import Foundation
         case clipboard(ClipJob)
         /// P3-42: run the Chromium/Electron AX convert (it waits too).
         case chromiumAX(ChromiumJob)
+        /// P6-0j: AX reports a selected range the AX path couldn't convert: never Backspace + type, just switch.
+        case selectionBlocksKeys
     }
 
     private func run(_ request: ConvertRequest, layouts: LayoutSnapshot?, finish: inout Finish) async throws
@@ -323,6 +326,10 @@ import Foundation
             return await toggle(r, because: .nothingToConvert)
         case .fieldUnreadable:
             return await toggle(r, because: .fieldUnreadable)
+        case .selectionBlocksKeys:
+            note(.keys, "selectionPresent")
+            if r.snapshot.hasRun { finish.bufferAfter = [] }   // the caret's surroundings are not what the buffer says
+            return await toggle(r, because: .selectionPresent)
         case let .failed(reason, beeps, textMayHaveChanged):
             if textMayHaveChanged { finish.bufferAfter = [] }
             if beeps { beep() }
@@ -403,9 +410,21 @@ import Foundation
             }
             return .replaced(target: target, step: step, keptBuffer: false, isRun: false)
         }
+        // P6-0j (owner 2026-11-18, Spotlight's inline completion): the run paths start at the caret, and the key path
+        // is Backspace × N + type. With something selected in the box, Backspace deletes only the selection and a typed
+        // letter survives (`akuo` → `aשלום`). A selection the AX path can convert went above; anything still selected
+        // here (a range whose text AX won't read, or a terminal's single-line field) just switches the language.
+        // A terminal's screen selection stays display only (P2-36, P3-37 (a)): Backspace never deletes it there.
+        if let f = focus, f.hasSelectedRange, !terminalSelection || Self.singleLineTextRoles.contains(f.role ?? "") {
+            return .selectionBlocksKeys
+        }
         return decideRun(r, layouts: layouts, focus: focus, element: element, allowClipboard: allowClipboard,
                          allowChromiumAX: allowChromiumAX, replacer: replacer)
     }
+
+    /// P6-0j: single-line text boxes (a search field, Spotlight's). A terminal's screen is never one of these, so in a
+    /// terminal app a selection in one of them is a real one that Backspace would delete.
+    static let singleLineTextRoles: Set<String> = ["AXTextField", "AXComboBox", "AXSearchField"]
 
     /// P2-59 (001 §12.3 X4–X6): no selection, the run before the caret.
     private func decideRun(_ r: ConvertRequest, layouts: LayoutSnapshot, focus: FocusInfo?,
