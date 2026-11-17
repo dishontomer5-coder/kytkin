@@ -6,7 +6,7 @@
 //     A successful select of ours → `conflicts.noteOurSwitch()`. An external change within 300 ms of that select,
 //     to another source, in the same context → re-assert once (design.md: "re-assert at most once"), never again.
 //     P3-9 (D5): a Context that differs from the last one only in `pageState` reaches the learner but re-applies
-//     nothing (P3-14: the same for a change of `readFromAddressBar` alone). P3-19: such a change keeps the one fight
+//     nothing (P3-14: the same for a change of `siteNotLearnable` alone). P3-19: such a change keeps the one fight
 //     re-assert of the rule switch it follows. P3-29: with "Use the browser's language in the address bar" on, a move
 //     into or out of `.editingAddress` is a full change: the rule is applied (the browser's language in the bar, the
 //     site's again on the page). QA (P3-29): a `.unknown` read in the same window keeps whichever of the two applied
@@ -190,7 +190,7 @@ import Foundation
     /// P3-9: same app, pid, site, private flag and chat; only `pageState` (and the generation) differs.
     /// P3-29: a move into or out of the address bar while the browser's language applies there is not "only the page
     /// state": the rule changes (bar ↔ page), so it is applied.
-    /// P3-14: or only `readFromAddressBar` (Gecko bar ↔ `AXURL` on the same site): it changes learning, not the rule.
+    /// P3-14: or only `siteNotLearnable` (Gecko bar ↔ `AXURL` on the same site): it changes learning, not the rule.
     /// QA (P3-9): the host counts only as ContextAssembler counts it: when the two differ (after HostNormalizer) and
     /// either has a siteHost rule. The assembler drops a host-only change inside one site, so the host it emits with
     /// the next page-state change can be newer than the last one delivered (www.google.com → mail.google.com, then a
@@ -198,16 +198,14 @@ import Foundation
     /// `aInBar` / `bInBar`: QA (P3-29) the callers' `inAddressBar` answers; nil = `engine.usesBrowserLanguage`.
     static func differsOnlyInPageState(_ a: Context, _ b: Context, engine: RuleEngine,
                                        aInBar: Bool? = nil, bInBar: Bool? = nil) -> Bool {
-        guard a.pageState != b.pageState || a.readFromAddressBar != b.readFromAddressBar,
+        guard a.pageState != b.pageState || a.siteNotLearnable != b.siteNotLearnable,
               a.bundleID == b.bundleID, a.pid == b.pid,
               a.siteDomain == b.siteDomain, a.isPrivateWindow == b.isPrivateWindow, a.chatKey == b.chatKey,
               (aInBar ?? engine.usesBrowserLanguage(a)) == (bInBar ?? engine.usesBrowserLanguage(b)) else {
             return false
         }
-        let oldHost = HostNormalizer.normalized(a.host), newHost = HostNormalizer.normalized(b.host)
-        guard oldHost != newHost else { return true }
-        let hasOverride = { (h: String?) in h.map { engine.rule(for: .siteHost(host: $0)) != nil } ?? false }
-        return !hasOverride(oldHost) && !hasOverride(newHost)
+        // P3-19: the same host rule as ContextAssembler.
+        return !HostNormalizer.hostChangeMatters(a.host, b.host) { engine.rule(for: .siteHost(host: $0)) != nil }
     }
 
     private func applyRule(for c: Context) {

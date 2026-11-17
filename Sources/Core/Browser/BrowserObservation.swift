@@ -7,6 +7,9 @@ struct BrowserObservation: Sendable, Equatable {
         case axURL       // AXWebArea.AXURL
         case addressBar  // an unfocused Gecko bar or Safari address field
         case appleEvent  // an opted-in Apple Event (P3-7)
+        /// P3-25 (Coordinator decision): an Apple Event sent after an AX read failed (a hung browser), so nobody knew
+        /// whether the address bar had focus: the site may be half-typed. Applied, never learned.
+        case appleEventAfterTimeout
         case kept        // nothing fresh was read: this window's last site (or none) is reported
     }
 
@@ -31,16 +34,23 @@ struct BrowserObservation: Sendable, Equatable {
 
     /// P3-14 (P3-20 decision, plan.md P3-11/13 T1): the answer came only from the Gecko address bar, not from a web
     /// area's `AXURL`. Firefox can keep half-typed text in an unfocused bar, so such a site is applied but never
-    /// learned. Only this one bit of `via` reaches the Context; never any text.
-    var readFromAddressBar: Bool { via == .addressBar }
+    /// learned. P3-25: the same for an Apple Event sent after an AX timeout (the bar's focus was unknown). Only this
+    /// one bit of `via` reaches the Context; never any text.
+    var siteNotLearnable: Bool { via == .addressBar || via == .appleEventAfterTimeout }
+
+    /// P3-25: the AX read failed before this Apple Event answer.
+    func afterAXTimeout() -> BrowserObservation {
+        guard via == .appleEvent else { return self }
+        return BrowserObservation(site: site, pageState: pageState, isPrivate: isPrivate, via: .appleEventAfterTimeout)
+    }
 
     /// The facts main acts on; the AX thread posts only when these change (§14.3.4 "post only on change").
     /// The host counts, not only the site key: a host inside one domain can have a siteHost override (§14.5).
-    /// `via` doesn't count, except whether it was the address bar (P3-14: bar → `AXURL` on the same site makes the
-    /// site learnable, so main must hear about it).
+    /// `via` doesn't count, except whether the site is learnable (P3-14: bar → `AXURL` on the same site makes the
+    /// site learnable, so main must hear about it; P3-25 the same after a timeout).
     func hasSameFacts(as other: BrowserObservation) -> Bool {
         site == other.site && pageState == other.pageState && isPrivate == other.isPrivate
-            && readFromAddressBar == other.readFromAddressBar
+            && siteNotLearnable == other.siteNotLearnable
     }
 }
 

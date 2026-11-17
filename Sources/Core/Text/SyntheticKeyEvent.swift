@@ -1,9 +1,9 @@
 // P2-18: One key event Kytkin posts as replacement text (001 §2.2, R5 §B). Only two shapes exist: a Backspace,
 // or a Unicode string on a neutral key code. Both always carry the `ours` marker and no modifier flags (the user
 // may still hold Shift right after a double-Shift). There is no way to build a Return, Tab or other control key.
-// P3-37: two more shapes, for the clipboard convert in unreadable non-terminal apps only: ⌘A / ⌘C / ⌘V (Command and
-// nothing else, on the three ANSI keys, no text) and a plain Right arrow (drops the selection, caret at its end).
-// P3-62: ⌘A is gone; ⇧⌘↑ (Up arrow, Shift + Command, no text) selects from the cursor to the box's start instead.
+// P3-37 / P3-62: three more shapes, for the clipboard convert in unreadable non-terminal apps only: ⌘C / ⌘V (Command
+// and nothing else, on the two ANSI keys, no text), ⇧⌘↑ (Up arrow, Shift + Command, no text: selects from the cursor
+// to the box's start) and a plain Right arrow (drops the selection, caret at its end).
 // Still never a Return, Tab, Escape, ⌃C or any other key.
 
 import Foundation

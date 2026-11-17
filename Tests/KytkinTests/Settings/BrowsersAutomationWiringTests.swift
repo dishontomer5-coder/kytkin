@@ -193,6 +193,23 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         return controller
     }
 
+    func testALaunchOrQuitWhileSettingsIsOpenRedrawsTheRowsAndChecksSilently() {
+        // P3-25: the Ask button follows whether the browser runs; it must not wait for Settings to come to the front.
+        let permissions = RecordingPermissions()
+        var prefs = Preferences()
+        prefs.browsers.useAutomation = true
+        inventory = BrowserInventorySnapshot(installedCatalog: [chrome])
+        _ = makeReal(prefs, running: [chrome], permissions: permissions)
+        sut.refresh()
+        let generation = sut.statusGeneration
+        let inventoryReads = permissions.calls.count
+        sut.runningAppsChanged()
+        XCTAssertEqual(sut.statusGeneration, generation + 1, "SwiftUI re-reads the rows")
+        XCTAssertEqual(permissions.calls.count, inventoryReads + 1)
+        XCTAssertEqual(permissions.calls.last, .refreshAutomation([chrome]))
+        XCTAssertTrue(permissions.promptingCalls.isEmpty, "never a prompt")
+    }
+
     func testOpeningSettingsWithTheRealControllerOnlyChecksSilently() throws {
         let permissions = RecordingPermissions()
         var prefs = Preferences()

@@ -27,8 +27,8 @@
 //   - a **pinned** rule exists for the scope → nothing; pins stay fixed (plan.md Decision, 001 §11 Q2).
 //   - a learned rule already says the same source → nothing to change.
 //
-// The learner only decides. `RuleLearner.upsert` turns a `.learn` outcome into the new rules array,
-// which PreferencesStore (P2-8) then saves.
+// The learner only decides. `RuleWriter.learn` (the one rule writer, P3-19) turns a `.learn` outcome into the new
+// rules array, which PreferencesStore (P2-8) then saves.
 
 import Foundation
 
@@ -63,8 +63,9 @@ enum LearnOutcome: Sendable, Equatable {
         case editingAddress
         /// P3-9: the browser's page couldn't be read (`.unknown`), or a `.page` came without a site: D3.
         case siteUnknown
-        /// P3-14 (P3-20 decision): the site came only from the Gecko address bar, which can hold half-typed text.
-        case siteFromAddressBar
+        /// P3-14 (P3-20 decision): the site came only from the Gecko address bar, which can hold half-typed text;
+        /// P3-25: or from an Apple Event after an AX timeout (the bar's focus unknown).
+        case siteNotLearnable
         /// Within `settleAfterContextChange` of a context change.
         case tooSoonAfterContextChange
         case pinned
@@ -201,7 +202,8 @@ struct RuleLearner {
         }
         // P3-14 (P3-20 decision): an answer read only from the Gecko address bar is applied, never learned. Firefox can
         // keep half-typed text in an unfocused bar (`ynet.co`), and nothing tells it apart from the real address.
-        return c.readFromAddressBar ? .siteFromAddressBar : nil
+        // P3-25: likewise an Apple Event answer after an AX timeout.
+        return c.siteNotLearnable ? .siteNotLearnable : nil
     }
 
     private func ruleReason(_ scope: RuleScope, _ id: InputSourceID) -> LearnOutcome.DiscardReason? {
@@ -214,25 +216,5 @@ struct RuleLearner {
     /// Monotonic, but an out-of-order timestamp must not trap: treat it as 0 elapsed.
     private func elapsed(from start: UInt64, to now: UInt64) -> UInt64 {
         now >= start ? now - start : 0
-    }
-
-    // MARK: - Applying an outcome
-
-    /// Applies a `.learn` to `rules`: updates the learned rule for that scope (same id, new source and
-    /// date) or appends a new learned rule. A pinned rule for the scope is never changed; then `rules`
-    /// comes back as is. Other outcomes return `rules` unchanged.
-    static func upsert(_ outcome: LearnOutcome, into rules: [Rule], now: Date, newID: UUID = UUID()) -> [Rule] {
-        guard case .learn(let scope, let source) = outcome else { return rules }
-        // P2-10: same normalization and duplicate tie-break as resolution (pinned wins), via RuleEngine.
-        let existing = RuleEngine(rules: rules).rule(for: scope)
-        if let existing {
-            guard existing.origin == .learned,
-                  let index = rules.firstIndex(where: { $0.id == existing.id }) else { return rules }
-            var updated = rules
-            updated[index].inputSource = source
-            updated[index].updatedAt = now
-            return updated
-        }
-        return rules + [Rule(id: newID, scope: scope, inputSource: source, origin: .learned, updatedAt: now)]
     }
 }

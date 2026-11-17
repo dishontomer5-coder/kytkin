@@ -224,7 +224,7 @@ final class AddWebsiteRulesTests: XCTestCase {
         make([site("ynet.co.il", IDs.hebrew)])
         sut.beginAddWebsite(subdomainOf: "ynet.co.il")
         let form = try XCTUnwrap(sut.addWebsite)
-        XCTAssertEqual(form.language, IDs.abc, "the default language differs from the site's rule")
+        XCTAssertEqual(form.language, IDs.hebrew, "P3-24: the site rule's language")
         XCTAssertTrue(form.isStillTheParentSite)
         XCTAssertFalse(form.canSave)
         XCTAssertFalse(sut.saveAddWebsite())
@@ -237,6 +237,33 @@ final class AddWebsiteRulesTests: XCTestCase {
         let rule = try XCTUnwrap(store.prefs.rules.only)
         XCTAssertEqual(rule.inputSource, IDs.hebrew, "the site's rule is untouched")
         XCTAssertEqual(rule.origin, .learned)
+    }
+
+    func testTheSubdomainSheetStartsWithTheSiteRulesLanguage() throws {
+        // P3-24 (Coordinator): not the first option.
+        make([site("ynet.co.il", IDs.hebrew)])
+        sut.beginAddWebsite(subdomainOf: "ynet.co.il")
+        XCTAssertEqual(try XCTUnwrap(sut.addWebsite).language, IDs.hebrew)
+    }
+
+    func testASiteRuleInALanguageNotOfferedFallsBackToTheFirstOption() throws {
+        make([site("ynet.co.il", InputSourceID("com.apple.keylayout.Russian"))])
+        sut.beginAddWebsite(subdomainOf: "ynet.co.il")
+        XCTAssertEqual(try XCTUnwrap(sut.addWebsite).language, IDs.abc)
+    }
+
+    func testAddWebsiteStillStartsWithTheFirstOption() throws {
+        make([site("ynet.co.il", IDs.hebrew)])
+        sut.beginAddWebsite()
+        XCTAssertEqual(try XCTUnwrap(sut.addWebsite).language, IDs.abc)
+    }
+
+    func testClosingSettingsResetsTheKindFilter() {
+        // P3-24: "Show in Rules" sets Websites; the next opening shows All again.
+        make()
+        sut.kindFilter = .websites
+        sut.settingsClosed()
+        XCTAssertEqual(sut.kindFilter, .all)
     }
 
     /// QA (P3-15): a pasted URL never leaves its path, query, fragment or user info in the file.

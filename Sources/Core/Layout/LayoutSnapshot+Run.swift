@@ -76,17 +76,15 @@ extension LayoutSnapshot {
         return (target, out)
     }
 
-    /// P3-62: ⌘A is no longer posted (⇧⌘↑ selects to the box's start; the arrow key is layout-independent), so only C
-    /// and V matter now; the rules below are unchanged for them.
-    /// P3-37: ⌘ + the ANSI A / C / V keys is ⌘A / ⌘C / ⌘V for this pair: one of its layouts types plain `a`, `c` and `v`
-    /// on exactly those key codes (ABC, U.S., British…; Apple Hebrew's Command layer is QWERTY). On AZERTY the A
-    /// position types `q` (⌘Q would quit the app) and on Dvorak C is `j`, so the clipboard convert is never used there.
+    /// P3-37 / P3-62: ⌘ + the ANSI C / V keys is ⌘C / ⌘V for this pair: one of its layouts types plain `c` and `v` on
+    /// exactly those key codes (ABC, U.S., British, AZERTY…; Apple Hebrew's Command layer is QWERTY). On Dvorak C is
+    /// `j`, so the clipboard convert is never used there. (⇧⌘↑ is an arrow key: the same in every layout.)
     ///
-    /// P3-37 QA: macOS reads ⌘ + key in the layout **in front**, so one Latin layout of the pair typing a/c/v is not
-    /// enough: with ABC ⇄ French (AZERTY) and French in front, key 0 is ⌘Q. Now every layout of the pair that types Latin
-    /// letters on those keys must type exactly a, c, v; a non-Latin one (Hebrew, Russian, Greek: their Command layer is
-    /// QWERTY) is allowed, and at least one layout must type a/c/v. (A non-Latin layout with an AZERTY Command layer,
-    /// e.g. Arabic-AZERTY, can't be told apart from its plain keys: a known gap.)
+    /// P3-37 QA: macOS reads ⌘ + key in the layout **in front**, so one Latin layout of the pair typing c/v is not
+    /// enough: with ABC ⇄ Dvorak and Dvorak in front, ⌘ + the C key is ⌘J. Every layout of the pair that types Latin
+    /// letters on those keys must type exactly c, v; a non-Latin one (Hebrew, Russian, Greek: their Command layer is
+    /// QWERTY) is allowed, and at least one layout must type c/v. (A non-Latin layout with a non-QWERTY Command layer
+    /// can't be told apart from its plain keys: a known gap.)
     var clipboardShortcutsAreSafe: Bool {
         guard let a = converter(from: pair.a)?.from, let b = converter(from: pair.b)?.from else { return false }
         enum Kind { case acv, nonLatin, unsafe }

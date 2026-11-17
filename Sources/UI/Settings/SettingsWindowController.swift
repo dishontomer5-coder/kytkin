@@ -47,6 +47,17 @@ import SwiftUI
         self.showWelcome = showWelcome
         self.openSettingsFolder = openSettingsFolder
         super.init()
+        // P3-25: Browsers & Sites' Ask button is enabled only while that browser runs; a launch or quit while Settings
+        // is open (and stays key) must show at once, not only when Settings next comes to the front.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            center.addObserver(self, selector: #selector(runningAppsChanged), name: name, object: nil)
+        }
+    }
+
+    @objc private func runningAppsChanged(_ notification: Notification) {
+        guard isOpen else { return }
+        tabs.browsers.runningAppsChanged()
     }
 
     var isOpen: Bool { window?.isVisible ?? false }
@@ -123,6 +134,7 @@ import SwiftUI
 
     func windowWillClose(_ notification: Notification) {
         tabs.permissions.setVisible(false)
+        tabs.rules.settingsClosed()   // P3-24
         if let window { WindowPresenter.willClose(window) }
     }
 }

@@ -128,10 +128,10 @@ struct ContextAssembler {
     /// key, the private flag, the page state, or a host that has an override changed. The first observation
     /// for a browser activation held by the site grace releases it at once, app and site together.
     /// nil = no change, stale pid, or held.
-    /// P3-14: `readFromAddressBar` (the P3-20 decision) counts as a change too: it decides whether the site may be
+    /// P3-14: `siteNotLearnable` (the P3-20 decision) counts as a change too: it decides whether the site may be
     /// learned, so bar → `AXURL` on the same site must reach the learner.
     mutating func browserObserved(site: SiteAddress?, pageState: BrowserPageState, isPrivate: Bool?,
-                                  readFromAddressBar: Bool = false, pid: Int32) -> Context? {
+                                  siteNotLearnable: Bool = false, pid: Int32) -> Context? {
         guard var next = latest, next.pid == pid else { return nil }
         let host = site?.host, domain = site?.siteKey
         observedHost = host
@@ -142,26 +142,26 @@ struct ContextAssembler {
             next.siteDomain = domain
             next.isPrivateWindow = isPrivate
             next.pageState = pageState
-            next.readFromAddressBar = readFromAddressBar
+            next.siteNotLearnable = siteNotLearnable
             latest = next
             // Held only by the grace → emit now. Also part of a burst → the burst's deadline emits the merge.
             return burstDeadlineNanos == nil ? release() : nil
         }
         let oldHost = Self.normalizedHost(next.host), newHost = Self.normalizedHost(host)
         guard next.siteDomain != domain || next.isPrivateWindow != isPrivate || next.pageState != pageState
-                || next.readFromAddressBar != readFromAddressBar || hostMatters(oldHost, newHost) else { return nil }
+                || next.siteNotLearnable != siteNotLearnable || hostMatters(oldHost, newHost) else { return nil }
         next.host = host
         next.siteDomain = domain
         next.isPrivateWindow = isPrivate
         next.pageState = pageState
-        next.readFromAddressBar = readFromAddressBar
+        next.siteNotLearnable = siteNotLearnable
         return apply(next)
     }
 
     /// 001 §14.2/§14.5 signature: one browser read (P3-6's `BrowserObservation`; `via` is for diagnostics only).
     mutating func browserObserved(_ o: BrowserObservation, pid: Int32) -> Context? {
         browserObserved(site: o.site, pageState: o.pageState, isPrivate: o.isPrivate,
-                        readFromAddressBar: o.readFromAddressBar, pid: pid)
+                        siteNotLearnable: o.siteNotLearnable, pid: pid)
     }
 
     /// P3-14: Kytkin stopped watching browser `pid` while it is still in front (the site policy changed: Kytkin
@@ -180,7 +180,7 @@ struct ContextAssembler {
         next.siteDomain = nil
         next.isPrivateWindow = nil
         next.pageState = nil
-        next.readFromAddressBar = false
+        next.siteNotLearnable = false
         return apply(next)
     }
 
@@ -233,7 +233,7 @@ struct ContextAssembler {
         var isPrivateWindow: Bool?
         var chatKey: ChatKey?
         var pageState: BrowserPageState?
-        var readFromAddressBar = false
+        var siteNotLearnable = false
 
         init(bundleID: String, pid: Int32) {
             self.bundleID = bundleID
@@ -248,7 +248,7 @@ struct ContextAssembler {
             isPrivateWindow = c.isPrivateWindow
             chatKey = c.chatKey
             pageState = c.pageState
-            readFromAddressBar = c.readFromAddressBar
+            siteNotLearnable = c.siteNotLearnable
         }
     }
 
@@ -259,9 +259,10 @@ struct ContextAssembler {
         return bundleID.lowercased().hasPrefix(KnownSwitchers.ownBundleIDPrefix)
     }
 
-    /// A host change inside one registrable domain matters only when the old or the new host has an override.
+    /// A host change inside one registrable domain matters only when the old or the new host has an override
+    /// (P3-19: the rule shared with SwitchController).
     private func hostMatters(_ oldHost: String?, _ newHost: String?) -> Bool {
-        oldHost != newHost && [oldHost, newHost].contains { $0.map(hostsWithOverrides.contains) ?? false }
+        HostNormalizer.hostChangeMatters(oldHost, newHost, hasOverride: hostsWithOverrides.contains)
     }
 
     /// `activation`: a new app; its grace replaces any earlier one (after the burst check, which still sees it).
@@ -313,7 +314,7 @@ struct ContextAssembler {
         let context = Context(bundleID: latest.bundleID, pid: latest.pid, host: latest.host,
                               siteDomain: latest.siteDomain, isPrivateWindow: latest.isPrivateWindow,
                               chatKey: latest.chatKey, pageState: latest.pageState,
-                              readFromAddressBar: latest.readFromAddressBar, generation: generation)
+                              siteNotLearnable: latest.siteNotLearnable, generation: generation)
         current = context
         currentAppIsGone = false
         return context

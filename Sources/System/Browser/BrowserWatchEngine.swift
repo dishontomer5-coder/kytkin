@@ -164,17 +164,19 @@ final class BrowserWatchEngine<Tree: AXNodeReading, Observer: BrowserNotificatio
 
     // MARK: - Internals
 
+    /// P3-21: mutates `attached` in place (no copy of the reader's window cache per read).
     private func performRead() {
-        guard var a = attached else { return }
+        guard let tree = attached?.tree else { return }
         let start = clock.nowNanos
-        let (observation, sawWindow) = a.reader.read(a.tree, now: start)
+        guard let result = attached?.reader.read(tree, now: start) else { return }
+        let (observation, sawWindow) = result
         readCount += 1
         scheduler.readFinished(observation, sawWindow: sawWindow, now: clock.nowNanos)
-        if let at = a.reader.takeAppleEventRetry() { scheduler.readAgain(at: at) }   // P3-7: rate-limited send
-        if a.request.engine == .gecko { updateBarWatch(&a) }
+        if let at = attached?.reader.takeAppleEventRetry() { scheduler.readAgain(at: at) }   // P3-7: rate-limited send
+        if attached?.request.engine == .gecko { updateBarWatch(&attached!) }
+        guard let a = attached else { return }
         let changed = a.lastPosted.map { !observation.hasSameFacts(as: $0) } ?? true
-        if changed { a.lastPosted = observation }
-        attached = a
+        if changed { attached?.lastPosted = observation }
         if changed { deliver(a.pid, a.attachID, observation, sawWindow) }
     }
 

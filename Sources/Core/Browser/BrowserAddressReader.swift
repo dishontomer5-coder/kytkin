@@ -230,7 +230,9 @@ struct BrowserAddressReader<Tree: AXNodeReading> {
             // P3-7: an AX timeout with a window is "couldn't tell" too (§14.7 rule 1); not in an ignored private
             // window (D12).
             guard request.readsAddress(isPrivate: isPrivate) else { return (kept, sawWindow) }
-            return (appleEventAddress(after: kept, now: now), sawWindow)
+            // P3-25 (Coordinator decision): AX couldn't say whether the address bar has focus, so the answer may be a
+            // half-typed address: applied, never learned.
+            return (appleEventAddress(after: kept, now: now).afterAXTimeout(), sawWindow)
         }
     }
 

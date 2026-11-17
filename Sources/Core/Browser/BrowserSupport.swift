@@ -32,7 +32,11 @@ struct BrowserSupportTracker: Sendable, Equatable {
         switch o.pageState {
         case .page, .notWebPage:
             // A fresh answer from the browser (`.kept` can't give these).
-            if o.via == .appleEvent { r.readByAppleEvent = true } else { r.readByAX = true }
+            if o.via == .appleEvent || o.via == .appleEventAfterTimeout {
+                r.readByAppleEvent = true
+            } else {
+                r.readByAX = true
+            }
             r.unknownStreak = 0
         case .unknown:
             // A detected private window that isn't read (D12) says nothing about support.

@@ -72,7 +72,7 @@ extension ReplacementCapabilities {
         "com.exafunction.windsurf", "dev.zed.zed", "com.sublimetext.4", "com.apple.dt.xcode",
     ]
 
-    /// P3-37 QA: web apps where ⌘A selects a whole document, sheet or file, not one text box: a whole-box convert would
+    /// P3-37 QA: web apps where a select (P3-62: ⇧⌘↑, was ⌘A) spans a whole document, sheet or file, not one text box: a whole-box convert would
     /// paste the document back as plain text (formatting, images, formulas lost) or turn code into Hebrew
     /// (research p3-37 §7: "Google Docs / Sheets, Monaco or CodeMirror on the web: keys"). A host matches itself and its
     /// subdomains. The remembered buffer still converts by keys there.

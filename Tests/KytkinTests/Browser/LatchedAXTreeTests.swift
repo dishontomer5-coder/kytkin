@@ -29,7 +29,7 @@ final class LatchedAXTreeTests: XCTestCase {
         let arc = BrowserFixtures.arc()
         let latch = AXReadLatch()
         let tree = LatchedAXTree(arc.tree, latch: latch)
-        for error in [AXReadError.invalidElement, .apiDisabled, .cannotComplete, .other] {
+        for error in [AXReadError.invalidElement, .apiDisabled, .other] {
             arc.tree.errors[arc.webArea] = error
             XCTAssertThrowsError(try tree.url(of: arc.webArea)) { XCTAssertEqual($0 as? AXReadError, error) }
             XCTAssertFalse(latch.tripped)

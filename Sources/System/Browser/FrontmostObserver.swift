@@ -7,6 +7,9 @@
 //
 // The callback reads nothing from the element: it only maps the notification name to a `BrowserTrigger`.
 // Never sets an attribute or performs an action. Never compiled into the tests. AX thread only. Never logs.
+// P3-21: detaching from a hung browser held the AX thread ~1.5 s (one 0.25 s timeout per removal). Removals now stop
+// at the first kAXErrorCannotComplete and are skipped when the browser process is gone; the run-loop source is always
+// removed, and releasing the observer drops whatever registrations are left.
 
 import ApplicationServices
 import Foundation
@@ -26,6 +29,7 @@ final class FrontmostObserver: BrowserNotificationObserving {
     private static let valueChanged = "AXValueChanged"
 
     private var observer: AXObserver?
+    private var pid: Int32 = 0
     private var app: AXUIElement?
     private var registered: [String] = []
     private var valueElement: AXUIElement?
@@ -56,7 +60,8 @@ final class FrontmostObserver: BrowserNotificationObserving {
                 continue   // this browser doesn't post it; the others and the poll cover it
             default:
                 // R2: right after launch the browser answers kAXErrorCannotComplete; undo and let the engine retry.
-                for n in names { AXObserverRemoveNotification(observer, app, n as CFString) }
+                var ok = true
+                for n in names where ok { ok = Self.remove(observer, app, n) }   // P3-21: stop at a timeout
                 return false
             }
         }
@@ -64,6 +69,7 @@ final class FrontmostObserver: BrowserNotificationObserving {
         CFRunLoopAddSource(loop, AXObserverGetRunLoopSource(observer), .defaultMode)
         runLoop = loop
         self.observer = observer
+        self.pid = pid
         self.app = app
         registered = names
         return true
@@ -72,7 +78,7 @@ final class FrontmostObserver: BrowserNotificationObserving {
     func observeValueChanges(of node: AXUIElement?) {
         guard let observer else { return }
         if let old = valueElement {
-            AXObserverRemoveNotification(observer, old, Self.valueChanged as CFString)
+            _ = Self.remove(observer, old, Self.valueChanged)
             valueElement = nil
         }
         guard let node else { return }
@@ -84,9 +90,11 @@ final class FrontmostObserver: BrowserNotificationObserving {
 
     func detach() {
         guard let observer else { return }
-        if let old = valueElement { AXObserverRemoveNotification(observer, old, Self.valueChanged as CFString) }
+        // P3-21: a quit browser has nothing to unregister; a hung one gets one try, not one per notification.
+        var ok = Self.processExists(pid)
+        if ok, let old = valueElement { ok = Self.remove(observer, old, Self.valueChanged) }
         if let app {
-            for n in registered { AXObserverRemoveNotification(observer, app, n as CFString) }
+            for n in registered where ok { ok = Self.remove(observer, app, n) }
         }
         if let runLoop { CFRunLoopRemoveSource(runLoop, AXObserverGetRunLoopSource(observer), .defaultMode) }
         runLoop = nil
@@ -94,6 +102,16 @@ final class FrontmostObserver: BrowserNotificationObserving {
         app = nil
         registered = []
         valueElement = nil
+    }
+
+    /// P3-21: false = the browser didn't answer (kAXErrorCannotComplete): don't ask it again.
+    private static func remove(_ observer: AXObserver, _ element: AXUIElement, _ name: String) -> Bool {
+        AXObserverRemoveNotification(observer, element, name as CFString) != .cannotComplete
+    }
+
+    /// P3-21: the process still exists (signal 0 checks without sending anything).
+    private static func processExists(_ pid: Int32) -> Bool {
+        pid > 0 && (kill(pid, 0) == 0 || errno == EPERM)
     }
 
     // MARK: - Callback

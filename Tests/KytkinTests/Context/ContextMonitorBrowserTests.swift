@@ -112,7 +112,7 @@ final class ContextMonitorBrowserTests: XCTestCase {
         XCTAssertEqual(c.bundleID, zen)
         XCTAssertEqual(c.siteDomain, "ynet.co.il")
         XCTAssertEqual(c.pageState, .page)
-        XCTAssertFalse(c.readFromAddressBar)
+        XCTAssertFalse(c.siteNotLearnable)
     }
 
     func testGraceRunsOutAppOnly() throws {
@@ -344,12 +344,12 @@ final class ContextMonitorBrowserTests: XCTestCase {
         source.onActivate?(zen, 20)
         browsers.post(page(via: .addressBar), pid: 20)
         let c = try XCTUnwrap(seen.last)
-        XCTAssertTrue(c.readFromAddressBar)
+        XCTAssertTrue(c.siteNotLearnable)
         XCTAssertEqual(c.siteDomain, "ynet.co.il")
         clock.advance(byMilliseconds: 500)
         browsers.post(page(via: .axURL), pid: 20)
         XCTAssertEqual(seen.count, 2, "bar → AXURL on the same site is a change (it may be learned now)")
-        XCTAssertFalse(try XCTUnwrap(seen.last).readFromAddressBar)
+        XCTAssertFalse(try XCTUnwrap(seen.last).siteNotLearnable)
     }
 
     func testSupportTrackerRecordsReadsWithTheWindowFlag() {

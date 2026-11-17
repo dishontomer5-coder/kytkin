@@ -21,6 +21,14 @@ enum HostNormalizer {
     }
 
     /// nil for nil or a host that normalizes to "" (RuleEngine: an empty key never matches).
+    /// P3-19: a host change inside one registrable domain matters only when the old or the new host has a siteHost
+    /// override. Shared by ContextAssembler (whether to emit) and SwitchController (whether to re-apply). The hosts
+    /// are compared after `normalized`.
+    static func hostChangeMatters(_ oldHost: String?, _ newHost: String?, hasOverride: (String) -> Bool) -> Bool {
+        let a = normalized(oldHost), b = normalized(newHost)
+        return a != b && [a, b].contains { $0.map(hasOverride) ?? false }
+    }
+
     static func normalized(_ host: String?) -> String? {
         guard let host else { return nil }
         let h = normalize(host)

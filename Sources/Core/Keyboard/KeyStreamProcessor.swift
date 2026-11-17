@@ -38,6 +38,8 @@
 // so nothing states the buffer after it; the abort forgets the buffer itself, and until the next replacement starts
 // an `isOurs` input-source change ("keep the buffer") is treated as a foreign one. Both orders of its finish and its
 // after-convert switch notification therefore end with no buffer.
+// P3-34 (3): "briefly": the buffer and a parked terminal buffer are forgotten after `idleExpiryNanos` (3 min) with no
+// user key. Checked before each key / Shift / context change and from the tap thread's 1 s poll (`expireIfIdle`).
 
 import Foundation
 
@@ -108,6 +110,10 @@ struct KeyStreamProcessor: Sendable {
     // P2-12: last seen device Shift bits, so each flagsChanged yields exact per-side press/release edges.
     private var leftShiftHeld = false
     private var rightShiftHeld = false
+    /// P3-34 (3): forget typed text after this long with no user key.
+    static let idleExpiryNanos: UInt64 = 180_000_000_000
+    /// P3-34 (3): when the last user key came (or a convert finished), clock time.
+    private var lastKeyNanos: UInt64 = 0
 
     init(config: KeyProcessorConfig = .init(), clock: any Clock = SystemClock()) {
         self.config = config
@@ -156,7 +162,8 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, had ? .bufferInvalidated : nil)
 
         case .flagsChanged:
-            return (.pass, handleFlags(e))
+            let expired = expireIfIdle()   // P3-34 (3): a double-Shift after a long pause sees no old buffer
+            return (.pass, handleFlags(e) ?? expired)
 
         case .pointerDown:
             pointerSinceKey = true   // P3-41 QA
@@ -173,11 +180,14 @@ struct KeyStreamProcessor: Sendable {
             return (.pass, signal)
 
         case .keyDown, .keyUp:
-            if e.kind == .keyDown { pointerSinceKey = false }   // P3-41 QA
-            if holdsKeys { return hold(e) }
-            guard e.kind == .keyDown else { return (.pass, nil) }
-            _ = detector.handle(.otherKeyDown)
-            return handleKeyDown(e)
+            var expired: KeySignal?
+            if e.kind == .keyDown {
+                pointerSinceKey = false   // P3-41 QA
+                expired = expireIfIdle()   // P3-34 (3)
+                lastKeyNanos = clock.nowNanos
+            }
+            let (verdict, signal) = handleKey(e)
+            return (verdict, signal ?? expired)
         }
     }
 
@@ -229,6 +239,7 @@ struct KeyStreamProcessor: Sendable {
         if stalePosting?.gen == gen { stalePosting = nil }
         guard case let .replacing(r) = phase, r.gen == gen else { return [] }
         phase = .idle
+        lastKeyNanos = clock.nowNanos   // P3-34 (3): a kept buffer's idle time starts after the convert
         // QA: after an abort the buffer was already cleared (click, reset) and main owns the input source,
         // so only replay.
         if !r.aborted {
@@ -281,6 +292,7 @@ struct KeyStreamProcessor: Sendable {
     /// terminal parks its buffer; coming back to the same terminal process restores it (marked `crossedFocus`); another
     /// terminal process drops it. Otherwise exactly `reset(.contextChange)`.
     mutating func contextChanged(terminalPID new: Int32?, deviceFlags: UInt64? = nil) {
+        _ = expireIfIdle()   // P3-34 (3): never restore a parked buffer older than the idle limit
         if let current = terminalPID, !buffer.isEmpty, case .idle = phase {
             parked = ParkedBuffer(pid: current, buffer: buffer, rendering: bufferRendering ?? inputSource,
                                   epoch: bufferEpoch, clicked: clickedSinceStart)
@@ -336,7 +348,24 @@ struct KeyStreamProcessor: Sendable {
         if bufferRendering == id { bufferRendering = nil }
     }
 
+    /// P3-34 (3): after `idleExpiryNanos` with no user key, forget the buffer and the parked terminal buffer. Never
+    /// during a replacement. Returns `.bufferInvalidated` when a non-empty buffer was dropped.
+    mutating func expireIfIdle() -> KeySignal? {
+        guard case .idle = phase, !buffer.isEmpty || parked != nil else { return nil }
+        let now = clock.nowNanos
+        guard now >= lastKeyNanos, now - lastKeyNanos >= Self.idleExpiryNanos else { return nil }
+        parked = nil
+        return invalidateBuffer()
+    }
+
     // MARK: - Private
+
+    private mutating func handleKey(_ e: KeyEvent) -> (TapVerdict, KeySignal?) {
+        if holdsKeys { return hold(e) }
+        guard e.kind == .keyDown else { return (.pass, nil) }
+        _ = detector.handle(.otherKeyDown)
+        return handleKeyDown(e)
+    }
 
     /// Keys are held while replacing, and while an abort waits for its flush (to keep them in order).
     /// QA: only an active tap can swallow; a `.hold` anywhere else would deliver the key now and replay it later.
