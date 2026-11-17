@@ -145,7 +145,7 @@ private struct WelcomeStep: View {
                     Text("Your two languages")
                     Spacer()
                     Text(pairText)
-                    Button(showsPickers ? "Done" : "Change…") { showsPickers.toggle() }.buttonStyle(.link)
+                    Button(showsPickers ? "Done" : "Change…") { showsPickers.toggle() }.buttonStyle(.kytkinLink)
                 }
                 if showsPickers {
                     Form { LanguagePairRow(model: model.languages) }
@@ -216,7 +216,7 @@ private struct PermissionsStep: View {
         case .notAsked:
             HStack(spacing: 12) {
                 Button("Allow Accessibility…") { model.grantAccessibility() }.buttonStyle(.borderedProminent)
-                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.link)
+                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.kytkinLink)
             }
         case .waiting, .waitingLong:
             VStack(alignment: .leading, spacing: 8) {
@@ -232,7 +232,7 @@ private struct PermissionsStep: View {
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Button("Allow Accessibility…") { model.grantAccessibility() }
                 }
-                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.link)
+                Button("Open System Settings") { model.openAccessibilitySettings() }.buttonStyle(.kytkinLink)
             }
         case .granted:
             StatusLabel(text: "Accessibility is on.", symbol: "checkmark.circle.fill", tint: .green)

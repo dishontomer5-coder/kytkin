@@ -10,8 +10,6 @@ import AppKit
 
 @MainActor enum MenuBarGlyph {
     static let glyphSize = NSSize(width: 18, height: 18)
-    static let gap: CGFloat = 4
-    static let lettersWidth: CGFloat = 20
     static var lettersFont: NSFont { NSFont.systemFont(ofSize: 13, weight: .medium) }
 
     /// The headless renderer's repo folder (Resources/MenuBar); nil = the app bundle's.
@@ -57,39 +55,37 @@ import AppKit
         image.representations.contains { $0 is NSPDFImageRep }
     }
 
-    /// The whole status item for `label`: glyph and/or letters, as one template image. nil = nothing to draw.
+    /// The whole status item for `label`: glyph and/or letters, as one template image. P6-0e QA: its width comes from
+    /// the display mode alone (`MenuModel.ItemLayout`): the letters' frame is kept when the language is unknown, the
+    /// dot's room in letters-only mode, and letters wider than the frame (a three-letter code) are drawn smaller.
     static func itemImage(for label: MenuModel.Label) -> NSImage? {
         if let cached = itemCache[label] { return cached }
+        typealias L = MenuModel.ItemLayout
+        let width = CGFloat(L.width(for: label.display))
+        let size = NSSize(width: width, height: glyphSize.height)
         let glyph = label.showsIcon ? image(for: label.look, side: label.side) : nil
         let letters = label.letters
-        let dot = !label.showsIcon && label.look == .attention
-        var width: CGFloat = 0
-        if glyph != nil { width += glyphSize.width }
-        if letters != nil { width += (glyph != nil ? gap : 0) + lettersWidth }
-        if dot { width += 3 + 5 }
-        guard width > 0 else { return nil }
-        let size = NSSize(width: width, height: glyphSize.height)
-        let font = lettersFont
+        let dot = label.display == .languageOnly && label.look == .attention
         let opacity = label.lettersOpacity
         let item = NSImage(size: size, flipped: false) { _ in
             var x: CGFloat = 0
-            if let glyph {
-                glyph.draw(in: NSRect(origin: .zero, size: glyphSize))
-                x += glyphSize.width + gap
+            switch label.display {
+            case .iconAndLanguage, .iconOnly:
+                glyph?.draw(in: NSRect(origin: .zero, size: glyphSize))
+                x = CGFloat(L.glyphWidth + L.gap)
+            case .languageOnly:
+                if letters == nil, let glyph {   // nothing known to show: the glyph, in the letters' frame
+                    glyph.draw(in: NSRect(origin: NSPoint(x: (CGFloat(L.lettersWidth) - glyphSize.width) / 2, y: 0),
+                                          size: glyphSize))
+                }
             }
-            if let letters {
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: font, .foregroundColor: NSColor.black.withAlphaComponent(opacity),
-                ]
-                let text = letters as NSString
-                let textSize = text.size(withAttributes: attrs)
-                let y = (size.height - textSize.height) / 2
-                text.draw(at: NSPoint(x: x + max(0, (lettersWidth - textSize.width) / 2), y: y), withAttributes: attrs)
-                x += lettersWidth
+            if let letters, label.display != .iconOnly {
+                drawLetters(letters, at: x, size: size, opacity: opacity)
             }
             if dot {   // letters-only mode: a small dot marks "needs attention" (visual review §3.2)
                 NSColor.black.setFill()
-                NSBezierPath(ovalIn: NSRect(x: x + 3, y: (size.height - 5) / 2, width: 5, height: 5)).fill()
+                NSBezierPath(ovalIn: NSRect(x: CGFloat(L.lettersWidth) + 3, y: (size.height - 5) / 2,
+                                            width: 5, height: 5)).fill()
             }
             return true
         }
@@ -97,6 +93,22 @@ import AppKit
         item.accessibilityDescription = label.accessibilityLabel
         itemCache[label] = item
         return item
+    }
+
+    /// The letters centred in their fixed frame; a code wider than the frame is drawn smaller (never clipped).
+    private static func drawLetters(_ letters: String, at x: CGFloat, size: NSSize, opacity: Double) {
+        let frame = CGFloat(MenuModel.ItemLayout.lettersWidth)
+        var font = lettersFont
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black.withAlphaComponent(opacity)]
+        let text = letters as NSString
+        var textSize = text.size(withAttributes: attrs)
+        if textSize.width > frame {
+            font = NSFont.systemFont(ofSize: max(8, font.pointSize * frame / textSize.width), weight: .medium)
+            attrs[.font] = font
+            textSize = text.size(withAttributes: attrs)
+        }
+        text.draw(at: NSPoint(x: x + max(0, (frame - textSize.width) / 2), y: (size.height - textSize.height) / 2),
+                  withAttributes: attrs)
     }
 
     static func placeholderSymbol(_ look: MenuModel.Label.Look) -> String {

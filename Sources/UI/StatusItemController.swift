@@ -69,7 +69,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         button.appearsDisabled = false   // the artwork draws paused (45 %) and off (35 %) itself
         button.setAccessibilityLabel(label.accessibilityLabel)
         button.setAccessibilityHelp("Click for Kytkin options")
-        statusItem.length = ceil((image?.size.width ?? 18) + 8)
+        statusItem.length = ceil(CGFloat(MenuModel.ItemLayout.width(for: label.display)) + 8)   // P6-0e QA: per mode
     }
 
     func sourcesListDidChange() {

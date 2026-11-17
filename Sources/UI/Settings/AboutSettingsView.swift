@@ -20,7 +20,7 @@ struct AboutSettingsView: View {
                     .accessibilityHidden(true)
                 Text(info.name).font(.title2).bold()
                 Text(info.version).foregroundStyle(.secondary).textSelection(.enabled)
-                Link(info.repositoryText, destination: info.repositoryURL)
+                Link(info.repositoryText, destination: info.repositoryURL).foregroundStyle(Color.kytkinLink)
 
                 Divider().padding(.vertical, 6)
                 VStack(spacing: 6) {
@@ -30,7 +30,7 @@ struct AboutSettingsView: View {
                         VStack(spacing: 2) {
                             Text(ack.title).bold()
                             Text(ack.detail).fixedSize(horizontal: false, vertical: true)
-                            Link(ack.license, destination: ack.licenseURL)
+                            Link(ack.license, destination: ack.licenseURL).foregroundStyle(Color.kytkinLink)
                         }
                         .padding(.top, 4)
                     }

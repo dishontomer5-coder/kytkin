@@ -54,6 +54,27 @@ enum MenuModel {
 
         /// The glyph's asset name (`Resources/MenuBar/kytkin-menubar-{active,paused,attention,off}-{a,b}.pdf`).
         var imageName: String { MenuModel.glyphName(look, side: side) }
+
+        /// P6-0e QA: Settings → General → "Show in menu bar" (decides the item's width, not what is known).
+        var display: Preferences.General.MenuBarLabel = .iconAndLanguage
+    }
+
+    /// P6-0e QA: the status item's fixed layout (pt). The width depends on the display mode only, never on the
+    /// language, its letters being known, the look or a warning: the items beside Kytkin never move.
+    enum ItemLayout {
+        static let glyphWidth: Double = 18
+        static let gap: Double = 4
+        static let lettersWidth: Double = 20
+        /// Letters-only mode: room for the "needs attention" dot after the letters, kept even without one.
+        static let dotRoom: Double = 8
+
+        static func width(for display: Preferences.General.MenuBarLabel) -> Double {
+            switch display {
+            case .iconAndLanguage: glyphWidth + gap + lettersWidth
+            case .iconOnly: glyphWidth
+            case .languageOnly: lettersWidth + dotRoom
+            }
+        }
     }
 
     /// P6-0e: the menu-bar glyph assets, one per look and pair side (Resources/MenuBar/README.md).
@@ -93,7 +114,7 @@ enum MenuModel {
         case .off: spoken += ", turned off"
         }
         return Label(look: look, side: side(of: current, in: state.pairInputSources), letters: letters,
-                     showsIcon: showsIcon, accessibilityLabel: spoken)
+                     showsIcon: showsIcon, accessibilityLabel: spoken, display: display)
     }
 
     /// The whole menu, top to bottom.
