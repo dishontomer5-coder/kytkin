@@ -29,6 +29,8 @@ import AppKit
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(title)
+        // P6-0g QA: VoiceOver hears which language is pinned without visiting the halves.
+        setAccessibilityValue(key.chosen.map { key.half($0).name } ?? "None")
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
@@ -43,10 +45,17 @@ import AppKit
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // P6-0g QA: a view item draws its own highlight (the menu redraws it when the highlight moves), so a keyboard
+        // user sees this line selected before pressing Return (the item's keyboard action, StatusItemController).
+        let highlighted = isEnabled && enclosingMenuItem?.isHighlighted == true
+        if highlighted {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 5, yRadius: 5).fill()
+        }
         let font = NSFont.menuFont(ofSize: 0)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font, .foregroundColor: isEnabled ? NSColor.labelColor : NSColor.disabledControlTextColor,
-        ]
+        let titleColor: NSColor = highlighted ? .selectedMenuItemTextColor
+            : isEnabled ? .labelColor : .disabledControlTextColor
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: titleColor]
         let size = (title as NSString).size(withAttributes: attrs)
         (title as NSString).draw(at: NSPoint(x: Self.leading, y: (bounds.height - size.height) / 2), withAttributes: attrs)
 
@@ -62,7 +71,8 @@ import AppKit
                 ctx.setFillColor(NSColor.kytkinAccent.withAlphaComponent(isEnabled ? 1 : 0.45).cgColor)
                 ctx.fillPath()
             } else {
-                ctx.setStrokeColor(NSColor.secondaryLabelColor.withAlphaComponent(pressed == side ? 0.9 : 0.55).cgColor)
+                let stroke: NSColor = highlighted ? .selectedMenuItemTextColor : .secondaryLabelColor
+                ctx.setStrokeColor(stroke.withAlphaComponent(pressed == side ? 0.9 : 0.55).cgColor)
                 ctx.setLineWidth(1)
                 ctx.strokePath()
             }
@@ -70,7 +80,8 @@ import AppKit
             let letters = key.half(side).letters as NSString
             let letterAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: filled ? NSColor.white : NSColor.secondaryLabelColor,
+                .foregroundColor: filled ? NSColor.white
+                    : highlighted ? NSColor.selectedMenuItemTextColor : NSColor.secondaryLabelColor,
             ]
             let ls = letters.size(withAttributes: letterAttrs)
             let centerX = rect.midX + (side == .a ? -1 : 1) * rect.width * 0.24

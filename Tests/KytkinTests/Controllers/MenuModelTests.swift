@@ -183,6 +183,16 @@ final class MenuModelTests: XCTestCase {
                                   b: .init(letters: "HE", name: "Hebrew", source: IDs.hebrew), chosen: chosen)
     }
 
+    /// P6-0g QA: the keyboard fallback for the custom key view (Return on the highlighted line).
+    func testReturnOnTheKeyPinsALanguage() {
+        XCTAssertEqual(key(nil).keyboardAction(current: IDs.hebrew), .pinCurrentTo(IDs.hebrew))
+        XCTAssertEqual(key(nil).keyboardAction(current: IDs.abc), .pinCurrentTo(IDs.abc))
+        XCTAssertEqual(key(nil).keyboardAction(current: IDs.russian), .pinCurrentTo(IDs.abc))
+        XCTAssertEqual(key(nil).keyboardAction(current: nil), .pinCurrentTo(IDs.abc))
+        XCTAssertEqual(key(.a).keyboardAction(current: IDs.abc), .pinCurrentTo(IDs.hebrew), "pinned: the other half")
+        XCTAssertEqual(key(.b).keyboardAction(current: IDs.hebrew), .pinCurrentTo(IDs.abc))
+    }
+
     func testLearnedRule() {
         var s = MenuState()
         s.currentRule = rule(matched: .app(notes, IDs.hebrew))

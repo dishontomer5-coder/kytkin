@@ -172,6 +172,14 @@ import Observation
         return nil
     }
 
+    /// P6-0g QA: what VoiceOver says for a row's key: "English", "Leave Alone", a language outside the pair, or
+    /// "None" (an app added with no language yet).
+    func languageValue(_ row: RuleRow) -> String {
+        if row.leftAlone { return Self.leaveAloneTitle }
+        if let side = chosenSide(row) { return languageName(side) }
+        return otherLanguage(row) ?? "None"
+    }
+
     /// The rule's language when it is outside the pair ("Russian"), shown beside the key; nil otherwise.
     func otherLanguage(_ row: RuleRow) -> String? {
         guard row.hasRule, !row.leftAlone, chosenSide(row) == nil else { return nil }
@@ -255,6 +263,30 @@ import Observation
         if let bundleID = row.bundleID, store.prefs.apps[bundleID] != nil {
             store.update { $0.apps[bundleID] = nil }
         }
+    }
+
+    /// P6-0g QA (data safety): "−" asks first when it would also drop app settings someone set by hand (Leave Alone,
+    /// Double-Shift off, a text method), which Kytkin can't learn back. nil = only a rule (or an empty entry) goes:
+    /// no question, as before.
+    func removalQuestion(for rowID: UUID) -> RemovalQuestion? {
+        guard let row = allRows.first(where: { $0.id == rowID }), let bundleID = row.bundleID,
+              let o = store.prefs.apps[bundleID], o != Preferences.AppOverride() else { return nil }
+        var lost: [String] = []
+        if o.disabled == true { lost.append("Leave Alone") }
+        if o.convertEnabled == false { lost.append("Double-Shift off") }
+        if o.replacementMethod != nil { lost.append("its Double-Shift method") }
+        let what = lost.isEmpty ? "its settings" : lost.joined(separator: ", ")
+        return RemovalQuestion(rowID: rowID, title: "Remove \(row.name)?",
+                               message: row.hasRule
+                                   ? "This removes its rule and its app settings (\(what))."
+                                   : "This removes its app settings (\(what)).")
+    }
+
+    struct RemovalQuestion: Identifiable, Equatable {
+        let rowID: UUID
+        let title: String
+        let message: String
+        var id: UUID { rowID }
     }
 
     // MARK: - Add App (P6-0g: "+" → Add App…)

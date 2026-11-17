@@ -1,8 +1,9 @@
 // P6-0g (design v2, Advanced P3): the text "Copy Diagnostics" puts on the clipboard for a bug report, on the user's
 // click only. Privacy (CLAUDE.md invariants): only what the DEBUG trace may show: versions, setting switches,
 // permission and keyboard states, and counts. Never typed text, never a website, host or address, never a rule's key or
-// an app's bundle ID from the rules: rules and app settings are counted, not listed. The pair is named by its layout
-// IDs (keyboard layouts, like "com.apple.keylayout.Hebrew"), which say nothing about the user.
+// an app's bundle ID from the rules: rules and app settings are counted, not listed. The pair is named by Apple's layout
+// IDs ("com.apple.keylayout.Hebrew"), which say nothing about the user; any other layout only as "imported layout" or
+// "other layout" (P6-0g QA: an imported ID is text the user chose).
 
 import Foundation
 
@@ -46,7 +47,7 @@ enum DiagnosticsReport {
             "macOS \(macOSVersion)",
             "",
             "Kytkin: \(on(prefs.general.enabled)), paused: \(state.paused ? "yes" : "no")",
-            "Languages: \(prefs.languagePair.a.rawValue) / \(prefs.languagePair.b.rawValue)",
+            "Languages: \(layoutName(prefs.languagePair.a)) / \(layoutName(prefs.languagePair.b))",
             "Imported layouts: \(importedLayoutCount)",
             "Learn from my switches: \(on(prefs.general.learnFromManualSwitches))",
             "Menu bar: \(menuBar)",
@@ -75,5 +76,19 @@ enum DiagnosticsReport {
             "Keyboard re-enables: \(state.tapReEnableCount)",
         ]
         return lines.joined(separator: "\n")
+    }
+
+    /// P6-0g QA: only Apple's own layout IDs are named. An imported layout's ID ("user.…") is a name the user typed,
+    /// and a third-party layout's ID may carry its author's or the user's name, so those are only said to be one.
+    static func layoutName(_ id: InputSourceID) -> String {
+        let raw = id.rawValue
+        if raw.isEmpty { return "none" }
+        if raw.hasPrefix(LayoutMap.userIDPrefix) { return "imported layout" }
+        let apple = ["com.apple.keylayout.", "com.apple.inputmethod."]
+        guard apple.contains(where: raw.hasPrefix),
+              raw.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || ".-_".contains($0)) }) else {
+            return "other layout"
+        }
+        return raw
     }
 }

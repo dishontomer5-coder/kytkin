@@ -284,6 +284,43 @@ final class DesignV2Tests: XCTestCase {
         }
     }
 
+    /// P6-0g QA: imported or third-party layout IDs are text the user (or a layout's author) chose: never copied.
+    func testDiagnosticsNameOnlyApplesLayouts() {
+        var prefs = Preferences()
+        prefs.languagePair = LanguagePair(a: InputSourceID("user.tomers-secret-layout"),
+                                          b: InputSourceID("org.sil.ukelele.keyboardlayout.dana.dana"))
+        let text = DiagnosticsReport.text(appVersion: "1", macOSVersion: "26", state: MenuState(), prefs: prefs,
+                                          importedLayoutCount: 1)
+        XCTAssertTrue(text.contains("Languages: imported layout / other layout"), text)
+        for leak in ["tomers", "secret", "dana", "ukelele"] { XCTAssertFalse(text.contains(leak), leak) }
+        XCTAssertEqual(DiagnosticsReport.layoutName(IDs.hebrew), IDs.hebrew.rawValue)
+        XCTAssertEqual(DiagnosticsReport.layoutName(InputSourceID("")), "none")
+        XCTAssertEqual(DiagnosticsReport.layoutName(InputSourceID("com.apple.keylayout.Me Myself")), "other layout")
+    }
+
+    // MARK: - "−" asks before it drops app settings (P6-0g QA, data safety)
+
+    func testRemovingAnAppWithHandSetSettingsAsksFirst() throws {
+        make([Rule.app(notes, IDs.hebrew), Rule.app(term, IDs.abc)],
+             apps: [notes: .init(disabled: true, convertEnabled: false), slack: .init()])
+        let notesRow = try XCTUnwrap(row("Notes"))
+        let question = try XCTUnwrap(sut.removalQuestion(for: notesRow.id))
+        XCTAssertEqual(question.title, "Remove Notes?")
+        XCTAssertEqual(question.message, "This removes its rule and its app settings (Leave Alone, Double-Shift off).")
+        XCTAssertNil(sut.removalQuestion(for: try XCTUnwrap(row("Terminal")).id), "a rule only: no question")
+        XCTAssertNil(sut.removalQuestion(for: try XCTUnwrap(row("Slack")).id), "an empty entry: no question")
+        // Asking writes nothing.
+        XCTAssertNotNil(store.prefs.apps[notes])
+        XCTAssertEqual(store.prefs.rules.count, 2)
+    }
+
+    func testTheKeysVoiceOverValue() throws {
+        make([Rule.app(notes, IDs.hebrew), Rule.app(term, IDs.russian)], apps: [slack: .init(disabled: true)])
+        XCTAssertEqual(sut.languageValue(try XCTUnwrap(row("Notes"))), "Hebrew")
+        XCTAssertEqual(sut.languageValue(try XCTUnwrap(row("Terminal"))), "Russian")
+        XCTAssertEqual(sut.languageValue(try XCTUnwrap(row("Slack"))), "Leave Alone")
+    }
+
     // MARK: - General
 
     func testMenuBarTilesShowEachMode() {

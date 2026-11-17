@@ -133,7 +133,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             return item
         case .languageKey(let key):
             // P6-0g (lg-menu): "Always use" with the Kytkin key, a custom view.
-            let item = NSMenuItem(title: model.title, action: nil, keyEquivalent: "")
+            // P6-0g QA: the keyboard fallback. Arrow keys highlight the line and Return sends the item's action
+            // (a view item gets no keys itself): it pins a language (`keyboardAction`); a mouse click on a half goes
+            // to the view instead.
+            let item = NSMenuItem(title: model.title, action: #selector(performMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ActionBox(key.keyboardAction(current: switcher.current))
+            item.isEnabled = model.isEnabled
             item.view = KytkinKeyMenuView(title: model.title, key: key, enabled: model.isEnabled) { [weak self] side in
                 self?.perform(key.action(for: side))
             }

@@ -15,6 +15,8 @@ struct RulesSettingsView: View {
     @Bindable var model: RulesSettingsModel
     @State private var selection: UUID?
     @State private var confirmingForgetAll = false
+    /// P6-0g QA: "−" on an app with settings set by hand asks first.
+    @State private var removal: RulesSettingsModel.RemovalQuestion?
     @State private var chooseError: String?
     @State private var sortComparators = [KeyPathComparator(\RuleRow.updatedAt, order: .reverse)]
 
@@ -53,7 +55,7 @@ struct RulesSettingsView: View {
 
             HStack(spacing: 6) {
                 addMenu
-                Button { if let selection { model.delete(selection); self.selection = nil } } label: {
+                Button { if let selection { remove(selection) } } label: {
                     Image(systemName: "minus").frame(width: 14, height: 14)
                 }
                 .help("Remove the selected rule and the app’s settings")
@@ -85,6 +87,24 @@ struct RulesSettingsView: View {
         } message: {
             Text(RulesSettingsModel.forgetAllLearnedMessage)
         }
+        .confirmationDialog(removal?.title ?? "", isPresented: Binding(get: { removal != nil },
+                                                                       set: { if !$0 { removal = nil } }),
+                            presenting: removal) { question in
+            Button("Remove", role: .destructive) { finishRemove(question.rowID) }
+            Button("Cancel", role: .cancel) {}
+        } message: { question in
+            Text(question.message)
+        }
+    }
+
+    /// "−" / "Remove": at once for a rule only; with app settings set by hand, after the question.
+    private func remove(_ id: UUID) {
+        if let question = model.removalQuestion(for: id) { removal = question } else { finishRemove(id) }
+    }
+
+    private func finishRemove(_ id: UUID) {
+        model.delete(id)
+        if selection == id { selection = nil }
     }
 
     /// The tab's height: every row up to the window's 640 pt (then the table scrolls); at least three rows' room.
@@ -116,6 +136,9 @@ struct RulesSettingsView: View {
                         model.choose(side, for: row.id)
                     }
                     .disabled(!model.isEditable)
+                    // P6-0g QA: VoiceOver says the row's language, "Leave Alone" included.
+                    .accessibilityLabel("Language for \(row.name)")
+                    .accessibilityValue(model.languageValue(row))
                     if let other = model.otherLanguage(row) {
                         Text(other).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -183,7 +206,7 @@ struct RulesSettingsView: View {
             }
             .disabled(!model.isEditable)
         }
-        Button("Remove") { model.delete(row.id) }.disabled(!model.isEditable)
+        Button("Remove") { remove(row.id) }.disabled(!model.isEditable)
     }
 
     private func add(_ bundleID: String) {

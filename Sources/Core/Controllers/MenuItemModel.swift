@@ -44,6 +44,17 @@ struct MenuItemModel: Equatable, Sendable {
         func action(for side: PairSide) -> Action {
             chosen == side ? .unpinCurrent : .pinCurrentTo(half(side).source)
         }
+
+        /// P6-0g QA: the keyboard fallback. A custom menu view can't take arrow keys, so Return on the highlighted
+        /// "Always use" line pins a language too: with nothing pinned, the language selected now (`current`, else the
+        /// first); with a pin, the other half. "Follow My Last Switch" (a plain item) unpins.
+        func keyboardAction(current: InputSourceID?) -> Action {
+            switch chosen {
+            case .a: return .pinCurrentTo(b.source)
+            case .b: return .pinCurrentTo(a.source)
+            case nil: return .pinCurrentTo(current == b.source ? b.source : a.source)
+            }
+        }
     }
 
     enum Action: Equatable {
