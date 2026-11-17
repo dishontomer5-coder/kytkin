@@ -879,4 +879,92 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertTrue(ax.lastDiagnostic.quoteBoundary)
         XCTAssertEqual(ax.lastDiagnostic.atoms, 0)
     }
+
+    // MARK: - P3-57: Slack's image emoji: odd units in AXValue the app's offsets don't count
+
+    @TextActor private func imageBox(_ text: String, at: Int, odd: [UInt16], images: Int = 1) -> FakeChromiumField {
+        let f = field(text)
+        f.oddValueUnits = (at, odd)
+        f.imageCount = images
+        return f
+    }
+
+    @TextActor func testVhFireVhVhWithTwoPrivateUseUnits() async {
+        // The owner's numbers: page text `vh  vh vh` (9 units), AXValue 11 (2 odd units at the image).
+        let f = imageBox("vh  vh vh", at: 3, odd: [0xE000, 0xE001])
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .converted(pieces: 3))
+        XCTAssertEqual(f.text, "הי  הי הי", "the image (not in the page text) untouched, every vh converted once")
+        XCTAssertEqual(ax.lastDiagnostic.valueUnits, 11)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 1)
+        XCTAssertEqual(ax.lastDiagnostic.oddUnits, "2:U+E000,U+E001")
+    }
+
+    @TextActor func testAZeroWidthSpacePairAndAVS16OnlyShape() async {
+        for odd in [[0x200B, 0x200B], [0xFE0F, 0xFE0F]] as [[UInt16]] {
+            clock = FakeClock(nowNanos: 1_000_000_000)
+            poster = RecordingPoster()
+            let f = imageBox("akuo  akuo hello", at: 5, odd: odd)
+            let (result, _) = await runWithAtoms(f)
+            XCTAssertEqual(result, .converted(pieces: 3), "\(odd)")
+            XCTAssertEqual(f.text, "שלום  שלום יקךךם")
+        }
+    }
+
+    @TextActor func testRunsThatDontMatchTheImagesStaySwitchOnly() async {
+        let f = imageBox("vh  vh vh", at: 3, odd: [0xE000, 0xE001], images: 2)
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .unavailable(.inconsistent))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .prefix)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 0)
+        XCTAssertEqual(ax.lastDiagnostic.spanShape, "ax[Z,L,L,Z,L,L] value[U+E000/Co,U+E001/Co,Z,L,L,Z]")
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    func testOddUnitHelpers() {
+        XCTAssertEqual(ChromiumAXConvert.oddRuns(in: "a\u{E000}\u{E001}b\u{200B}c"), [1..<3, 4..<5])
+        XCTAssertEqual(ChromiumAXConvert.strippingOddUnits("a\u{E000}\u{FE0F}b"), "ab")
+        XCTAssertFalse(ChromiumAXConvert.isOddUnit("\u{FFFC}"), "U+FFFC is P3-51's object, counted by the app")
+        XCTAssertFalse(ChromiumAXConvert.isOddUnit("😄"), "an emoji is text, not an odd unit")
+        XCTAssertEqual(ChromiumAXConvert.shapeCode("a"), "L")
+        XCTAssertEqual(ChromiumAXConvert.shapeCode("7"), "N")
+        XCTAssertEqual(ChromiumAXConvert.shapeCode("\u{200B}"), "U+200B/Cf")
+        XCTAssertNil(ChromiumAXConvert.oddUnitsSummary("plain"))
+    }
+
+    // MARK: - P3-57 QA
+
+    func testMarksPeopleTypeAreNeverOddUnits() {
+        for v: UInt32 in [0x200C, 0x200D, 0x200E, 0x200F, 0x061C, 0x202B, 0x2067, 0x2069] {
+            XCTAssertFalse(ChromiumAXConvert.isOddUnit(Unicode.Scalar(v)!), String(format: "U+%04X", v))
+        }
+        XCTAssertEqual(ChromiumAXConvert.oddRuns(in: "\u{05E9}\u{200F}\u{05DC}"), [], "an RLM in a Hebrew box")
+    }
+
+    @TextActor func testAHebrewBoxWithAnRLMAndOneImageIsNeverStripped() async {
+        // The image left no odd run in AXValue; the box's only format character is the user's RLM: counts must not
+        // "match" (1 run, 1 image), or every offset after the RLM would be off by one.
+        let f = field("akuo \u{200F}vh")
+        f.imageCount = 1
+        let (_, ax) = await runWithAtoms(f)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 0)
+        XCTAssertTrue(f.text.contains("\u{200F}"))
+    }
+
+    @TextActor func testAFalseStripStillNeverTypesAtTheWrongPlace() async {
+        // A user's own degree sign (a non-emoji other symbol the app counts) and one image with no odd run in AXValue:
+        // the counts match by accident and the sign is stripped, so every value offset after it is one unit short of
+        // the app's. Every piece is still typed only after an exact read-back: the sign stays, nothing lands wrong.
+        let f = field("vh \u{00B0} vh vh")
+        f.imageCount = 1
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 1, "the accidental match this test is about")
+        XCTAssertTrue(f.text.contains("\u{00B0}"), f.text)
+        if case .converted = result {
+            XCTAssertEqual(f.text, "הי \u{00B0} הי הי")
+        } else {
+            let ok = ["vh \u{00B0} vh vh", "vh \u{00B0} vh הי", "vh \u{00B0} הי הי", "הי \u{00B0} הי הי"]
+            XCTAssertTrue(ok.contains(f.text), "\(result): \(f.text)")
+        }
+    }
 }

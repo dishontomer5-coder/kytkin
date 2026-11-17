@@ -29,6 +29,11 @@ final class FakeChromiumField: AXTextElement {
     var emojiObject: Range<Int>?
     /// P3-54: with `emojiObject`, range *writes* take page units (the emoji's two) while reads stay in `AXValue` units.
     var emojiWritesInPageUnits = false
+    /// P3-57 (owner traces `vh 🔥 vh vh`: `valueUnits=11`, `AXImage:1`): an image emoji the page text (offsets, ranges,
+    /// `AXStringForRange`, `AXSelectedText`) leaves out entirely, while `AXValue` holds these odd units at `at` (units of
+    /// `doc`). `imageCount` AXImage elements are reported by the atom walk.
+    var oddValueUnits: (at: Int, units: [UInt16])?
+    var imageCount = 0
     /// Setting `AXSelectedTextRange` takes the AX offsets as DOM offsets (they drift after `hidden`).
     var setRangeDrifts = false
     /// P3-42 QA: after a range write, `AXSelectedTextRange` reads back exactly the range written (until typing moves the
@@ -155,11 +160,17 @@ final class FakeChromiumField: AXTextElement {
         if let h = hidden, lo < h.lowerBound { hidden = (h.lowerBound + delta)..<(h.upperBound + delta) }
         if let p = pill, lo < p.lowerBound { pill = (p.lowerBound + delta)..<(p.upperBound + delta) }
         if let e = emojiObject, lo < e.lowerBound { emojiObject = (e.lowerBound + delta)..<(e.upperBound + delta) }
+        if let o = oddValueUnits, lo < o.at { oddValueUnits = (o.at + delta, o.units) }
     }
 
     // MARK: - AX offsets
 
     private var axUnits: [UInt16] {
+        if let o = oddValueUnits {   // P3-57
+            var u = doc
+            u.insert(contentsOf: o.units, at: o.at)
+            return u
+        }
         if let e = emojiObject {
             var u = doc
             u.replaceSubrange(e, with: [0xFFFC])
@@ -266,7 +277,7 @@ final class FakeChromiumField: AXTextElement {
         if stringForRangeFails { return .failure(.failed) }
         if stringForRangeFailsAtEnd, r.end == u.count { return .failure(.failed) }
         if let stringForRangeOverride { return .success(stringForRangeOverride) }
-        if emojiObject != nil {   // P3-51: the page's own units
+        if emojiObject != nil || oddValueUnits != nil {   // P3-51 / P3-57: the page's own units
             guard r.end <= doc.count else { return .failure(.failed) }
             return .success(String(decoding: doc[r.location..<r.end], as: UTF16.self))
         }
@@ -311,7 +322,8 @@ final class FakeChromiumField: AXTextElement {
         quoteSearchMustCompleteAsks.append(quoteSearchMustComplete)
         if quoteSearchCutShort, quoteSearchMustComplete { return .failure(.timeout) }
         onInlineAtoms?()
-        return inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) }) }
+        let images = Array(repeating: InlineAtom(text: "", role: "AXImage"), count: imageCount)   // P3-57
+        return inlineAtoms.map { .success($0.prefix(maxNodes).map { InlineAtom(text: $0, role: inlineAtomRole) } + images) }
             ?? .failure(.unsupported)
     }
 

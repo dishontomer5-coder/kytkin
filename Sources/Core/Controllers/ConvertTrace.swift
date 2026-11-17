@@ -68,7 +68,9 @@ struct ConvertTrace: Sendable, Equatable {
                          + "caretMapped=\(c.caretMapped) prefixMismatch=\(c.prefixMismatch.map { "\($0)" } ?? "-") "
                          + "atomRoles=\(Self.roleCounts(c.atomRoles)) "
                          + "prefixObjects=\(c.prefixObjects ?? "-") quoteBoundary=\(c.quoteBoundary) "
-                         + "valueUnits=\(c.valueUnits) prefixUnexplained=\(c.prefixUnexplained)}")
+                         + "valueUnits=\(c.valueUnits) prefixUnexplained=\(c.prefixUnexplained) "
+                         + "spanShape=\(c.spanShape ?? "-") oddUnits=\(c.oddUnits ?? "-") "
+                         + "oddRunsStripped=\(c.oddRunsStripped)}")
         }
         if let richCopy { parts.append("richCopy=\(richCopy)") }
         if let copy {

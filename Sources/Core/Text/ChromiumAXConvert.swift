@@ -241,6 +241,14 @@ import Foundation
         /// P3-55: the prefix disagreed with no U+FFFC or emoji on either side (a shape not understood yet, e.g. a
         /// `:shortcode:`-entered Slack emoji): the caller must not fall back to keys in a chat app.
         var prefixUnexplained = false
+        /// P3-57: the first ≤ 8 scalars of the prefix mismatch on each side: `L` letter, `N` digit, `Z` space, else
+        /// `U+XXXX/<category>` (never a letter).
+        var spanShape: String?
+        /// P3-57: odd units in `AXValue` (Cf / Co / Cn / non-emoji So / variation selectors): count and the first 4
+        /// distinct code points.
+        var oddUnits: String?
+        /// P3-57: odd-unit runs dropped from the reads (one per `AXImage`).
+        var oddRunsStripped = 0
         /// P3-55: `AXValue`'s length (= `AXNumberOfCharacters`, checked), UTF-16 units (a count only).
         var valueUnits = 0
         /// P3-54: a mail quote boundary was found in the box's text (the plan stops there).
@@ -263,6 +271,10 @@ import Foundation
     private(set) var lastDiagnostic = Diagnostic()
     /// P3-51 QA: `AXValue` holds an emoji as text (not only U+FFFC): window read-backs must then match exactly.
     private var valueHasLiteralObjects = false
+    /// P3-57: this convert's `AXValue` holds one run of odd units (Cf / Co / Cn / non-emoji So / variation selectors) per
+    /// `AXImage` in the box (Slack's image emoji), which the app's offsets don't count: every `AXValue` /
+    /// `AXSelectedText` read drops them (`strippingOddUnits`), so value units = the app's units.
+    private var stripOddUnits = false
 
     private let focusProvider: any FocusedElementProviding
     private let poster: any KeyEventPosting
@@ -290,6 +302,7 @@ import Foundation
              quoteSearchMustComplete: Bool = false,
              plan: (Read) -> Planned, mayWrite: () -> Bool) async -> Result {
         timedOut = false
+        stripOddUnits = false   // P3-57
         lastDiagnostic = Diagnostic()
         let start = startedAt ?? clock.nowNanos
         // P3-53: already past the read budget (a slow earlier path): nothing is asked of the app.
@@ -407,7 +420,7 @@ import Foundation
         // Step 4: the caret to its logical place, then the whole box once more.
         lastDiagnostic.readSpace = space
         placeCaret(el, at: caretTarget())
-        guard !timedOut, case .success(let final) = track(el.string(.value)),
+        guard !timedOut, case .success(let final) = track(el.string(.value)).map(stripIfNeeded),
               ReplacementExecutor.readsBackAs(final, String(decoding: current, as: UTF16.self)) else {
             return .failed(written: written.count, .verifyFailed)
         }
@@ -613,6 +626,96 @@ import Foundation
         String(s.map { isObject($0) ? "\u{FFFC}" : $0 })
     }
 
+    /// P3-57: a scalar of the odd runs Slack leaves for an image emoji: a format character (ZWSP, ZWJ, BOM…), private
+    /// use, unassigned, a non-emoji other symbol, or a variation selector. Never U+FFFC (P3-51 handles it as an object
+    /// the app counts) nor an emoji.
+    nonisolated static func isOddUnit(_ u: Unicode.Scalar) -> Bool {
+        if u.value == 0xFFFC { return false }
+        // P3-57 QA: never the marks people type: bidi marks / embeddings / isolates (Hebrew users type RLM / LRM),
+        // ZWJ / ZWNJ (inside words of some scripts), the Arabic letter mark. Stripping one the app counts would shift
+        // every offset after it (the exact read-backs would still refuse to type, but the convert would be lost).
+        if userTypedMarks.contains(u.value) { return false }
+        if (0xFE00...0xFE0F).contains(u.value) || (0xE0100...0xE01EF).contains(u.value) { return true }
+        switch u.properties.generalCategory {
+        case .format, .privateUse, .unassigned, .surrogate: return true
+        case .otherSymbol: return !(u.properties.isEmojiPresentation || (u.value >= 0x2100 && u.properties.isEmoji))
+        default: return false
+        }
+    }
+
+    /// P3-57 QA: format characters a user's own text holds (never treated as an image's odd units).
+    nonisolated static let userTypedMarks: Set<UInt32> = [0x200C, 0x200D, 0x200E, 0x200F, 0x061C, 0x202A, 0x202B, 0x202C,
+                                                          0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069]
+
+    /// P3-57: the runs of consecutive odd scalars in `text` (UTF-16 ranges).
+    nonisolated static func oddRuns(in text: String) -> [Range<Int>] {
+        var runs: [Range<Int>] = []
+        var at = 0
+        var start: Int?
+        for u in text.unicodeScalars {
+            let n = String(u).utf16.count
+            if isOddUnit(u) {
+                if start == nil { start = at }
+            } else if let s = start {
+                runs.append(s..<at)
+                start = nil
+            }
+            at += n
+        }
+        if let s = start { runs.append(s..<at) }
+        return runs
+    }
+
+    /// P3-57: `text` without its odd scalars.
+    nonisolated static func strippingOddUnits(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        out.append(contentsOf: text.unicodeScalars.filter { !isOddUnit($0) })
+        return String(out)
+    }
+
+    private func stripIfNeeded(_ s: String) -> String { stripOddUnits ? Self.strippingOddUnits(s) : s }
+
+    /// P3-57: one scalar for the trace: `L` / `N` / `Z`, else its code point and category. Never a letter's identity.
+    nonisolated static func shapeCode(_ u: Unicode.Scalar) -> String {
+        let p = u.properties
+        if p.isAlphabetic { return "L" }
+        if p.numericType != nil { return "N" }
+        if p.isWhitespace { return "Z" }
+        let cat: String
+        switch p.generalCategory {
+        case .format: cat = "Cf"
+        case .privateUse: cat = "Co"
+        case .unassigned: cat = "Cn"
+        case .otherSymbol: cat = "So"
+        case .control: cat = "Cc"
+        case .nonspacingMark: cat = "Mn"
+        case .surrogate: cat = "Cs"
+        case .mathSymbol, .currencySymbol, .modifierSymbol: cat = "S"
+        default: cat = "P"
+        }
+        return String(format: "U+%04X/", u.value) + cat
+    }
+
+    /// P3-57: the shape of the first ≤ 8 scalars after the common prefix, on each side.
+    nonisolated static func spanShape(ax: String, value: String) -> String {
+        let a = Array(ax.unicodeScalars), b = Array(value.unicodeScalars)
+        var k = 0
+        while k < a.count, k < b.count, a[k] == b[k] { k += 1 }
+        func shape(_ x: [Unicode.Scalar]) -> String {
+            x[k..<min(x.count, k + 8)].map(shapeCode).joined(separator: ",")
+        }
+        return "ax[\(shape(a))] value[\(shape(b))]"
+    }
+
+    /// P3-57: odd units in a text: their count and the first 4 distinct code points.
+    nonisolated static func oddUnitsSummary(_ text: String) -> String? {
+        let odd = text.unicodeScalars.filter(isOddUnit)
+        guard !odd.isEmpty else { return nil }
+        var seen: [UInt32] = []
+        for u in odd where !seen.contains(u.value) && seen.count < 4 { seen.append(u.value) }
+        return "\(odd.count):" + seen.map { String(format: "U+%04X", $0) }.joined(separator: ",")
+    }
+
     /// P3-51: U+FFFC and other object graphemes in a text (counts only, for the DEBUG trace).
     nonisolated static func objectCounts(_ s: String) -> (fffc: Int, emoji: Int) {
         var f = 0, e = 0
@@ -632,13 +735,58 @@ import Foundation
               names.contains(where: Self.webContentAttributes.contains) else {
             return fail(.notWebContent, timedOut ? .readFailed : .notWebContent)
         }
-        guard case .success(let value) = track(el.string(.value)) else { return fail(.valueRead, .readFailed) }
-        let units = Array(value.utf16)
-        let n = units.count
+        guard case .success(var value) = track(el.string(.value)) else { return fail(.valueRead, .readFailed) }
+        var units = Array(value.utf16)
+        var n = units.count
         guard n > 0, n <= ReplacementPlanner.maxFieldReadChars else { return fail(.boxSize, .boxSize) }
         lastDiagnostic.valueUnits = n   // P3-55
         guard case .success(n) = track(el.integer(.numberOfCharacters)) else {
             return fail(.numberOfCharacters, timedOut ? .readFailed : .inconsistent)
+        }
+        // P3-57: the odd units (counts and code points only) for the trace, whatever happens next.
+        let odd = Self.oddRuns(in: value)
+        lastDiagnostic.oddUnits = Self.oddUnitsSummary(value)
+        // P3-44: mention pills / links the AX tree shows as their own elements, for the plan to keep whole. Best
+        // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
+        // P3-46: read before the prefix check (it uses them, and the trace counts them even when the check fails).
+        var atoms: [String] = []
+        var images = 0
+        // P3-53: the walks get what is left of the read budget; none left → stop before anything is written.
+        let elapsed = clock.nowNanos &- start
+        guard elapsed < timing.readBudgetNanos else { return fail(.atomRead, .timedOut) }
+        // P3-54 (owner: a Chrome Gmail reply walked 126 quote lines as atoms, the pieces still reached the quote and the
+        // budget ran out): for a box, the quote boundary is found in the text first; when it is, the plan stops there
+        // and the quote isn't walked at all. Not found → the P3-48 container walk as before.
+        var quoteBoundary = source == .box ? QuotedReply.boundary(in: value) : nil
+        lastDiagnostic.quoteBoundary = quoteBoundary != nil
+        var quoteFound = quoteBoundary != nil   // P3-54 QA
+        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed,
+                                    quoteSearchMustComplete: quoteSearchMustComplete && quoteBoundary == nil,
+                                    searchQuotes: quoteBoundary == nil)) {
+        case .success(let a):
+            atoms = a.map(\.text).filter { !$0.isEmpty }   // P3-55: images come as empty atoms (trace count only)
+            images = a.filter { $0.role == "AXImage" }.count   // P3-57
+            lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
+            if a.contains(where: { $0.role == "AXQuoteText" }) { quoteFound = true }
+        case .failure: if timedOut { return fail(.atomRead, .readFailed) }
+        }
+        // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
+        if clock.nowNanos &- start > timing.readBudgetNanos { return fail(.atomRead, .timedOut) }
+        lastDiagnostic.atoms = atoms.count
+        // P3-57 (owner Slack traces `vh 🔥 vh vh`: `valueUnits=11` for 9 visible units, `atomRoles=AXImage:1`, the
+        // prefix read 9 long and parting right after `vh `): Slack's image emoji leaves a run of odd units in `AXValue`
+        // that the app's caret, ranges and `AXStringForRange` don't count. When there is exactly one such run per
+        // `AXImage`, they are dropped from every read of this convert, so `AXValue`'s units are the app's again and the
+        // P3-42 … P3-51 checks (prefix, exact read-backs) run as usual. Counts that don't match → keep the raw value
+        // (the prefix check then fails and a chat app just switches, P3-55).
+        if images > 0, !odd.isEmpty, odd.count == images {
+            stripOddUnits = true
+            lastDiagnostic.oddRunsStripped = odd.count
+            value = Self.strippingOddUnits(value)
+            units = Array(value.utf16)
+            n = units.count
+            guard n > 0 else { return fail(.boxSize, .boxSize) }
+            if source == .box { quoteBoundary = QuotedReply.boundary(in: value) }
         }
         guard case .success(let raw) = track(el.range(.selectedTextRange)) else { return fail(.rangeRead, .readFailed) }
         var sel = raw
@@ -650,7 +798,7 @@ import Foundation
         }
         guard sel.location >= 0, sel.length >= 0, sel.end <= n,
               source == .box ? sel.isCaret : !sel.isCaret else { return fail(.rangeBounds, .inconsistent) }
-        guard case .success(let selected) = track(el.string(.selectedText)) else {
+        guard case .success(let selected) = track(el.string(.selectedText)).map(stripIfNeeded) else {
             return fail(.selectedTextRead, .readFailed)
         }
         let slice = Array(units[sel.location..<sel.end])
@@ -670,38 +818,13 @@ import Foundation
                 return fail(.selectionText, .inconsistent)
             }
         }
-        // P3-44: mention pills / links the AX tree shows as their own elements, for the plan to keep whole. Best
-        // effort: an app that can't list them gives none (the `@word` rule still holds); a timeout stops the convert.
-        // P3-46: read before the prefix check (it uses them, and the trace counts them even when the check fails).
-        var atoms: [String] = []
-        // P3-53: the walks get what is left of the read budget; none left → stop before anything is written.
-        let elapsed = clock.nowNanos &- start
-        guard elapsed < timing.readBudgetNanos else { return fail(.atomRead, .timedOut) }
-        // P3-54 (owner: a Chrome Gmail reply walked 126 quote lines as atoms, the pieces still reached the quote and the
-        // budget ran out): for a box, the quote boundary is found in the text first; when it is, the plan stops there
-        // and the quote isn't walked at all. Not found → the P3-48 container walk as before.
-        let quoteBoundary = source == .box ? QuotedReply.boundary(in: value) : nil
-        lastDiagnostic.quoteBoundary = quoteBoundary != nil
-        var quoteFound = quoteBoundary != nil   // P3-54 QA
-        switch track(el.inlineAtoms(maxNodes: Self.maxAtomNodes, budgetNanos: timing.readBudgetNanos - elapsed,
-                                    quoteSearchMustComplete: quoteSearchMustComplete && quoteBoundary == nil,
-                                    searchQuotes: quoteBoundary == nil)) {
-        case .success(let a):
-            atoms = a.map(\.text).filter { !$0.isEmpty }   // P3-55: images come as empty atoms (trace count only)
-            lastDiagnostic.atomRoles = a.map { Self.roleName($0.role) }
-            if a.contains(where: { $0.role == "AXQuoteText" }) { quoteFound = true }
-        case .failure: if timedOut { return fail(.atomRead, .readFailed) }
-        }
-        // P3-53: a walk that came back late (one slow AX call) still ends the read: no piece after the budget.
-        if clock.nowNanos &- start > timing.readBudgetNanos { return fail(.atomRead, .timedOut) }
-        lastDiagnostic.atoms = atoms.count
         // The text up to the caret (or the selection's end), where the app answers it (Slack fails it for the whole box,
         // -25212, but answers before the caret). An answer that disagrees means the offsets can't be trusted.
         // P3-44: not with a caret read past the end (shape B: the app's range units are not the value's).
         // P3-46: a disagreeing answer for a caret (box convert) is mapped onto the value (`valueOffset`): the caret is
         // then taken there and the app's own caret kept as the raw one; a selection still stops.
         if sel.end > 0, sel == raw {
-            switch track(el.string(in: TextRange(location: 0, length: sel.end))) {
+            switch track(el.string(in: TextRange(location: 0, length: sel.end))).map(stripIfNeeded) {
             case .success(let prefix):
                 let expected = String(decoding: units[..<sel.end], as: UTF16.self)
                 // P3-46 QA: an empty answer proves nothing when the box holds a pill (see `.failure` below).
@@ -711,6 +834,7 @@ import Foundation
                     let ax = Self.objectCounts(prefix), val = Self.objectCounts(expected)
                     lastDiagnostic.prefixObjects = "ax\(ax.fffc)fffc+\(ax.emoji)emoji/value\(val.fffc)fffc+\(val.emoji)emoji"
                     lastDiagnostic.prefixUnexplained = ax.fffc + ax.emoji + val.fffc + val.emoji == 0
+                    lastDiagnostic.spanShape = Self.spanShape(ax: prefix, value: expected)   // P3-57
                     guard let alignment = Self.prefixAlignment(prefix, in: units, atoms: atoms),
                           alignment.end <= n, let c = Self.caret(fromPrefix: alignment, appCaret: sel.end), c <= n
                     else { return fail(.prefix, .inconsistent) }
@@ -810,7 +934,9 @@ import Foundation
             // Shown = any range other than the one read just before the write (shape A reports the new selection in
             // value units, which may be neither `target` nor `range`); `before` is never a twin of the target here.
             if case .success(let r) = track(el.range(.selectedTextRange)), r != before {
-                guard case .success(let selected) = track(el.string(.selectedText)) else { return .notShown }
+                guard case .success(let selected) = track(el.string(.selectedText)).map(stripIfNeeded) else {
+                    return .notShown
+                }
                 if selected.unicodeScalars.elementsEqual(original.unicodeScalars) { return .matched }
                 if original.contains(where: \.isNewline), ConvertController.sameVisibleText(selected, original) {
                     return .matched
@@ -835,7 +961,8 @@ import Foundation
         let want = String(decoding: expected, as: UTF16.self)
         let polls = max(1, Int(timing.settleNanos / max(timing.pollNanos, 1)))
         for i in 0...polls {
-            if case .success(let v) = track(el.string(.value)), ReplacementExecutor.readsBackAs(v, want),
+            if case .success(let v) = track(el.string(.value)).map(stripIfNeeded),
+               ReplacementExecutor.readsBackAs(v, want),
                case .success(let r) = track(el.range(.selectedTextRange)), r.isCaret {
                 if r.location == caret { return shift == 0 ? .unknown : .value }
                 if r.location == caret + shift { return .page }
