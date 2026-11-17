@@ -86,7 +86,7 @@ final class UpdateCheckTests: XCTestCase {
 
         var state = MenuState()
         state.updateNotice = sut.notice
-        let items = MenuModel.items(state: state, currentSource: nil, version: "1.0.0", settingsAvailable: true,
+        let items = MenuModel.items(state: state, currentSource: nil, settingsAvailable: true,
                                     includeDebug: false, sourceName: { $0.rawValue }, appName: { $0 })
         XCTAssertTrue(items.contains(.action("Update available: Kytkin 1.1.0…",
                                              .openURL(URL(string: "https://github.com/dishontomer5-coder/kytkin/releases/tag/v1.1.0")!))))

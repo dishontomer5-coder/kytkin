@@ -48,12 +48,13 @@ struct MenuMock: View {
                         Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize()
                     }
                 }
-                .padding(.leading, CGFloat(item.indent) * 14)
+                .padding(.leading, CGFloat(item.indent) * 10)   // P6-0f: NSMenuItem indents by 10 pt a level
                 Spacer(minLength: 12)
                 if !item.keyEquivalent.isEmpty {
                     Text("⌘" + item.keyEquivalent.uppercased()).foregroundStyle(.secondary)
                 }
                 if case .debugSwitchSubmenu = item.kind { Text("›").foregroundStyle(.secondary) }
+                if case .submenu = item.kind { Text("›").foregroundStyle(.secondary) }   // P6-0f: "Debug ›"
             }
             .font(.system(size: 13))
             .foregroundStyle(item.isEnabled ? Color.primary : Color.secondary.opacity(0.75))

@@ -2,20 +2,21 @@
 // closures (the UI's cached app names and the switcher's source list), so every line, text and enabled state is
 // unit-tested. StatusItemController only renders the result.
 //
-// Layout (P6-0c: visual review §3.3, N1–N6; flows S2, S3; copy review M-*):
+// Layout (P6-0f, owner "why is it so cluttered?"; earlier P6-0c: visual review §3.3, flows S2, S3, copy review M-*):
 //   Turn Kytkin On                                    (only while it is turned off; then no context block, no Pause)
-//   <App> · <Language>                                (section header; omitted with no app yet)
-//   Remembered from your switches | Always <Language> (you chose this) | No rule yet …   (grayed)
-//   ✓ Always Use <current language> in <App>          (checked = that pin exists; choosing it again unpins)
-//   Forget Rule for <App>                             (disabled without a matching rule)
-//   ✓ Don't Convert in <App>                          (double-Shift only; the per-app switch in Advanced)
+//   <App> · <Language>[, always | , remembered]       (section header; omitted with no app yet; the state word says
+//                                                      whether the language is pinned or learned, nothing otherwise)
+//     ✓ Always Use <current language> in <App>        (indented; checked = that pin exists; choosing it again unpins)
+//     ✓ Don't Convert in <App>                        (indented; double-Shift only; the per-app switch in Advanced)
+//     Forget <App>                                    (indented; only when a learned or pinned rule matches)
 //   P3-9, on a site in a watched browser (001 §14.9): "<site> · <Language>", "Always Use … on <site>",
-//   "Forget Rule for <site>" (enabled only for a matched site or subdomain rule, D6).
+//   "Forget <site>" (only for a matched site or subdomain rule, D6).
+//   ── ⚠ warnings, only when any apply (MenuWarning order): one clickable line each, the fix as its subtitle;
+//      then "Update available: …" when the optional update check found one ──
 //   Pause Kytkin | Resume Kytkin
-//   ── ⚠ warnings, only when any apply (MenuWarning order): one clickable line each, the fix as its subtitle ──
-//   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23)
-//   About Kytkin                                      (only with Settings; the version lives in About)
-//   ── DEBUG lines + "DEBUG: Switch to ▸" (Debug builds only) ──
+//   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23; About is
+//                                                      a Settings tab, not a menu line any more)
+//   ── Debug ▸ (Debug builds only: the DEBUG lines and "Switch to ▸" in one submenu) ──
 //   Quit Kytkin  ⌘Q
 //
 // User-visible texts are plain English with no implementation words (no "tap", "TIS"); DEBUG lines may use them.
@@ -122,61 +123,64 @@ enum MenuModel {
     /// - sourceName: display name for a rule's source ("Hebrew"); falls back to the raw id in the caller.
     /// - appName: display name for a bundle ID ("Notes"); the UI caches it.
     /// - settingsAvailable: the Settings window hook is set (P2-23). Without it "Settings…" is disabled and the
-    ///   "Open Settings…" hints and About are hidden.
-    static func items(state: MenuState, currentSource: InputSourceInfo?, version: String, settingsAvailable: Bool,
+    ///   "Open Settings…" hints are hidden.
+    static func items(state: MenuState, currentSource: InputSourceInfo?, settingsAvailable: Bool,
                       includeDebug: Bool, sourceName: (InputSourceID) -> String,
                       appName: (String) -> String) -> [MenuItemModel] {
-        var out: [MenuItemModel] = []
+        // P6-0f: the menu is built from sections; a separator goes only between non-empty ones.
+        var sections: [[MenuItemModel]] = []
         if !state.enabled {
             // P6-0c (visual review N2, copy M-10): one click turns it back on; nothing else applies while it is off.
-            out.append(.action("Turn Kytkin On", .turnOn))
+            sections.append([.action("Turn Kytkin On", .turnOn)])
         } else {
-            let context = contextItems(state: state, currentSource: currentSource, sourceName: sourceName,
-                                       appName: appName)
-            if !context.isEmpty { out += context + [.separator] }
-            out.append(.action(state.paused ? "Resume Kytkin" : "Pause Kytkin", .togglePause))
+            sections.append(contextItems(state: state, currentSource: currentSource, sourceName: sourceName,
+                                         appName: appName))
         }
 
-        let warnings = MenuWarning.list(for: state).filter { $0 != .kytkinOff }
-        if !warnings.isEmpty {
-            out.append(.separator)
-            for w in warnings { out.append(item(for: w, settingsAvailable: settingsAvailable)) }
-        }
-
+        var notices = MenuWarning.list(for: state).filter { $0 != .kytkinOff }
+            .map { item(for: $0, settingsAvailable: settingsAvailable) }
         // P6-3: the optional update check found a newer release (a plain line, not a warning).
-        if let update = state.updateNotice {
-            out.append(.separator)
-            out.append(.action(update.menuTitle, .openURL(update.pageURL)))
-        }
+        if let update = state.updateNotice { notices.append(.action(update.menuTitle, .openURL(update.pageURL))) }
+        sections.append(notices)
 
-        out.append(.separator)
-        out.append(.action("Settings…", .openSettings(.general), enabled: settingsAvailable, key: ","))
-        // P6-0c (visual review N6): "About Kytkin"; the version lives in About.
-        out.append(settingsAvailable ? .action("About Kytkin", .openSettings(.about)) : .info("Kytkin v\(version)"))
+        var controls: [MenuItemModel] = []
+        if state.enabled { controls.append(.action(state.paused ? "Resume Kytkin" : "Pause Kytkin", .togglePause)) }
+        controls.append(.action("Settings…", .openSettings(.general), enabled: settingsAvailable, key: ","))
+        sections.append(controls)
 
+        var last: [MenuItemModel] = []
         // P2-27: compiled out of Release, so its binary carries no DEBUG lines at all (not just hidden ones).
         #if DEBUG
-        if includeDebug {
-            // P2-14 / P2-17 checklist tools. Counts and states, never keys.
-            out.append(.separator)
-            out.append(.info("DEBUG: Keyboard: \(state.tapMode)\(state.degradedByWatchdog ? " (lowered)" : "")"))
-            out.append(.info("DEBUG: Double-Shift count: \(state.doubleShiftCount)"))
-            out.append(.info("DEBUG: Tap re-enables: \(state.tapReEnableCount)"))
-            // P2-27 (001 §7 B1): tap callbacks over 1 ms, the on-device check of the callback budget.
-            out.append(.info("DEBUG: Slow key callbacks (over 1 ms): \(state.slowCallbackCount)"))
-            // P2-55: the learner's gate, candidate and last decision (IDs and reasons only).
-            if let line = state.learnerDebug { out.append(.info("DEBUG: \(line)")) }
-            // P3-14: the browser watch (001 §14.12 "Site reads" line; states and counts only, never a host).
-            if let line = state.siteDebug { out.append(.info("DEBUG: \(line)")) }
-            out.append(MenuItemModel(kind: .debugSwitchSubmenu, title: "DEBUG: Switch to", isEnabled: true,
-                                     isChecked: false, indent: 0, keyEquivalent: ""))
-        }
+        if includeDebug { last.append(debugSubmenu(state)) }
         #endif
+        last.append(.action("Quit Kytkin", .quit, key: "q"))
+        sections.append(last)
 
-        out.append(.separator)
-        out.append(.action("Quit Kytkin", .quit, key: "q"))
-        return out
+        return sections.filter { !$0.isEmpty }.enumerated().flatMap { i, section in
+            i == 0 ? section : [.separator] + section
+        }
     }
+
+    #if DEBUG
+    /// P6-0f: every DEBUG line in one "Debug ▸" submenu (P2-14 / P2-17 checklist tools). Counts and states, never keys.
+    static func debugSubmenu(_ state: MenuState) -> MenuItemModel {
+        var lines: [MenuItemModel] = [
+            .info("Keyboard: \(state.tapMode)\(state.degradedByWatchdog ? " (lowered)" : "")"),
+            .info("Double-Shift count: \(state.doubleShiftCount)"),
+            .info("Tap re-enables: \(state.tapReEnableCount)"),
+            // P2-27 (001 §7 B1): tap callbacks over 1 ms, the on-device check of the callback budget.
+            .info("Slow key callbacks (over 1 ms): \(state.slowCallbackCount)"),
+        ]
+        // P2-55: the learner's gate, candidate and last decision (IDs and reasons only).
+        if let line = state.learnerDebug { lines.append(.info(line)) }
+        // P3-14: the browser watch (001 §14.12 "Site reads" line; states and counts only, never a host).
+        if let line = state.siteDebug { lines.append(.info(line)) }
+        lines.append(MenuItemModel(kind: .debugSwitchSubmenu, title: "Switch to", isEnabled: true,
+                                   isChecked: false, indent: 0, keyEquivalent: ""))
+        return MenuItemModel(kind: .submenu(lines), title: "Debug", isEnabled: true, isChecked: false, indent: 0,
+                             keyEquivalent: "")
+    }
+    #endif
 
     // MARK: - Context, Pin, Forget, Don't Convert
 
@@ -200,36 +204,29 @@ enum MenuModel {
         let language = (resolution.matched?.inputSource ?? resolution.target).map(sourceName)
             ?? currentSource?.name
         var head = language.map { "\(here) · \($0)" } ?? here
+
+        // P6-0f (was a grayed line, P6-0c flows S2): a short state word in the header: "always" for a pin,
+        // "remembered" for a learned rule, nothing without a rule of its own (none, the default, the browser's).
+        if let matched = resolution.matched {
+            let browsersOwn: Bool
+            if case .app = matched.scope { browsersOwn = isSite } else { browsersOwn = false }
+            if !browsersOwn { head += matched.origin == .pinned ? ", always" : ", remembered" }
+        }
         if isSite, c.isPrivateWindow == true { head += " (private)" }
 
-        // P6-0c (flows S2, copy M-4…M-6): plain words for where the language comes from.
-        let why: String
-        if let matched = resolution.matched {
-            switch matched.scope {
-            case .app where isSite: why = "The browser's language"
-            case .app, .site, .siteHost, .chat:
-                why = matched.origin == .pinned ? "Always \(sourceName(matched.inputSource)) (you chose this)"
-                                                : "Remembered from your switches"
-            }
-        } else if resolution.level == .addressBar {
-            why = "Address bar: the browser's language"   // P3-29
-        } else if resolution.level == .defaultRule {
-            why = "No rule yet, so the default applies"
-        } else {
-            why = "No rule yet"
-        }
-
-        let forget: MenuItemModel = rule.forgetScope.map {
-            .action("Forget Rule for \(isSite ? here : scopeName($0, appName: appName))", .forgetCurrent)
-        } ?? .action("Forget Rule for \(here)", .forgetCurrent, enabled: false)
+        // P6-0f: only when there is a rule to forget; plain wording.
+        let forget: [MenuItemModel] = rule.forgetScope.map {
+            [.action("Forget \(isSite ? here : scopeName($0, appName: appName))", .forgetCurrent, indent: 1)]
+        } ?? []
 
         // P6-0c (flows S3; owner: double-Shift only): the per-app convert switch (Advanced → App Exceptions).
         let dontConvert = MenuItemModel.action("Don't Convert in \(appTitle)", .toggleConvertInCurrentApp,
-                                               checked: state.convertOffInCurrentApp)
+                                               checked: state.convertOffInCurrentApp, indent: 1)
 
-        return [.header(head), .info(why),
+        // P6-0f: the actions are indented under the header so they read as belonging to it.
+        return [.header(head),
                 pinItem(rule, currentSource: currentSource, preposition: isSite ? "on" : "in", here: here),
-                forget, dontConvert]
+                dontConvert] + forget
     }
 
     /// "Always Use <language> in|on <here>": checked once exactly that pin exists; choosing it again unpins it
@@ -237,7 +234,7 @@ enum MenuModel {
     private static func pinItem(_ rule: SwitchController.CurrentRule, currentSource: InputSourceInfo?,
                                 preposition: String, here: String) -> MenuItemModel {
         guard let current = currentSource else {
-            return .action("Always Use This Language \(preposition) \(here)", .pinCurrent, enabled: false)
+            return .action("Always Use This Language \(preposition) \(here)", .pinCurrent, enabled: false, indent: 1)
         }
         // P3-9: compare normalized scopes, so an old hand-edited Unicode key still reads as "this pin".
         let done = rule.resolution.matched.map {
@@ -245,7 +242,7 @@ enum MenuModel {
                 && $0.inputSource == current.id
         } ?? false
         return .action("Always Use \(current.name) \(preposition) \(here)", done ? .unpinCurrent : .pinCurrent,
-                       checked: done)
+                       checked: done, indent: 1)
     }
 
     /// How a rule's scope is named in the menu: the app's name, the site, or the chat (P3/P4).
