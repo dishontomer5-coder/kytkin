@@ -457,10 +457,9 @@ final class ConvertControllerRichContentTests: XCTestCase {
         r.webmailPage = true
         _ = await rig.sut.handle(r, layouts: layouts)
         XCTAssertEqual(rig.field.text, "akuo vh", "the AX path never typed over the box (or a quote it couldn't see)")
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [true])
-        // It falls back as for any incomplete read: the clipboard path (its HTML paste skips Gmail's quote itself).
-        XCTAssertEqual(sink.traces.first?.steps.first?.path, .chromiumAX)
-        XCTAssertTrue(sink.traces.first?.steps.first?.reason.hasPrefix("unavailable") == true)
+        // P3-61: a webmail page never gets the AX path at all: the clipboard (its HTML paste skips Gmail's quote).
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [])
+        XCTAssertEqual(sink.traces.first?.steps.first?.path, .clipboard)
     }
 
     @TextActor func testAGmailSelectionDoesNotNeedTheQuoteSearch() async {
@@ -469,7 +468,9 @@ final class ConvertControllerRichContentTests: XCTestCase {
         var r = request(empty(), app: chrome)
         r.webmailPage = true
         _ = await rig.sut.handle(r, layouts: layouts)
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks.first, false, "a selection is the user's choice")
+        // P3-61: a webmail selection goes through the clipboard too (no AX walk at all).
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [])
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty)
     }
 
     @TextActor func testSlackWithACutShortQuoteSearchStillConverts() async {
@@ -486,7 +487,7 @@ final class ConvertControllerRichContentTests: XCTestCase {
         rig.replacer?.pageCategory = .webmail
         _ = await rig.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
         XCTAssertEqual(rig.field.text, "akuo vh")
-        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [true])
+        XCTAssertEqual(rig.field.quoteSearchMustCompleteAsks, [], "P3-61: webmail never gets the AX path")
     }
 
     @TextActor func testKeysAfterASlowChromiumTryAreNeverPostedPastTheBudget() async {
@@ -506,18 +507,6 @@ final class ConvertControllerRichContentTests: XCTestCase {
     }
 
     // MARK: - P3-54 QA (Coordinator 2026-11-16): a webmail whole box where no quote was seen
-
-    @TextActor func testAWebmailBoxWithNoQuoteSeenConvertsOnlyTheCaretsBlockThroughAX() async {
-        // A reply whose header no pattern knows and whose AX tree shows no quote: the caret's paragraph block, up to the
-        // caret, is all that converts; the unrecognised thread below it (and any text above the empty line) stays.
-        let box = "nv nmc\n\nakuo vh\n\nIl Lun X ha scritto:\nnv nmc"
-        let rig = rig(box, caret: 15)
-        var r = request(empty(), app: chrome)
-        r.webmailPage = true
-        let out = await rig.sut.handle(r, layouts: layouts)
-        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
-        XCTAssertEqual(rig.field.text, "nv nmc\n\nשלום הי\n\nIl Lun X ha scritto:\nnv nmc")
-    }
 
     @TextActor func testANonWebmailBoxStillConvertsWhole() async {
         let rig = rig("nv nmc\n\nakuo vh", caret: 15)
@@ -989,5 +978,53 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(convert("vh https://x.com/vh"), "הי https://x.com/vh", "a web address stays whole")
         XCTAssertEqual(convert("vh 10:30:45"), "הי 10:30:45", "a time: digits never convert anyway")
         XCTAssertEqual(convert("vh @tomer vh"), "הי @tomer הי", "a mention word stays")
+    }
+
+    // MARK: - P3-61 (owner video, Gmail reply in Chrome): webmail uses the clipboard HTML path, never AX editing
+
+    static let chromeReply = """
+        <div dir="ltr">akuo vh</div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" \
+        class="gmail_attr">On Tue, Nov 17, 2026 at 9:49 AM X &lt;x@y.com&gt; wrote:<br></div><blockquote \
+        class="gmail_quote"><div dir="ltr">nv nmc</div></blockquote></div>
+        """
+    static let chromeReplyPlain = "akuo vh\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc"
+
+    @TextActor func testAChromeGmailReplyUsesTheClipboardHTMLPathNotAX() async {
+        let rig = rig(Self.chromeReplyPlain)
+        rig.pasteboard.copiedExtras = [.html(Self.chromeReply)]
+        var r = request(empty(), app: chrome)
+        r.webmailPage = true
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty, "no AX selection in the webmail box")
+        XCTAssertEqual(rig.pasteboard.transientWrites.last,
+                       "שלום הי\n\nOn Tue, Nov 17, 2026 at 9:49 AM X <x@y.com> wrote:\n\nnv nmc",
+                       "the header keeps its case and its line, the quote unchanged")
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "webmailClipboard")
+    }
+
+    @TextActor func testAnUnknownSiteFoundToBeWebmailUsesTheClipboardToo() async {
+        let rig = rig(Self.chromeReplyPlain)
+        rig.pasteboard.copiedExtras = [.html(Self.chromeReply)]
+        rig.replacer?.pageCategory = .webmail
+        let out = await rig.sut.handle(request(empty(), app: chrome, siteUnknown: true), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertTrue(rig.field.rangeWrites.isEmpty)
+    }
+
+    @TextActor func testAfterNotSettledTheNextPressSkipsAXInTheSameBox() async {
+        let rig = rig("akuo vh")
+        rig.field.keyLagNanos = nil   // typed keys never show
+        _ = await rig.sut.handle(request(empty(), app: chrome), layouts: layouts)
+        let writes = rig.field.rangeWrites.count
+        XCTAssertGreaterThan(writes, 0)
+        sink.traces.removeAll()
+        _ = await rig.sut.handle(request(empty(), gen: 2, app: chrome), layouts: layouts)
+        XCTAssertEqual(rig.field.rangeWrites.count, writes, "no AX path within 2 s of a notSettled")
+        XCTAssertEqual(sink.traces.first?.chromiumSkipped, "afterNotSettled", sink.traces.first?.line ?? "-")
+        clock.advance(byMilliseconds: 2_500)
+        sink.traces.removeAll()
+        _ = await rig.sut.handle(request(empty(), gen: 3, app: chrome), layouts: layouts)
+        XCTAssertNil(sink.traces.first?.chromiumSkipped, "after the cooldown the AX path is tried again")
     }
 }
