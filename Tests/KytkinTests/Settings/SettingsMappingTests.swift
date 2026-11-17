@@ -11,17 +11,21 @@ final class SettingsMappingTests: XCTestCase {
 
     // MARK: - Tabs
 
-    func testTabOrderAndPlaceholders() {
+    func testSixTabsInOrderWithSymbols() {
+        // P6-0c (owner 2026-11-17): 8 tabs became 6.
         XCTAssertEqual(SettingsTab.allCases.map(\.title),
-                       ["General", "Languages", "Rules", "Convert", "Apps", "Browsers & Sites", "Permissions",
-                        "About"])
-        XCTAssertEqual(SettingsTab.allCases.filter { !$0.isPlaceholder },
-                       SettingsTab.allCases, "P2-26: the Permissions tab was the last placeholder")
-        for tab in SettingsTab.allCases {
-            XCTAssertFalse(tab.symbolName.isEmpty)
-            XCTAssertEqual(tab.comingSoonText.isEmpty, !tab.isPlaceholder, "\(tab)")
-            if tab.isPlaceholder { XCTAssertTrue(tab.comingSoonText.contains("coming soon"), "\(tab)") }
-        }
+                       ["General", "Rules", "Double-Shift", "Websites", "Advanced", "About"])
+        XCTAssertEqual(SettingsTab.allCases.map(\.symbolName),
+                       ["gearshape", "list.bullet.rectangle", "shift", "globe", "slider.horizontal.3", "info.circle"])
+        XCTAssertEqual(AdvancedSection.allCases.map(\.title), ["App Exceptions", "Keyboard Layouts", "Diagnostics"])
+    }
+
+    func testEveryMenuTargetLandsOnATab() {
+        // P6-0c: the permissions now live in General's setup section.
+        XCTAssertEqual(SettingsTab(target: .general), .general)
+        XCTAssertEqual(SettingsTab(target: .permissions), .general)
+        XCTAssertEqual(SettingsTab(target: .doubleShift), .doubleShift)
+        XCTAssertEqual(SettingsTab(target: .about), .about)
     }
 
     @MainActor func testSelectionDefaultsToGeneral() {
@@ -36,14 +40,14 @@ final class SettingsMappingTests: XCTestCase {
             info(IDs.abc, "ABC"), info(IDs.russian, "Russian", enabled: false), info(IDs.hebrew, "Hebrew"),
             info(IDs.abc, "ABC again"), info(InputSourceID(""), "Blank"),
         ])
-        XCTAssertEqual(opts.map(\.title), ["Leave the language as it is", "Switch to ABC", "Switch to Hebrew"])
+        XCTAssertEqual(opts.map(\.title), ["Leave as is", "Switch to ABC", "Switch to Hebrew"])
         XCTAssertEqual(opts.map(\.behavior), [.keepCurrent, .switchTo(IDs.abc), .switchTo(IDs.hebrew)])
         XCTAssertEqual(Set(opts.map(\.id)).count, opts.count, "ids are unique")
     }
 
     func testSavedSourceThatIsNotEnabledIsStillListed() {
         let opts = DefaultBehaviorOption.options(current: .switchTo(IDs.russian), sources: [info(IDs.abc, "ABC")])
-        XCTAssertEqual(opts.last?.title, "Switch to Russian (not turned on)")
+        XCTAssertEqual(opts.last?.title, "Switch to Russian (not added in Keyboard settings)")
         XCTAssertEqual(opts.last?.id, DefaultBehaviorOption.id(for: .switchTo(IDs.russian)))
         XCTAssertEqual(opts.count, 3)
     }
@@ -71,7 +75,7 @@ final class SettingsMappingTests: XCTestCase {
         let newer = SettingsNotice.notices(loadIssue: .newerSchemaReadOnly, isReadOnly: true, lastSaveFailed: false,
                                            loadWasLossy: false, originalBackupURL: nil)
         XCTAssertEqual(newer.map(\.kind), [.readOnly])
-        XCTAssertTrue(newer[0].message.contains("newer version"))
+        XCTAssertTrue(newer[0].message.contains("newer Kytkin"))
 
         let unreadable = SettingsNotice.notices(loadIssue: .unreadable, isReadOnly: true, lastSaveFailed: true,
                                                 loadWasLossy: false, originalBackupURL: nil)

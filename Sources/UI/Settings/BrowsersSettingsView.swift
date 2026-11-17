@@ -9,64 +9,42 @@ import SwiftUI
 
 struct BrowsersSettingsView: View {
     let model: BrowsersSettingsModel
-    /// "Open Permissions" on a browser that needs Accessibility.
+    /// "Open Setup" on a browser that needs Accessibility (P6-0c: General's setup section).
     let openPermissions: @MainActor () -> Void
     /// "Show in Rules": Rules, filtered to websites (D7).
     let showWebsiteRules: @MainActor () -> Void
 
     var body: some View {
         Form {
-            if !model.notices.isEmpty || model.dataMissingNotice != nil {
-                Section {
-                    SettingsNoticeList(notices: model.notices)
-                    if let missing = model.dataMissingNotice {
-                        Label(missing, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
+            NoticeSection(notices: model.notices, extra: model.dataMissingNotice.map { [$0] } ?? [])
 
             Section {
-                Toggle(BrowsersSettingsModel.siteRulesToggleTitle, isOn: Binding(
-                    get: { model.siteRulesOn },
-                    set: { model.siteRulesOn = $0 }))
-                    .disabled(!model.isEditable)
-                VStack(alignment: .leading, spacing: 2) {
-                    // P3-26: a click only; turning it on asks macOS for the open browsers, one at a time.
-                    Toggle(BrowsersSettingsModel.automationToggleTitle, isOn: Binding(
-                        get: { model.useAutomation },
-                        set: { model.setUseAutomation($0) }))
-                        .disabled(!model.isEditable)
-                    caption(BrowsersSettingsModel.automationExplanation)
+                // P6-0c (visual review B4): the tab's intro is the main switch's subtitle.
+                Toggle(isOn: Binding(get: { model.siteRulesOn }, set: { model.siteRulesOn = $0 })) {
+                    RowLabel(BrowsersSettingsModel.siteRulesToggleTitle, subtitle: BrowsersSettingsModel.introText)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    // P3-29: the address bar uses the browser's language (on by default).
-                    Toggle(BrowsersSettingsModel.addressBarToggleTitle, isOn: Binding(
-                        get: { model.browserLanguageInAddressBar },
-                        set: { model.browserLanguageInAddressBar = $0 }))
-                        .disabled(!model.isEditable)
-                    caption(BrowsersSettingsModel.addressBarExplanation)
+                .disabled(!model.isEditable)
+                // P3-26: a click only; turning it on asks macOS for the open browsers, one at a time.
+                Toggle(isOn: Binding(get: { model.useAutomation }, set: { model.setUseAutomation($0) })) {
+                    RowLabel(BrowsersSettingsModel.automationToggleTitle,
+                             subtitle: BrowsersSettingsModel.automationExplanation)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Toggle(BrowsersSettingsModel.privateToggleTitle, isOn: Binding(
-                        get: { model.ignorePrivateWindows },
-                        set: { model.ignorePrivateWindows = $0 }))
-                        .disabled(!model.isEditable)
-                    caption(BrowsersSettingsModel.privateExplanation)
-                    caption(BrowsersSettingsModel.privateDetectionText)
-                    caption(BrowsersSettingsModel.safariPrivateNote)
+                .disabled(!model.isEditable)
+                // P3-29: the address bar uses the browser's language (on by default).
+                Toggle(isOn: Binding(get: { model.browserLanguageInAddressBar },
+                                     set: { model.browserLanguageInAddressBar = $0 })) {
+                    RowLabel(BrowsersSettingsModel.addressBarToggleTitle,
+                             subtitle: BrowsersSettingsModel.addressBarExplanation)
                 }
-            } header: {
-                Text(BrowsersSettingsModel.allBrowsersTitle)
-            } footer: {
-                VStack(alignment: .leading, spacing: 2) {
-                    caption(BrowsersSettingsModel.introText)
-                    caption(BrowsersSettingsModel.skipNote)
+                .disabled(!model.isEditable)
+                // P6-0c (visual review B2, copy B-5): one line; the per-browser detection is in the browser's status.
+                Toggle(isOn: Binding(get: { model.ignorePrivateWindows }, set: { model.ignorePrivateWindows = $0 })) {
+                    RowLabel(BrowsersSettingsModel.privateToggleTitle, subtitle: BrowsersSettingsModel.privateExplanation)
                 }
+                .disabled(!model.isEditable)
             }
 
-            Section(BrowsersSettingsModel.browserPickerTitle) {
+            Section("Your browsers") {
                 let rows = model.rows
                 if let selected = model.selectedRow {
                     Picker(BrowsersSettingsModel.browserPickerTitle, selection: Binding(
@@ -80,31 +58,32 @@ struct BrowsersSettingsView: View {
                 }
             }
 
-            Section("Website rules") {
-                HStack {
-                    Text(model.websiteRuleCountText)
-                    Spacer()
+            Section {
+                LabeledContent {
                     Button("Show in Rules") { showWebsiteRules() }
+                } label: {
+                    RowLabel(model.websiteRuleCountText, subtitle: BrowsersSettingsModel.groupingText)
                 }
-                caption(BrowsersSettingsModel.groupingText)
             }
         }
         .formStyle(.grouped)
     }
 
-    /// P3-26: the chosen browser: engine, status (+ hint, + Open Permissions) and its Automation permission.
+    /// P3-26: the chosen browser: engine, status (+ hint, + Open Setup) and its Automation permission.
+    /// P6-0c (visual X2): colour only on the status symbol.
     @ViewBuilder private func browserDetails(_ row: BrowserRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(row.engineText).font(.caption).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline) {
-                Label(row.statusText, systemImage: row.isWorking ? "checkmark.circle" : "info.circle")
-                    .foregroundStyle(row.isWorking ? .green : .secondary)
+                StatusLabel(text: row.statusText, symbol: row.isWorking ? "checkmark.circle.fill" : "info.circle",
+                            tint: row.isWorking ? .green : .secondary)
                 Spacer()
                 if row.statusAction == .openPermissions {
-                    Button("Open Permissions") { openPermissions() }.controlSize(.small)
+                    Button("Open Setup") { openPermissions() }.controlSize(.small)
                 }
             }
             if let hint = row.statusHint { caption(hint) }
+            caption(row.engineText)
+            if let note = row.privateNote { caption(note) }
         }
         .padding(.vertical, 2)
         automationSlot(row)

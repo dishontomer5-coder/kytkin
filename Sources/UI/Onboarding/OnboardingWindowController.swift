@@ -29,6 +29,13 @@ import SwiftUI
         model.setVisible(true)
     }
 
+    /// P6-0c: a double-Shift while Kytkin is in front (AppController): the practice box, only while this window has
+    /// the keyboard.
+    func practiceDoubleShift() -> InputSourceID? {
+        guard window?.isKeyWindow == true else { return nil }
+        return model.practiceDoubleShift()
+    }
+
     /// Silent refresh (the root calls it when a permission or the keyboard state changed).
     func reload() {
         guard isOpen else { return }
@@ -36,13 +43,16 @@ import SwiftUI
     }
 
     private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: OnboardingView(model: model, close: { [weak self] in
-            self?.window?.performClose(nil)
-        }))
+        let hosting = NSHostingController(rootView: OnboardingView(
+            model: model,
+            close: { [weak self] in self?.window?.performClose(nil) },
+            // P6-0c (flows M2): the copy's folder (the disk image or Downloads), and Quit.
+            showInFinder: { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) },
+            quit: { NSApp.terminate(nil) }))
         hosting.sizingOptions = []
         let window = KytkinWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable]   // no minimize, like Settings (QA P2-23)
-        window.title = "Welcome to Kytkin"
+        window.title = "Kytkin Setup"   // P6-0c (copy review §4.1)
         window.setContentSize(OnboardingView.size)
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.moveToActiveSpace)

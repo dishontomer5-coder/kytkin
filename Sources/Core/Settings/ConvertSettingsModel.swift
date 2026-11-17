@@ -3,8 +3,8 @@
 // - Double-Shift on/off, which Shift keys, the window (a slider clamped to 200–500 ms, P2-31) and "Switch language
 //   after converting" (001 §11 Q1) read and write `prefs.convert`. AppController observes the store and sends the
 //   new tap config with `KeyWatcherOperation.updateConfig` (P2-50), so a change works at once, without a restart.
-// - The explanation says what double-Shift does since P2-59 (plan.md decisions P2-59, P2-54(a)); P3-35: the whole
-//   text box, or the selection.
+// - The explanation says what double-Shift does: the selection, or the text before the cursor (P3-62), again =
+//   convert back (P3-40). P6-0c: rewritten per the copy review (C-1), four short lines.
 // - Auto-fix is Phase 4: the tab shows only a "coming later" line, never a control.
 // - Read-only preferences (§12 S1): every setter does nothing and the notice says why.
 
@@ -18,27 +18,29 @@ import Observation
     static let windowStepMs = 10
     static let sliderRange = Double(windowRangeMs.lowerBound)...Double(windowRangeMs.upperBound)
 
+    /// P6-0c (copy review C-1, P1): what double-Shift does since P3-62 (up to the cursor) and P3-40 (again = back).
+    /// Hebrew samples are wrapped in FSI/PDI so bidi never flips the punctuation (copy review B7).
     static let explanation = [
-        "Typed something in the wrong layout? Press Shift twice.",
-        // P3-35 (owner 2026-11-11): the whole text box (was the wrong-layout text before the cursor, P3-33).
-        "With nothing selected, Kytkin converts the whole text box: every letter in the language next to the "
-            + "cursor changes to the other language, on every line. Text already in the other language stays.",
-        "With text selected, it converts only the selection, so select just the part you want to change.",
-        // P3-40 (owner 2026-11-11): again = convert again, not undo.
-        "Press Shift twice again to convert the whole text to the other language. To undo, use the app's ⌘Z.",
-        // P3-37 (owner 2026-11-11): the clipboard in apps Kytkin can't read; terminals remember until Return.
-        "Where Kytkin can't read the text (Slack, VS Code, Chrome and other web apps), it copies the text box "
-            + "through the clipboard and pastes it back converted, then puts your clipboard back (if you allow it below).",
-        "In terminals it converts what you typed since you last pressed Return, even after you click or switch "
-            + "apps. It never presses Return for you.",
-        "If it can't do either, double-Shift just switches the language.",
+        "Typed in the wrong language? Press Shift twice. For example, akuo becomes \u{2068}שלום\u{2069}.",
+        "With text selected, Kytkin converts only the selection. With nothing selected, it converts what's before "
+            + "the cursor, back to the start of the box. Text already in the right language stays.",
+        "Press Shift twice again to convert it back. You can also undo with ⌘Z.",
+        "In terminals, Kytkin converts what you typed since you last pressed Return. Where it can't convert, "
+            + "double-Shift just switches the language.",
     ]
 
-    /// P3-37: the caption under the clipboard toggle.
-    static let clipboardNote = "Kytkin selects the text box, copies it, pastes the converted text and then restores "
-        + "what you had copied. Never in terminals or password fields. Turn it off to keep Kytkin away from the clipboard."
+    /// P6-0c: the one-line summary shown under the main switch (the rest sits behind "How it works").
+    static let summary = "Typed in the wrong language? Press Shift twice to convert it."
 
-    static let autoFixNote = "Fixing words automatically as you type is coming in a later version."
+    /// P3-37; P6-0c (copy review C-3).
+    static let clipboardTitle = "Convert through the clipboard when needed"
+
+    /// P3-37: the caption under the clipboard toggle. P6-0c (copy review C-4, P3-18 audit M1 disclosure, P1).
+    static let clipboardNote = "In apps Kytkin can't read directly (like Slack, VS Code and Chrome), it copies the "
+        + "text, pastes it back converted, then puts back what you had copied. In Slack, Discord and Teams, bold or "
+        + "italic in that message may become plain text. Clipboard history apps (like Maccy, Raycast or Alfred) may "
+        + "briefly see the copied text and save it. If you use one, you may want to turn this off. It's never used in "
+        + "terminals, in password boxes, or while you have a password copied."
 
     init(store: PreferencesStore) {
         self.store = store

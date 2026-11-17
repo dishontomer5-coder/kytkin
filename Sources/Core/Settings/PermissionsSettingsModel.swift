@@ -74,6 +74,30 @@ import Observation
         state.accessibility == .granted
     }
 
+    // MARK: - P6-0c: General's setup section
+
+    /// Everything is set up: Accessibility allowed, no relaunch pending, double-Shift running as allowed, nothing in
+    /// the way. Then General's setup section is one line (visual review §2.3).
+    var setupIsComplete: Bool {
+        state.accessibility == .granted && !state.showsQuitAndReopen && keyboardProblemText == nil
+            && conflictLines.isEmpty
+    }
+
+    static let setupCompleteText = "Everything is set up"
+
+    /// The rows General's setup section shows: Accessibility always; Input Monitoring only while it could help (no
+    /// Accessibility) or a relaunch is pending (visual review P2, flows N1).
+    var setupRows: [PermissionRow] {
+        rows.filter { $0.pane == .accessibility || $0.status == .needsRelaunch || state.accessibility != .granted }
+    }
+
+    /// Double-Shift runs below what the permissions allow (not Kytkin turned off or paused): the status line, else nil.
+    var keyboardProblemText: String? {
+        guard state.enabled, !state.paused, state.accessibility == .granted,
+              TapModePolicy.rank(state.tapMode) < TapModePolicy.rank(desiredTapMode) else { return nil }
+        return keyboardModeText
+    }
+
     // MARK: - User clicks only
 
     /// The row's "Allow…" button. The only caller of the request APIs in Settings.
@@ -125,37 +149,34 @@ import Observation
         Self.conflictLines(state.conflicts)
     }
 
-    /// The current keyboard mode in plain words (pure, tested).
+    /// The current keyboard mode in plain words (pure, tested). P6-0c (copy review P-9/P-10): named after what the
+    /// user sees (double-Shift), each line with its next step.
     static func keyboardModeText(state: MenuState, desired: TapMode) -> String {
-        if !state.enabled { return "Kytkin is turned off, so it isn't watching the keyboard." }
-        if state.paused { return "Kytkin is paused, so it isn't watching the keyboard." }
+        if !state.enabled { return "Off: Kytkin is turned off." }
+        if state.paused { return "Off: Kytkin is paused." }
         let achieved = state.tapMode
         var text: String
         switch achieved {
         case .active:
-            text = "Full: pressing Shift twice fixes text and switches the language."
+            text = "Works: converts text and switches the language."
         case .listenOnly:
-            text = "Limited: pressing Shift twice switches the language but can't fix text."
+            text = "Switches only: allow Accessibility to convert text too."
         case .off:
             if desired == .off {
                 let anyGrant = state.accessibility == .granted || state.inputMonitoring == .granted
-                text = anyGrant
-                    ? "Not in use: double-Shift and learning from your typing are turned off."
-                    : "Off: allow Accessibility so pressing Shift twice can work. Switching the language for each "
-                        + "app works without it."
+                text = anyGrant ? "Off in Double-Shift settings." : "Off: allow Accessibility to use it."
             } else {
-                text = "Off: Kytkin couldn't start watching the keyboard."
+                text = "Stopped: Kytkin couldn't start it. Quit & Reopen Kytkin."
             }
         }
         if TapModePolicy.rank(achieved) < TapModePolicy.rank(desired) {
             if state.showsQuitAndReopen {
                 text += " Quit & Reopen Kytkin to use everything you allowed."
             } else if state.degradedByWatchdog {
-                text += " Kytkin turned some keyboard features off because the keyboard was slow to answer. "
-                    + "Use “Restart Keyboard Features” in the Kytkin menu."
+                text += " It stopped after a slowdown. Use Start Double-Shift Again in the Kytkin menu."
             } else {
                 // P2-57 item 1 / P2-52 item 2: the same words as the menu's warning, never silent.
-                text += " Some keyboard features are off. Use “Restart Keyboard Features” in the Kytkin menu."
+                text += " Part of it is off. Use Start Double-Shift Again in the Kytkin menu."
             }
         }
         return text
@@ -166,8 +187,7 @@ import Observation
             return "Kytkin checks this only while it watches the keyboard."
         }
         return state.secureInputOn
-            ? "On: another app is protecting your typing right now (for example a password box). Kytkin won't "
-                + "fix text until it ends."
+            ? "On: another app is protecting your typing (like a password box). Double-Shift waits until it ends."
             : "Off: no app is protecting your typing right now."
     }
 
@@ -175,10 +195,12 @@ import Observation
         var lines: [String] = []
         if !conflicts.runningSwitchers.isEmpty {
             let names = conflicts.runningSwitchers.joined(separator: ", ")
-            lines.append("\(names) also switches keyboard languages. Please quit it while you use Kytkin.")
+            // P6-0c (copy review P-13). Owner 2026-11-17: a warning only, no Quit button.
+            lines.append("\(names) also switches languages, so the two may undo each other. Quit \(names) to avoid "
+                + "this.")
         }
         if conflicts.perDocumentInputEnabled {
-            lines.append("macOS switches the language for each document by itself, so Kytkin doesn't learn. "
+            lines.append("macOS is switching languages per document, so Kytkin isn't learning. "
                 + "To turn that off: System Settings → Keyboard → Text Input → Edit…, then turn off "
                 + "“Automatically switch to a document's input source”.")
         }

@@ -55,6 +55,9 @@ import Observation
     private let keyWatcher: any KeyWatching
     private let ticker: any RepeatingTicking
     private(set) var convert: any ConvertControlling
+    /// P6-0c (flows §5.4): the setup window's practice box (AppEnvironment wires it). Called for a double-Shift while
+    /// Kytkin's own window is in front; returns the language the box's text is in now, nil = nothing converted.
+    var practiceDoubleShift: (@MainActor () -> InputSourceID?)?
 
     private var lastPrefs: Preferences?
     private var lastConfig: KeyProcessorConfig?
@@ -406,8 +409,13 @@ import Observation
         let learnerDebug: String? = nil
         let siteDebug: String? = nil
         #endif
+        let currentRule = switching.currentRule
         return MenuState(
-            currentRule: switching.currentRule, paused: switching.paused, enabled: store.prefs.general.enabled,
+            currentRule: currentRule,
+            convertOffInCurrentApp: currentRule.map { store.prefs.apps[$0.context.bundleID]?.convertEnabled == false }
+                ?? false,
+            menuBarDisplay: store.prefs.general.menuBarLabel,
+            paused: switching.paused, enabled: store.prefs.general.enabled,
             tapMode: policy.achieved, secureInputOn: keyWatcherStatus.secureInputOn,
             degradedByWatchdog: keyWatcherStatus.degradedByWatchdog,
             // P2-57 item 1: offered whenever the tap runs below the desired mode, not only after a watchdog downgrade.
@@ -436,6 +444,33 @@ import Observation
 
     func forgetCurrent() {
         switching.forgetCurrent()
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
+    /// P6-0c (visual review N5).
+    func unpinCurrent() {
+        switching.unpinCurrent()
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
+    /// P6-0c (flows S3; owner: double-Shift only): the same per-app switch as Advanced → App Exceptions.
+    func setConvertInCurrentApp(_ on: Bool) {
+        guard let id = switching.currentRule?.context.bundleID, !id.isEmpty, !store.isReadOnly else { return }
+        store.update {
+            var o = $0.apps[id] ?? Preferences.AppOverride()
+            o.convertEnabled = on ? nil : false
+            $0.apps[id] = o
+        }
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
+    /// P6-0c (visual review N2): the menu's "Turn Kytkin On" (Settings → General → Kytkin is on).
+    func turnOn() {
+        guard !store.isReadOnly else { return }
+        store.update { $0.general.enabled = true }
         preferencesDidChange()
         onDisplayChange?()
     }
@@ -489,8 +524,19 @@ import Observation
 
     private func route(snapshot: WordSnapshot, gen: UInt64) {
         let prefs = store.prefs
-        guard !switching.paused, prefs.general.enabled, !switching.isOwnAppActive,
-              let c = context.current else { return finish(gen) }
+        guard !switching.paused, prefs.general.enabled else { return finish(gen) }
+        if switching.isOwnAppActive {
+            // P6-0c (flows §5.4): Kytkin's own windows are never converted (P2-39); only the setup window's practice
+            // box, in process (no AX, no clipboard, no posted keys). The after-convert switch is a real one, so the
+            // menu-bar letters change too.
+            finish(gen)
+            if let target = practiceDoubleShift?(), prefs.convert.switchLanguageAfterConvert {
+                switching.selectAfterConvert(target)
+            }
+            onDisplayChange?()
+            return
+        }
+        guard let c = context.current else { return finish(gen) }
         let app = prefs.apps[c.bundleID]
         guard app?.disabled != true else { return finish(gen) }
         let mode: ConvertRequest.Mode

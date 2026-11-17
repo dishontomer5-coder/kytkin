@@ -87,27 +87,29 @@ final class ConvertSettingsModelTests: XCTestCase {
     /// P3-37: "Use the clipboard in apps Kytkin can't read", on by default, written to `prefs.convert`.
     func testTheClipboardSwitchIsOnByDefaultAndWrites() {
         let text = ConvertSettingsModel.explanation.joined(separator: " ")
-        XCTAssertTrue(text.contains("clipboard"))
         XCTAssertTrue(text.contains("terminals"))
-        XCTAssertTrue(text.contains("never presses Return") || text.contains("It never presses Return"))
-        XCTAssertTrue(ConvertSettingsModel.clipboardNote.contains("Never in terminals or password fields"))
+        // P6-0c (copy review C-4, P3-18 audit M1): the clipboard detail sits under its own switch.
+        let note = ConvertSettingsModel.clipboardNote
+        for part in ["Clipboard history apps", "Slack, Discord and Teams", "never used in terminals",
+                     "while you have a password copied"] {
+            XCTAssertTrue(note.contains(part), part)
+        }
+        XCTAssertEqual(ConvertSettingsModel.clipboardTitle, "Convert through the clipboard when needed")
         XCTAssertTrue(Preferences().convert.useClipboardInUnreadableApps)
     }
 
     func testExplanationDescribesTheWholeBoxConvertSelectionAndUndo() {
         let text = ConvertSettingsModel.explanation.joined(separator: " ")
-        // P3-35: the whole text box (was "before the cursor … where the other language starts", P3-33).
-        XCTAssertTrue(text.contains("whole text box"))
-        XCTAssertTrue(text.contains("every line"))
-        XCTAssertTrue(text.contains("already in the other language stays"))
-        XCTAssertFalse(text.contains("before the cursor"))
-        XCTAssertFalse(text.contains("current line"))
+        // P6-0c (copy review C-1, P1): P3-62, the text before the cursor (never "the whole text box").
+        XCTAssertTrue(text.contains("before the cursor, back to the start of the box"))
+        XCTAssertFalse(text.contains("whole text box"))
+        XCTAssertTrue(text.contains("already in the right language stays"))
         XCTAssertTrue(text.contains("converts only the selection"))
-        // P3-40: again = convert to the other language; undo is the app's ⌘Z.
-        XCTAssertTrue(text.contains("twice again to convert the whole text to the other language"))
+        // P3-40: again = convert back; undo is the app's ⌘Z.
+        XCTAssertTrue(text.contains("twice again to convert it back"))
         XCTAssertTrue(text.contains("⌘Z"))
-        XCTAssertFalse(text.contains("right away to undo"))
-        XCTAssertTrue(ConvertSettingsModel.autoFixNote.contains("later version"))
+        XCTAssertEqual(ConvertSettingsModel.explanation.count, 4)
+        XCTAssertTrue(text.contains("\u{2068}שלום\u{2069}"), "the Hebrew sample is isolated for bidi")
     }
 
     func testReadOnlyBlocksEveryWrite() {

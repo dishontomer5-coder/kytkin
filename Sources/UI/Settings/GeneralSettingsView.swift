@@ -1,60 +1,77 @@
 // P2-23: Settings → General (001 §5.2). Layout only; `GeneralSettingsModel` (Core) holds the logic and is tested.
 // Read-only preferences disable the preferences controls (the model's notice says why); Open at Login stays usable
 // because it isn't stored in the preferences file.
+// P6-0c (visual review §2.3): the setup status (was the Permissions tab) sits on top, one line when all is fine; the
+// language pair moved here from Languages; explanations sit inside their rows.
 
 import SwiftUI
 
 struct GeneralSettingsView: View {
     @Bindable var model: GeneralSettingsModel
-    /// P2-26: reopens the welcome window (user click only).
+    let permissions: PermissionsSettingsModel
+    @Environment(LanguagesSettingsModel.self) private var languages
+    /// P2-26: reopens the setup window (user click only).
     let showWelcome: @MainActor () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(model.notices) { notice in
-                Label(notice.message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Form {
-                Section {
-                    Toggle("Kytkin is on", isOn: $model.enabled)
-                    Text("When off, Kytkin doesn't switch languages, learn, or convert.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Toggle("Learn from my manual switches", isOn: $model.learnFromManualSwitches)
-                    Text("When you switch the language yourself in an app, Kytkin remembers it for that app.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Picker("When an app has no rule", selection: $model.defaultBehaviorID) {
-                        ForEach(model.defaultBehaviorOptions) { option in
-                            Text(option.title).tag(option.id)
-                        }
+        Form {
+            NoticeSection(notices: model.notices)
+            SetupSection(model: permissions)
+
+            Section {
+                Toggle(isOn: $model.enabled) {
+                    // P6-0c (copy review S-4): off vs paused.
+                    RowLabel("Kytkin is on", subtitle: "When off, Kytkin does nothing until you turn it back on. "
+                             + "To stop it for a while, use Pause in the menu.")
+                }
+                Toggle(isOn: $model.learnFromManualSwitches) {
+                    // P6-0c (copy review S-5): websites learn too.
+                    RowLabel("Learn from my switches", subtitle: "When you switch the language yourself, Kytkin "
+                             + "remembers it for that app or website.")
+                }
+                Picker("When an app has no rule", selection: $model.defaultBehaviorID) {
+                    ForEach(model.defaultBehaviorOptions) { option in
+                        Text(option.title).tag(option.id)
                     }
+                }
+            }
+            .disabled(!model.isEditable)
+
+            Section("Your two languages") {
+                LanguagePairPickers(model: languages)
+            }
+            .disabled(!languages.isEditable)
+
+            Section {
+                // P6-0c (copy review §4.2, visual G3): the menu-bar look.
+                Picker(selection: $model.menuBarDisplay) {
+                    ForEach(Preferences.General.MenuBarLabel.allCases, id: \.self) {
+                        Text(GeneralSettingsModel.title(of: $0)).tag($0)
+                    }
+                } label: {
+                    RowLabel("Show in menu bar", subtitle: GeneralSettingsModel.menuBarDisplayHelp)
                 }
                 .disabled(!model.isEditable)
-
-                Section {
-                    Toggle("Open at Login", isOn: Binding(
-                        get: { model.launchAtLogin },
-                        set: { model.setLaunchAtLogin($0) }))
-                    if let hint = model.loginItemHint {
-                        Text(hint).font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if model.showsOpenLoginItems {
-                        Button("Open Login Items…") { model.openLoginItems() }
-                    }
-                    if let error = model.loginItemError {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
+                Toggle(isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) })) {
+                    RowLabel("Open at Login", subtitle: model.loginItemHint)
                 }
-
-                Section {
-                    Button("Show Welcome Again…") { showWelcome() }
-                    Text("Opens the welcome window again: what Kytkin does, your two languages and Accessibility.")
-                        .font(.caption).foregroundStyle(.secondary)
+                if model.showsOpenLoginItems {
+                    Button("Open Login Items…") { model.openLoginItems() }
+                }
+                if let error = model.loginItemError {
+                    StatusLabel(text: error, symbol: "xmark.circle.fill", tint: .red)
                 }
             }
-            .formStyle(.grouped)
+
+            Section {
+                LabeledContent {
+                    Button("Show Setup Again…") { showWelcome() }
+                } label: {
+                    // P6-0c (copy review S-9).
+                    RowLabel("Setup", subtitle: "The 3-step setup: what Kytkin does, permissions and a practice box.")
+                }
+            }
         }
+        .formStyle(.grouped)
     }
 }

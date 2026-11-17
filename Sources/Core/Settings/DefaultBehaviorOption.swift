@@ -21,7 +21,7 @@ struct DefaultBehaviorOption: Identifiable, Equatable, Sendable {
     /// Keep current first, then each enabled source (in the given order, duplicates dropped), then the saved one if
     /// it isn't among them.
     static func options(current: DefaultBehavior, sources: [InputSourceInfo]) -> [DefaultBehaviorOption] {
-        var result = [DefaultBehaviorOption(id: keepCurrentID, title: "Leave the language as it is",
+        var result = [DefaultBehaviorOption(id: keepCurrentID, title: "Leave as is",   // P6-0c (visual G4)
                                             behavior: .keepCurrent)]
         var seen = Set<InputSourceID>()
         for s in sources where s.isEnabled && !s.id.rawValue.isEmpty && seen.insert(s.id).inserted {
@@ -31,7 +31,7 @@ struct DefaultBehaviorOption: Identifiable, Equatable, Sendable {
         }
         if case .switchTo(let saved) = current, !seen.contains(saved) {
             result.append(DefaultBehaviorOption(id: id(for: current),
-                                                title: "Switch to \(fallbackName(saved)) (not turned on)",
+                                                title: "Switch to \(fallbackName(saved)) (not added in Keyboard settings)",   // P6-0c (S-6)
                                                 behavior: current))
         }
         return result

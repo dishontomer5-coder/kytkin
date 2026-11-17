@@ -49,7 +49,7 @@ final class WebsiteInputTests: XCTestCase {
         XCTAssertEqual(try parse("https://il/"), .sharedSuffix("il"), "a bare top-level domain")
         XCTAssertNil(try parse("gov.il").scope(extent: .wholeSite))
         XCTAssertEqual(try parse("gov.il").message,
-                       "gov.il is shared by many websites. Enter one site, like www.gov.il.")
+                       "gov.il is shared by many websites. Enter one of them, like www.gov.il.")
     }
 
     func testOneSiteUnderASharedSuffixIsItsOwnSite() throws {
@@ -187,7 +187,7 @@ final class AddWebsiteRulesTests: XCTestCase {
         sut.beginAddWebsite()
         let form = try XCTUnwrap(sut.addWebsite)
         form.text = "YNET.co.il"
-        XCTAssertEqual(form.replacesText, "ynet.co.il already has a rule (ABC, learned). Saving replaces it.")
+        XCTAssertEqual(form.replacesText, "ynet.co.il already uses ABC (learned). Adding replaces it.")
         form.language = IDs.hebrew
         sut.saveAddWebsite()
         let rule = try XCTUnwrap(store.prefs.rules.only, "replaced, not duplicated")
@@ -208,10 +208,10 @@ final class AddWebsiteRulesTests: XCTestCase {
         XCTAssertEqual(offered, ["ynet.co.il"])
         sut.beginAddWebsite(subdomainOf: "ynet.co.il")
         let form = try XCTUnwrap(sut.addWebsite)
-        XCTAssertEqual(form.title, "Add Subdomain Rule")
+        XCTAssertEqual(form.title, "Add Rule for Part of ynet.co.il")   // P6-0c (R-7)
         XCTAssertEqual(form.text, "ynet.co.il")
         XCTAssertEqual(form.extent, .onlyHost)
-        XCTAssertEqual(form.hint, "Type the address that should get its own language, like news.ynet.co.il.")
+        XCTAssertEqual(form.hint, "Type the address that should have its own language, like news.ynet.co.il.")
         form.text = "sport.ynet.co.il"
         XCTAssertTrue(form.canSave)
         sut.saveAddWebsite()
@@ -338,7 +338,7 @@ final class AddWebsiteRulesTests: XCTestCase {
         let byName = Dictionary(uniqueKeysWithValues: sut.rows.map { ($0.name, $0) })
         XCTAssertNil(byName["ynet.co.il"]?.detail)
         XCTAssertEqual(byName["www.שלום.co.il"]?.detail, "www.xn--9dbne9b.co.il")
-        XCTAssertEqual(byName["www.שלום.co.il"]?.kindTitle, "Website, only this address")
+        XCTAssertEqual(byName["www.שלום.co.il"]?.kindTitle, "Part of a website")
         sut.searchText = "xn--9dbne9b"
         XCTAssertEqual(sut.rows.count, 2, "IDN look-alikes stay findable by their stored key")
     }

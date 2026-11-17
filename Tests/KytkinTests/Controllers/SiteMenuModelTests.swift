@@ -39,115 +39,127 @@ final class SiteMenuModelTests: XCTestCase {
                                       appName: { self.names[$0] ?? $0 })
     }
 
-    // MARK: - §14.9 rows
+    // MARK: - §14.9 rows (P6-0c: header, plain "why" line, Always Use, Forget, Don't Convert)
+
+    private func dont(_ checked: Bool = false) -> MenuItemModel {
+        .action("Don't Convert in Zen", .toggleConvertInCurrentApp, checked: checked)
+    }
 
     func testSiteRule() {
         XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)]), [
-            .info("ynet.co.il (Zen): Hebrew (learned)"),
-            .action("Always use Hebrew on ynet.co.il", .pinCurrent),
-            .action("Forget rule for ynet.co.il", .forgetCurrent),
+            .header("ynet.co.il · Hebrew"),
+            .info("Remembered from your switches"),
+            .action("Always Use Hebrew on ynet.co.il", .pinCurrent),
+            .action("Forget Rule for ynet.co.il", .forgetCurrent),
+            dont(),
         ])
     }
 
-    func testPinnedSiteRuleIsChecked() {
+    func testPinnedSiteRuleIsCheckedAndChoosingItAgainUnpins() {
         XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew, .pinned)]), [
-            .info("ynet.co.il (Zen): Hebrew (pinned)"),
-            .action("Always use Hebrew on ynet.co.il", .pinCurrent, enabled: false, checked: true),
-            .action("Forget rule for ynet.co.il", .forgetCurrent),
+            .header("ynet.co.il · Hebrew"),
+            .info("Always Hebrew (you chose this)"),
+            .action("Always Use Hebrew on ynet.co.il", .unpinCurrent, checked: true),
+            .action("Forget Rule for ynet.co.il", .forgetCurrent),
+            dont(),
         ])
         let other = lines([site("ynet.co.il", IDs.hebrew, .pinned)], current: IDs.abc)
-        XCTAssertEqual(other[1], .action("Always use English on ynet.co.il", .pinCurrent), "another language: not done")
+        XCTAssertEqual(other[2], .action("Always Use English on ynet.co.il", .pinCurrent), "another language: not done")
     }
 
     func testHostOverride() {
         XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew), host("news.ynet.co.il", IDs.abc)],
                              host: "news.ynet.co.il", current: IDs.abc), [
-            .info("news.ynet.co.il (Zen): English (pinned)"),
-            .action("Always use English on news.ynet.co.il", .pinCurrent, enabled: false, checked: true),
-            .action("Forget rule for news.ynet.co.il", .forgetCurrent),
+            .header("news.ynet.co.il · English"),
+            .info("Always English (you chose this)"),
+            .action("Always Use English on news.ynet.co.il", .unpinCurrent, checked: true),
+            .action("Forget Rule for news.ynet.co.il", .forgetCurrent),
+            dont(),
         ])
     }
 
     func testBrowserRuleApplies() {
         XCTAssertEqual(lines([.app(zen, IDs.abc, .pinned)], current: IDs.abc), [
-            .info("ynet.co.il (Zen): English (Zen's rule)"),
-            .action("Always use English on ynet.co.il", .pinCurrent),
-            .action("Forget rule for ynet.co.il", .forgetCurrent, enabled: false),
+            .header("ynet.co.il · English"),
+            .info("The browser's language"),
+            .action("Always Use English on ynet.co.il", .pinCurrent),
+            .action("Forget Rule for ynet.co.il", .forgetCurrent, enabled: false),
+            dont(),
         ])
-        XCTAssertEqual(lines([.app(zen, IDs.abc)])[0], .info("ynet.co.il (Zen): English (Zen's rule)"),
-                       "learned browser rule too")
+        XCTAssertEqual(lines([.app(zen, IDs.abc)])[1], .info("The browser's language"), "learned browser rule too")
     }
 
     func testDefault() {
-        XCTAssertEqual(lines([], defaultBehavior: .switchTo(IDs.abc), current: IDs.abc), [
-            .info("ynet.co.il (Zen): English (default)"),
-            .action("Always use English on ynet.co.il", .pinCurrent),
-            .action("Forget rule for ynet.co.il", .forgetCurrent, enabled: false),
+        XCTAssertEqual(lines([], defaultBehavior: .switchTo(IDs.abc), current: IDs.abc)[0...1], [
+            .header("ynet.co.il · English"),
+            .info("No rule yet, so the default applies"),
         ])
     }
 
     func testNoRule() {
         XCTAssertEqual(lines([]), [
-            .info("ynet.co.il (Zen): no rule"),
-            .action("Always use Hebrew on ynet.co.il", .pinCurrent),
-            .action("Forget rule for ynet.co.il", .forgetCurrent, enabled: false),
+            .header("ynet.co.il · Hebrew"),
+            .info("No rule yet"),
+            .action("Always Use Hebrew on ynet.co.il", .pinCurrent),
+            .action("Forget Rule for ynet.co.il", .forgetCurrent, enabled: false),
+            dont(),
         ])
     }
 
     func testPrivateWindow() {
-        XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)], private: true), [
-            .info("ynet.co.il (Zen, private): Hebrew (learned)"),
-            .action("Always use Hebrew on ynet.co.il", .pinCurrent),
-            .action("Forget rule for ynet.co.il", .forgetCurrent),
-        ])
-        XCTAssertEqual(lines([], private: nil)[0], .info("ynet.co.il (Zen): no rule"), "unknown is not private")
-        XCTAssertEqual(lines([], private: false)[0], .info("ynet.co.il (Zen): no rule"))
+        XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)], private: true)[0], .header("ynet.co.il · Hebrew (private)"))
+        XCTAssertEqual(lines([], private: nil)[0], .header("ynet.co.il · Hebrew"), "unknown is not private")
+        XCTAssertEqual(lines([], private: false)[0], .header("ynet.co.il · Hebrew"))
     }
 
     func testNotAWebPageUsesTheAppForm() {
         XCTAssertEqual(lines([.app(zen, IDs.abc, .pinned)], host: nil, domain: nil, page: .notWebPage,
                              current: IDs.abc), [
-            .info("Zen: English (pinned)"),
-            .action("Always use English in Zen", .pinCurrent, enabled: false, checked: true),
-            .action("Forget rule for Zen", .forgetCurrent),
+            .header("Zen · English"),
+            .info("Always English (you chose this)"),
+            .action("Always Use English in Zen", .unpinCurrent, checked: true),
+            .action("Forget Rule for Zen", .forgetCurrent),
+            dont(),
         ])
     }
 
     func testUnknownWithNoSiteUsesTheAppForm() {
-        XCTAssertEqual(lines([], host: nil, domain: nil, page: .unknown), [
-            .info("Zen: no rule"),
-            .action("Always use Hebrew in Zen", .pinCurrent),
-            .action("Forget rule for Zen", .forgetCurrent, enabled: false),
+        XCTAssertEqual(lines([], host: nil, domain: nil, page: .unknown)[0...3], [
+            .header("Zen · Hebrew"),
+            .info("No rule yet"),
+            .action("Always Use Hebrew in Zen", .pinCurrent),
+            .action("Forget Rule for Zen", .forgetCurrent, enabled: false),
         ])
     }
 
     func testUnknownOrEditingWithAKeptSiteUsesTheSiteForm() {
-        XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)], page: .unknown)[0],
-                       .info("ynet.co.il (Zen): Hebrew (learned)"))
-        XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)], page: .editingAddress)[2],
-                       .action("Forget rule for ynet.co.il", .forgetCurrent))
+        XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)], page: .unknown)[0], .header("ynet.co.il · Hebrew"))
+        XCTAssertEqual(lines([site("ynet.co.il", IDs.hebrew)], page: .editingAddress)[3],
+                       .action("Forget Rule for ynet.co.il", .forgetCurrent))
     }
 
     func testNoPageStateMeansNoSiteForm() {
-        // pageState nil = not a watched browser: never the "(Browser)" site form.
-        XCTAssertFalse(lines([], page: nil)[0].title.contains("(Zen"))
+        // pageState nil = not a watched browser: the app form.
+        XCTAssertEqual(lines([], private: true, page: nil)[0], .header("ynet.co.il · Hebrew"), "no (private) marker")
+        XCTAssertTrue(lines([], page: nil)[2].title.hasSuffix(" in ynet.co.il"), "the app form says in, not on")
     }
 
     // MARK: - Unicode display (D13)
 
     func testPunycodeHostsAreShownInUnicode() {
         let idn = "xn--9dbne9b.co.il"
-        XCTAssertEqual(lines([site(idn, IDs.hebrew)], host: "www." + idn, domain: idn), [
-            .info("שלום.co.il (Zen): Hebrew (learned)"),
-            .action("Always use Hebrew on שלום.co.il", .pinCurrent),
-            .action("Forget rule for שלום.co.il", .forgetCurrent),
+        XCTAssertEqual(lines([site(idn, IDs.hebrew)], host: "www." + idn, domain: idn)[0...3], [
+            .header("שלום.co.il · Hebrew"),
+            .info("Remembered from your switches"),
+            .action("Always Use Hebrew on שלום.co.il", .pinCurrent),
+            .action("Forget Rule for שלום.co.il", .forgetCurrent),
         ])
     }
 
     func testAnOldUnicodeRuleIsStillCheckedAsThePin() {
         let idn = "xn--9dbne9b.co.il"
         let out = lines([site("שלום.co.il", IDs.hebrew, .pinned)], host: "www." + idn, domain: idn)
-        XCTAssertEqual(out[1], .action("Always use Hebrew on שלום.co.il", .pinCurrent, enabled: false, checked: true))
+        XCTAssertEqual(out[2], .action("Always Use Hebrew on שלום.co.il", .unpinCurrent, checked: true))
     }
 
     func testScopeNameShowsUnicode() {
@@ -158,7 +170,7 @@ final class SiteMenuModelTests: XCTestCase {
     }
 
     func testNoCurrentSourceDisablesPinOnASite() {
-        XCTAssertEqual(lines([], current: nil)[1],
-                       .action("Always use this language on ynet.co.il", .pinCurrent, enabled: false))
+        XCTAssertEqual(lines([], current: nil)[2],
+                       .action("Always Use This Language on ynet.co.il", .pinCurrent, enabled: false))
     }
 }

@@ -68,8 +68,8 @@ final class BrowsersSettingsModelTests: XCTestCase {
         sut.refresh()
         XCTAssertEqual(try row(zen).engineText, "Firefox-based")
         XCTAssertEqual(try row(chrome).engineText, "Chromium-based")
-        XCTAssertEqual(try row(safari).engineText, "Safari-based · not yet tested")
-        XCTAssertEqual(try row(edge).engineText, "Chromium-based · not yet tested")
+        XCTAssertEqual(try row(safari).engineText, "Safari-based · not tested yet")
+        XCTAssertEqual(try row(edge).engineText, "Chromium-based · not tested yet")
         XCTAssertEqual(try row(other).engineText, "Other browser (best effort)")
     }
 
@@ -93,7 +93,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
         }
         support[zen] = .notSeenYet
         sut.refresh()
-        XCTAssertEqual(try row(zen).statusHint, "Open Zen and visit a website to check.")
+        XCTAssertEqual(try row(zen).statusHint, "Open Zen and visit any website.")
     }
 
     func testCantReadPointsToAutomationOnlyWhereItExists() throws {
@@ -284,18 +284,20 @@ final class BrowsersSettingsModelTests: XCTestCase {
     }
 
     func testTheOwnersNotesAreThere() {
-        XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("Safari"))
-        // P3-30: English only (the shield button is no signal any more); the detection line names each browser.
-        XCTAssertTrue(BrowsersSettingsModel.safariPrivateNote.contains("English"))
-        XCTAssertFalse(BrowsersSettingsModel.safariPrivateNote.contains("any language"))
-        for name in ["Chrome", "Arc", "Automation", "Tor Browser", "Zen"] {
-            XCTAssertTrue(BrowsersSettingsModel.privateDetectionText.contains(name), name)
+        // P3-30: Safari's private windows by the English title only (the shield button is no signal any more).
+        // P6-0c (copy review B-5): one private-window line per browser, in its status.
+        let note = { (id: String) in
+            BrowsersSettingsModel.privateWindowNote(bundleID: id, engine: BrowserCatalog.known[id]?.engine ?? .unknown)
         }
-        XCTAssertEqual(BrowsersSettingsModel.skipNote,
-                       "Some browsers don't support every option; Kytkin skips what a browser can't do.")
-        XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Use Automation when a browser can't be read")
-        XCTAssertTrue(BrowsersSettingsModel.groupingText.contains("gov.il"))
-        XCTAssertTrue(BrowsersSettingsModel.privateExplanation.contains("doesn't read their address"))
+        XCTAssertTrue(note("com.google.Chrome")?.contains("Chrome is in English or Hebrew") == true)
+        XCTAssertTrue(note("company.thebrowser.Browser")?.contains("only with Automation") == true)
+        XCTAssertTrue(note("org.torproject.torbrowser")?.contains("every window") == true)
+        XCTAssertTrue(note("app.zen-browser.zen")?.contains("can't tell") == true)
+        XCTAssertTrue(note("com.apple.Safari")?.contains("when Safari is in English") == true)
+        XCTAssertFalse(note("com.apple.Safari")?.contains("any language") == true)
+        XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Ask the browser for the page address (Automation)")
+        XCTAssertTrue(BrowsersSettingsModel.groupingText.contains("news.ynet.co.il"))
+        XCTAssertTrue(BrowsersSettingsModel.privateExplanation.contains("doesn't look at their address"))
         XCTAssertEqual(BrowsersSettingsModel.privateToggleTitle, "Don't use website rules in private windows")
     }
 }

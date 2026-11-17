@@ -64,12 +64,12 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
         let status = baseStatus(state)
         return PermissionRow(
             pane: .accessibility, title: "Accessibility", status: status, statusText: text(for: status),
-            enables: "Lets Kytkin fix text you typed in the wrong language when you press Shift twice.",
+            // P6-0c (copy review P-1, P1): every use, the website one too (the page address is read through it).
+            enables: "Lets Kytkin read and replace the text you convert, and see which website you're on.",
+            // P6-0c (P-2): website rules need it too (the browser watch attaches only with Accessibility).
             withoutIt: status == .granted ? nil
-                // QA (P2-26): without Accessibility, Shift twice only switches the language if Input Monitoring
-                // is allowed (001 §6.2); with neither it does nothing.
-                : "Without it, pressing Shift twice can't fix text (with Input Monitoring it still switches the "
-                    + "language). Switching the language for each app still works.",
+                : "Without it, Kytkin still switches the language for each app, but double-Shift and website rules "
+                    + "don't work.",
             hint: requestHint(state: state, pane: "Accessibility", appName: appName),
             showsGrant: showsButtons(state), grantTitle: "Allow Accessibility…",
             showsOpenSettings: showsButtons(state), showsQuitAndReopen: false)
@@ -91,15 +91,14 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
         case .notNeeded: nil
         default: requestHint(state: state, pane: "Input Monitoring", appName: appName)
         }
-        let withoutIt: String? = switch status {
-        case .granted, .needsRelaunch, .notNeeded: nil
-        case .checking, .notGranted: "Without it or Accessibility, pressing Shift twice does nothing. "
-            + "Switching the language for each app still works."
-        }
+        // P6-0c (copy review P-4): the "why" already says it's a backup.
+        let withoutIt: String? = nil
         return PermissionRow(
-            pane: .inputMonitoring, title: "Input Monitoring", status: status, statusText: text(for: status),
-            enables: "A backup for when Accessibility is off: Kytkin can still notice Shift pressed twice and "
-                + "learn from your typing (words are kept in memory only, never saved).",
+            pane: .inputMonitoring, title: "Input Monitoring", status: status,
+            // P6-0c (visual review P2): optional, so never a red "Not allowed".
+            statusText: status == .notGranted ? "Optional" : text(for: status),
+            // P6-0c (copy review P-3, P1): v1 learns nothing from typed words; it's only a double-Shift backup.
+            enables: "Usually not needed. A backup so Kytkin can notice double-Shift when Accessibility is off.",
             withoutIt: withoutIt,
             hint: hint,
             showsGrant: buttons, grantTitle: "Allow Input Monitoring…",
@@ -122,8 +121,9 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
     /// After the user clicked "Allow…" (state reads `.denied` until they switch it on).
     private static func requestHint(state: PermissionState, pane: String, appName: String) -> String? {
         guard state == .denied else { return nil }
-        return "Waiting for you: in System Settings → Privacy & Security → \(pane), turn on “\(appName)”. "
-            + "If it isn't in the list, click + under the list and choose \(appName)."
+        // P6-0c (copy review P-6).
+        return "Waiting… In System Settings → Privacy & Security → \(pane), turn on \(appName). "
+            + "Not in the list? Click + and choose \(appName)."
     }
 
     static func text(for status: Status) -> String {
@@ -131,7 +131,7 @@ struct PermissionRow: Equatable, Sendable, Identifiable {
         case .checking: "Checking…"
         case .granted: "Allowed"
         case .notGranted: "Not allowed"
-        case .needsRelaunch: "Allowed, needs a restart of Kytkin"
+        case .needsRelaunch: "Allowed. Quit & Reopen Kytkin to use it."   // P6-0c (P-5)
         case .notNeeded: "Not needed (Accessibility covers it)"
         }
     }

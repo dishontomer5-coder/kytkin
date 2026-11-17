@@ -1,57 +1,75 @@
-// P2-23: The Settings window's content (001 §5.2): one SwiftUI TabView, hosted in an AppKit NSWindow by
-// SettingsWindowController (design.md: no SwiftUI `Settings` scene). Thin: every decision is in Core
-// (`SettingsTab`, `GeneralSettingsModel`, `AboutInfo`, … `PermissionsSettingsModel`).
+// P2-23: The Settings window's content (001 §5.2), hosted in an AppKit NSWindow by SettingsWindowController
+// (design.md: no SwiftUI `Settings` scene). Thin: every decision is in Core (`SettingsTab`, the tab models).
+// P6-0c (owner 2026-11-17, visual review X4): no SwiftUI TabView (inside an AppKit window it drew a segmented control
+// in the content and dropped the symbols). The window controller puts one `SettingsTabPane` per tab into an
+// `NSTabViewController` with toolbar-style tabs; `SettingsView` (the selected tab's pane) is what the headless
+// renderer draws.
 
 import SwiftUI
 
-struct SettingsView: View {
-    @Bindable var selection: SettingsSelection
+/// Everything the tab panes need.
+struct SettingsPanes {
+    let selection: SettingsSelection
     let general: GeneralSettingsModel
     let about: AboutInfo
-    let rules: RulesSettingsModel        // P2-25
-    let convert: ConvertSettingsModel    // P2-25
-    let apps: AppsSettingsModel          // P2-25
-    let permissions: PermissionsSettingsModel   // P2-26
-    let browsers: BrowsersSettingsModel         // P3-15
-    /// P3-15: About → "Open Settings Folder".
+    let rules: RulesSettingsModel
+    let convert: ConvertSettingsModel
+    let apps: AppsSettingsModel
+    let permissions: PermissionsSettingsModel
+    let browsers: BrowsersSettingsModel
+    /// Advanced → Diagnostics → "Open Settings Folder".
     let openSettingsFolder: @MainActor () -> Void
-    /// P2-26: General → "Show Welcome Again".
+    /// General → "Show Setup Again…".
     let showWelcome: @MainActor () -> Void
-    /// P2-26: the tab changed (the window controller turns the 1 s permission poll on or off).
-    let tabChanged: @MainActor () -> Void
+    /// Switches the window to another tab (Websites → "Open Setup", "Show in Rules").
+    let select: @MainActor (SettingsTab) -> Void
+}
+
+/// One tab's content, padded to the shared content inset (visual review X5).
+struct SettingsTabPane: View {
+    let tab: SettingsTab
+    let panes: SettingsPanes
+    /// The headless renderer's tall shots; nil = the window's fixed size.
+    var height: CGFloat? = nil
 
     /// A fixed size: grouped Forms scroll and have no natural height to size the window from.
-    static let size = CGSize(width: 680, height: 500)   // P3-15: eight tabs
+    static let size = CGSize(width: 680, height: 520)
 
     var body: some View {
-        TabView(selection: $selection.tab) {
-            ForEach(SettingsTab.allCases) { tab in
-                content(for: tab)
-                    .tabItem { Label(tab.title, systemImage: tab.symbolName) }
-                    .tag(tab)
-            }
-        }
-        .padding(20)
-        .frame(width: Self.size.width, height: Self.size.height)
-        .onChange(of: selection.tab) { tabChanged() }
+        content
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .frame(width: Self.size.width, height: height ?? Self.size.height)
     }
 
-    @ViewBuilder private func content(for tab: SettingsTab) -> some View {
+    @ViewBuilder private var content: some View {
         switch tab {
-        case .general: GeneralSettingsView(model: general, showWelcome: showWelcome)
-        case .about: AboutSettingsView(info: about, openSettingsFolder: openSettingsFolder)
-        case .languages: LanguagesSettingsView()   // P2-24: its model comes from the environment
-        case .rules: RulesSettingsView(model: rules)
-        case .convert: ConvertSettingsView(model: convert)
-        case .apps: AppsSettingsView(model: apps)
-        case .permissions: PermissionsSettingsView(model: permissions)   // P2-26
-        case .browsers:   // P3-15
-            BrowsersSettingsView(model: browsers,
-                                 openPermissions: { selection.tab = .permissions },
+        case .general:
+            GeneralSettingsView(model: panes.general, permissions: panes.permissions, showWelcome: panes.showWelcome)
+        case .rules: RulesSettingsView(model: panes.rules)
+        case .doubleShift: ConvertSettingsView(model: panes.convert)
+        case .websites:
+            BrowsersSettingsView(model: panes.browsers,
+                                 openPermissions: { panes.select(.general) },
                                  showWebsiteRules: {
-                                     rules.kindFilter = .websites
-                                     selection.tab = .rules
+                                     panes.rules.kindFilter = .websites
+                                     panes.select(.rules)
                                  })
+        case .advanced:
+            AdvancedSettingsView(selection: panes.selection, apps: panes.apps, permissions: panes.permissions,
+                                 openSettingsFolder: panes.openSettingsFolder)
+        case .about: AboutSettingsView(info: panes.about)
         }
+    }
+}
+
+/// The selected tab's pane (the headless renderer; the real window uses one pane per toolbar tab).
+struct SettingsView: View {
+    let panes: SettingsPanes
+
+    static var size: CGSize { SettingsTabPane.size }
+
+    var body: some View {
+        SettingsTabPane(tab: panes.selection.tab, panes: panes)
     }
 }

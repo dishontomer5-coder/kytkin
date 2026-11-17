@@ -56,11 +56,18 @@ final class AppsSettingsModelTests: XCTestCase {
     func testMethodOptionsShowTheBuiltInChoiceAsDefault() {
         make([chrome: .init()])
         let options = sut.methodOptions(for: sut.rows[0])
-        XCTAssertEqual(options.map(\.id), ["default", "auto", "keysOnly", "noUnicode", "preferPaste", "terminal"])
-        XCTAssertEqual(options[0].title, "Default (Keys only)")
+        // P6-0c (copy review A-4, B4): "Prefer paste" (does nothing yet) is hidden; Kytkin's own choice is "Automatic"
+        // (Chrome's built-in Keys only may use the clipboard, so "Keys only" was wrong there).
+        XCTAssertEqual(options.map(\.id), ["default", "auto", "keysOnly", "noUnicode", "terminal"])
+        XCTAssertEqual(options[0].title, "Default (Automatic)")
         XCTAssertNil(options[0].method)
-        XCTAssertTrue(options[4].title.contains("coming later"))
-        XCTAssertEqual(AppMethodOption.options(for: notes)[0].title, "Default (Auto)")
+        XCTAssertEqual(options.map(\.title).dropFirst(), ["Automatic", "Type the new text", "Type key by key", "Terminal"])
+        XCTAssertEqual(AppMethodOption.options(for: notes)[0].title, "Default (Automatic)")
+        // A file that already holds "Prefer paste" keeps it listed, so the picker never goes blank.
+        XCTAssertTrue(AppMethodOption.options(for: notes, current: .preferPaste).contains { $0.id == "preferPaste" })
+        // The built-in choice never promises "no clipboard"; a user's own "Type the new text" does.
+        XCTAssertEqual(AppMethodOption.explanation(of: .keysOnly, userChosen: false), AppMethodOption.automaticText)
+        XCTAssertTrue(AppMethodOption.explanation(of: .keysOnly, userChosen: true).contains("never uses the clipboard"))
     }
 
     // MARK: - Terminals (P2-25 QA, 001 §12 T1)
@@ -137,8 +144,8 @@ final class AppsSettingsModelTests: XCTestCase {
         XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .keysOnly])
         sut.setMethod("noUnicode", for: notes)
         XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .noUnicode])
-        sut.setMethod("preferPaste", for: notes)
-        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .preferPaste])
+        sut.setMethod("preferPaste", for: notes)   // P6-0c: not offered any more, so ignored
+        XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .noUnicode])
         sut.setMethod("terminal", for: notes)
         XCTAssertEqual(PreferencesMapping.methodHintOverrides(apps), [notes: .terminal])
         XCTAssertEqual(sut.rows[0].effectiveMethod, .terminal, "any app can be made a terminal")

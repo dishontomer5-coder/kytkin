@@ -21,11 +21,11 @@ struct LanguagePairOption: Identifiable, Equatable, Sendable {
         /// The picker's section header.
         var groupTitle: String {
             switch self {
-            case .enabled: "Turned on"
+            case .enabled: "In your Keyboard settings"   // P6-0c (copy review L-3)
             case .imported: "Imported"
-            case .installed: "Other installed layouts (convert only)"
+            case .installed: "On this Mac, not added (convert only)"
             case .inputMethod: "Can't convert"
-            case .missing: "Not available"
+            case .missing: "Missing"
             }
         }
     }
@@ -66,13 +66,13 @@ struct LanguagePairOption: Identifiable, Equatable, Sendable {
             let source = inputSource(info.id)
             if !systemIDs.contains(info.id) {
                 let base = source.map(baseName) ?? "?"
-                let suffix = info.isEnabled ? "types with \(base)" : "\(base) isn't turned on"
+                let suffix = info.isEnabled ? "types with \(base)" : "\(base) not added"   // P6-0c (L-4)
                 result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(name(info)) (imported, \(suffix))",
                                                  kind: .imported, inputSource: source))
             } else if info.isEnabled {
                 result.append(LanguagePairOption(id: info.id, name: name(info), title: name(info), kind: .enabled, inputSource: source))
             } else {
-                result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(name(info)) (not turned on)",
+                result.append(LanguagePairOption(id: info.id, name: name(info), title: "\(name(info)) (not added)",
                                                  kind: .installed, inputSource: source))
             }
         }

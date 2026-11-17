@@ -1,4 +1,5 @@
-// P2-23: The Settings window (001 §2.2 UI): one AppKit NSWindow hosting the SwiftUI `SettingsView` through
+// P2-23: The Settings window (001 §2.2 UI): one AppKit NSWindow; P6-0c: an `NSTabViewController` with toolbar-style
+// tabs (icon over title), each tab a SwiftUI `SettingsTabPane` in its own
 // NSHostingController. design.md / R8: no SwiftUI `Settings` scene or `MenuBarExtra` (`SettingsLink` opens behind
 // other windows in a menu-bar app).
 //
@@ -8,7 +9,7 @@
 //   `activate(ignoringOtherApps:)` if the window didn't get the keyboard; hide Kytkin when its last window closes, so
 //   macOS activates the app you were in). That resign is what AppController handles (P2-39 / P2-52 item 1).
 //   ⌘W (hidden main menu) and Esc (`KytkinWindow`) close it.
-// - P2-26: while the Permissions tab is showing in an open window, the permission poll runs every 1 s.
+// - P2-26: while the permission rows show (P6-0c: General or Advanced) in an open window, the poll runs every 1 s.
 //   P3-12 (P2-63): and only while that window is on screen: not while Kytkin is hidden or other windows fully
 //   cover it (the window's occlusion state; the poll resumes, with a fresh read, when it shows again).
 // - Kytkin's own window is not a context (001 §12 W2): ContextMonitor ignores it; AppController hears about it
@@ -23,6 +24,7 @@ import SwiftUI
     private let about: AboutInfo
     private let tabs: TabModels   // P2-24, P2-25
     private var window: NSWindow?
+    private var tabController: SettingsTabController?
 
     /// P2-24 Languages (via the environment) and P2-25 Rules, Convert and Apps.
     struct TabModels {
@@ -64,10 +66,10 @@ import SwiftUI
 
     /// Opens Settings on `tab`, or switches an open window to it, and brings it to the front.
     func show(tab: SettingsTab) {
-        selection.tab = tab
         general.refresh()          // fresh login-item status and layout list (R8: don't cache the status)
         refreshTabs()
         let window = self.window ?? makeWindow()
+        select(tab)
         WindowPresenter.show(window)   // P2-56
         tabs.permissions.setCovered(false)   // P3-12: just brought to the front; occlusion changes follow
         updatePermissionsPolling()
@@ -79,29 +81,54 @@ import SwiftUI
         tabs.permissions.reload()
     }
 
-    /// P2-26: the 1 s permission poll runs only while the Permissions tab shows in an open window.
+    /// P2-26: the 1 s permission poll runs only while the permission rows show in an open window. P6-0c: they are
+    /// General's setup section and Advanced → Diagnostics.
     private func updatePermissionsPolling() {
-        tabs.permissions.setVisible(isOpen && selection.tab == .permissions)
+        tabs.permissions.setVisible(isOpen && (selection.tab == .general || selection.tab == .advanced))
+    }
+
+    /// P6-0c: the toolbar and `selection` always agree.
+    private func select(_ tab: SettingsTab) {
+        selection.tab = tab
+        if let index = SettingsTab.allCases.firstIndex(of: tab), tabController?.selectedTabViewItemIndex != index {
+            tabController?.selectedTabViewItemIndex = index
+        }
+        updatePermissionsPolling()
     }
 
     private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: SettingsView(selection: selection, general: general, about: about,
-                                                                 rules: tabs.rules, convert: tabs.convert,
-                                                                 apps: tabs.apps, permissions: tabs.permissions,
-                                                                 browsers: tabs.browsers,
-                                                                 openSettingsFolder: openSettingsFolder,
-                                                                 showWelcome: showWelcome,
-                                                                 tabChanged: { [weak self] in
-                                                                     self?.updatePermissionsPolling()
-                                                                 })
-            .environment(tabs.languages))   // P2-24: the Languages model goes through the environment
-        hosting.sizingOptions = []
-        let window = KytkinWindow(contentViewController: hosting)   // P2-56: Esc closes it
+        let panes = SettingsPanes(selection: selection, general: general, about: about, rules: tabs.rules,
+                                  convert: tabs.convert, apps: tabs.apps, permissions: tabs.permissions,
+                                  browsers: tabs.browsers, openSettingsFolder: openSettingsFolder,
+                                  showWelcome: showWelcome, select: { [weak self] in self?.select($0) })
+        // P6-0c (owner 2026-11-17, visual review X4): toolbar tabs, icon over title, one hosted pane per tab.
+        let controller = SettingsTabController()
+        controller.tabStyle = .toolbar
+        controller.canPropagateSelectedChildViewControllerTitle = false
+        for tab in SettingsTab.allCases {
+            let hosting = NSHostingController(rootView: SettingsTabPane(tab: tab, panes: panes)
+                .environment(tabs.languages))   // P2-24: the Languages model goes through the environment
+            hosting.sizingOptions = []
+            hosting.preferredContentSize = SettingsTabPane.size
+            let item = NSTabViewItem(viewController: hosting)
+            item.label = tab.title
+            item.image = NSImage(systemSymbolName: tab.symbolName, accessibilityDescription: tab.title)
+            controller.addTabViewItem(item)
+        }
+        controller.didSelect = { [weak self] index in
+            guard let self, SettingsTab.allCases.indices.contains(index) else { return }
+            let tab = SettingsTab.allCases[index]
+            if self.selection.tab != tab { self.selection.tab = tab }
+            self.updatePermissionsPolling()
+        }
+        tabController = controller
+        let window = KytkinWindow(contentViewController: controller)   // P2-56: Esc closes it
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
         // nowhere) and skips windowWillClose, so Kytkin never hides; Settings windows don't minimize anyway.
         window.styleMask = [.titled, .closable]
         window.title = "Kytkin Settings"
-        window.setContentSize(SettingsView.size)
+        window.toolbarStyle = .preference
+        window.setContentSize(SettingsTabPane.size)
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert(.moveToActiveSpace)   // open on the Space you're on, not jump away
         window.delegate = self
@@ -136,5 +163,15 @@ import SwiftUI
         tabs.permissions.setVisible(false)
         tabs.rules.settingsClosed()   // P3-24
         if let window { WindowPresenter.willClose(window) }
+    }
+}
+
+/// P6-0c: reports toolbar clicks so the window controller can keep `SettingsSelection` and the permission poll in step.
+@MainActor final class SettingsTabController: NSTabViewController {
+    var didSelect: ((Int) -> Void)?
+
+    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        if let tabViewItem { didSelect?(tabView.indexOfTabViewItem(tabViewItem)) }
     }
 }

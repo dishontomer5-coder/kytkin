@@ -94,7 +94,7 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         XCTAssertEqual(try row(chrome).automationStatusText, "Allowed")
         XCTAssertNil(try row(chrome).automationState?.actionTitle())
         XCTAssertEqual(try row(arc).automationState?.actionTitle(), "Open System Settings")
-        XCTAssertTrue(try XCTUnwrap(row(arc).automationStatusText).hasPrefix("Denied."))
+        XCTAssertTrue(try XCTUnwrap(row(arc).automationStatusText).hasPrefix("Not allowed."))
         XCTAssertEqual(try row(safari).automationState?.actionTitle(), "Ask")
         XCTAssertEqual(try row(safari).automationState?.actionEnabled, false, "Ask needs the browser running")
         XCTAssertEqual(try row(safari).automationStatusText, "Not asked yet. Open Safari, then click Ask.")

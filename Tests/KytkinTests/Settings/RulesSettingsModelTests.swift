@@ -73,7 +73,7 @@ final class RulesSettingsModelTests: XCTestCase {
         sut.sortOrder = .name
         let rows = sut.rows
         XCTAssertEqual(rows.map(\.name), ["docs.google.com", "Slack chat", "Slack chat 1", "ynet.co.il"])
-        XCTAssertEqual(rows.map(\.kindTitle), ["Website, only this address", "Chat", "Chat", "Website"])
+        XCTAssertEqual(rows.map(\.kindTitle), ["Part of a website", "Chat", "Chat", "Website"])
         XCTAssertEqual(rows[1].detail, "Slack")
     }
 

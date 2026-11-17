@@ -12,7 +12,7 @@ struct AppsSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingsNoticeList(notices: model.notices)
+            ForEach(model.notices) { WarningLabel(text: $0.message) }
             let rows = model.rows
             if rows.isEmpty {
                 Text(model.emptyText)
@@ -23,31 +23,36 @@ struct AppsSettingsView: View {
                 Form {
                     ForEach(rows) { row in
                         Section {
-                            Toggle("Kytkin works in this app", isOn: Binding(
-                                get: { row.kytkinOn }, set: { model.setKytkinOn($0, for: row.bundleID) }))
-                            Text(AppsSettingsModel.kytkinOffText).font(.caption).foregroundStyle(.secondary)
-                            Toggle("Convert with double-Shift", isOn: Binding(
-                                get: { row.convertOn }, set: { model.setConvertOn($0, for: row.bundleID) }))
-                                .disabled(!row.kytkinOn)
-                            Text(AppsSettingsModel.convertOffText).font(.caption).foregroundStyle(.secondary)
-                            Picker("How Kytkin replaces text", selection: Binding(
-                                get: { row.methodID }, set: { model.setMethod($0, for: row.bundleID) })) {
-                                ForEach(model.methodOptions(for: row)) { Text($0.title).tag($0.id) }
+                            // P6-0c (visual review A1, A2): explanations in their rows; the rows that depend on
+                            // "Kytkin works in this app" show only while it is on.
+                            Toggle(isOn: Binding(get: { row.kytkinOn },
+                                                 set: { model.setKytkinOn($0, for: row.bundleID) })) {
+                                RowLabel("Kytkin works in this app", subtitle: AppsSettingsModel.kytkinOffText)
                             }
-                            .disabled(!row.kytkinOn || !row.convertOn)
-                            Text(AppMethodOption.explanation(of: row.effectiveMethod))
-                                .font(.caption).foregroundStyle(.secondary)
-                        } header: {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(row.name).font(.headline)
-                                    if let detail = row.detail {
-                                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                            if row.kytkinOn {
+                                Toggle(isOn: Binding(get: { row.convertOn },
+                                                     set: { model.setConvertOn($0, for: row.bundleID) })) {
+                                    RowLabel("Convert with double-Shift", subtitle: AppsSettingsModel.convertOffText)
+                                }
+                                if row.convertOn {
+                                    Picker(selection: Binding(get: { row.methodID },
+                                                              set: { model.setMethod($0, for: row.bundleID) })) {
+                                        ForEach(model.methodOptions(for: row)) { Text($0.title).tag($0.id) }
+                                    } label: {
+                                        RowLabel("How double-Shift changes text", subtitle: AppMethodOption.explanation(
+                                            of: row.effectiveMethod, userChosen: row.methodID != AppMethodOption.defaultID))
                                     }
                                 }
+                            }
+                        } header: {
+                            HStack {
+                                // P6-0c (copy review A-1): the app's name; its bundle ID only as a tooltip.
+                                Text(row.name).font(.headline).help(row.detail ?? "")
                                 Spacer()
-                                Button("Remove") { model.remove(row.bundleID) }
-                                    .help("Use Kytkin's defaults for this app again")
+                                Button { model.remove(row.bundleID) } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.borderless)
+                                    .help("Use the usual settings for this app again")
+                                    .accessibilityLabel("Remove \(row.name)")
                                     .disabled(!model.isEditable)
                             }
                         }
@@ -69,7 +74,7 @@ struct AppsSettingsView: View {
                 .fixedSize()
                 Button("Choose App…") { chooseApp() }
                 if let chooseError {
-                    Text(chooseError).font(.caption).foregroundStyle(.red)
+                    StatusLabel(text: chooseError, symbol: "xmark.circle.fill", tint: .red)
                 }
                 Spacer()
             }
@@ -91,7 +96,7 @@ struct AppsSettingsView: View {
         if let id = Bundle(url: url)?.bundleIdentifier, model.addApp(bundleID: id) {
             chooseError = nil
         } else {
-            chooseError = "That app can't be added."
+            chooseError = "That app can't be added. Choose an app from the Applications folder."
         }
     }
 }

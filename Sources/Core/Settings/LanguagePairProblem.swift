@@ -13,9 +13,11 @@ enum LanguagePairProblem: Equatable, Sendable {
     var message: String {
         switch self {
         case .sameLanguage: "Choose two different languages."
-        case .notConvertible(let name): "\(name) can't be used for converting. Choose a keyboard layout."
+        // P6-0c (copy review L-5, L-6): no "keyboard layout" / "input method" jargon.
+        case .notConvertible(let name):
+            "\(name) can't be converted, because it's not a plain keyboard (like Pinyin). Choose another language."
         case .sameKeyboard(let name):
-            "Both choices type with the \(name) keyboard, so there is nothing to convert. Choose two different keyboards."
+            "Both use the \(name) keyboard, so there's nothing to convert. Choose two different languages."
         }
     }
 

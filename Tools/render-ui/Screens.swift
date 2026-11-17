@@ -121,14 +121,24 @@ import SwiftUI
         return s
     }()
 
-    private func settingsView(_ w: World, tab: SettingsTab) -> some View {
-        SettingsView(selection: SettingsSelection(tab: tab), general: w.general, about: w.about, rules: w.rules,
-                     convert: w.convert, apps: w.apps, permissions: w.permissionsTab, browsers: w.browsers,
-                     openSettingsFolder: {}, showWelcome: {}, tabChanged: {})
-            .environment(w.languages)
-            .overlay(alignment: .top) {   // the tab buttons NSTabView can't draw offscreen (MenuMock.swift)
-                TabStripOverlay(selected: tab).padding(.horizontal, 26).padding(.top, 18)
-            }
+    private func panes(_ w: World, tab: SettingsTab, advanced: AdvancedSection = .apps) -> SettingsPanes {
+        SettingsPanes(selection: SettingsSelection(tab: tab, advancedSection: advanced), general: w.general,
+                      about: w.about, rules: w.rules, convert: w.convert, apps: w.apps, permissions: w.permissionsTab,
+                      browsers: w.browsers, openSettingsFolder: {}, showWelcome: {}, select: { _ in })
+    }
+
+    /// P6-0c: the window's toolbar tabs can't be drawn offscreen (they are window chrome), so a stand-in of the same
+    /// icons and titles sits above the real tab pane (MenuMock.swift).
+    private func settingsView(_ w: World, tab: SettingsTab, advanced: AdvancedSection = .apps) -> some View {
+        VStack(spacing: 0) {
+            ToolbarTabsMock(selected: tab)
+            SettingsView(panes: panes(w, tab: tab, advanced: advanced))
+                .environment(w.languages)
+        }
+    }
+
+    private func settingsSize(height: CGFloat? = nil) -> CGSize {
+        CGSize(width: SettingsView.size.width, height: (height ?? SettingsView.size.height) + ToolbarTabsMock.height)
     }
 
     // MARK: - Render everything
@@ -145,40 +155,57 @@ import SwiftUI
     private func renderSettings(_ r: Renderer) throws {
         let w = try world(support: [SampleIDs.safari: .works, SampleIDs.chrome: .worksWithAutomation,
                                     SampleIDs.zen: .notSeenYet])
-        let size = SettingsView.size
+        let size = settingsSize()
         for tab in SettingsTab.allCases {
             try r.render("settings-\(tab.rawValue)", size: size, inWindow: tab == .rules) { settingsView(w, tab: tab) }
         }
-
-        // The tabs whose grouped Form scrolls in the 680×500 window, drawn tall so nothing is cut off.
-        let tall: [(SettingsTab, CGFloat)] = [(.languages, 490), (.rules, 600), (.convert, 660), (.apps, 1020),
-                                              (.browsers, 800)]
-        for (tab, height) in tall {
-            try r.render("settings-\(tab.rawValue)-full", size: CGSize(width: size.width, height: height),
-                         inWindow: tab == .rules) {
-                tabContent(w, tab: tab).padding(20)
+        for section in AdvancedSection.allCases where section != .apps {
+            try r.render("settings-advanced-\(section.rawValue)", size: size) {
+                settingsView(w, tab: .advanced, advanced: section)
             }
         }
 
-        // Browsers & Sites with Automation on, Chrome chosen and allowed.
+        // The tabs whose grouped Form scrolls in the window, drawn tall so nothing is cut off.
+        let tall: [(SettingsTab, CGFloat)] = [(.general, 760), (.doubleShift, 640), (.websites, 820)]
+        for (tab, height) in tall {
+            try r.render("settings-\(tab.rawValue)-full", size: settingsSize(height: height)) {
+                VStack(spacing: 0) {
+                    ToolbarTabsMock(selected: tab)
+                    SettingsTabPane(tab: tab, panes: panes(w, tab: tab), height: height).environment(w.languages)
+                }
+            }
+        }
+        try r.render("settings-advanced-apps-full", size: settingsSize(height: 900)) {
+            VStack(spacing: 0) {
+                ToolbarTabsMock(selected: .advanced)
+                SettingsTabPane(tab: .advanced, panes: panes(w, tab: .advanced), height: 900).environment(w.languages)
+            }
+        }
+
+        // Websites with Automation on, Chrome chosen and allowed.
         var auto = Sample.preferences()
         auto.browsers.useAutomation = true
         let wa = try world(prefs: auto, support: [SampleIDs.chrome: .worksWithAutomation],
                            automation: [SampleIDs.chrome: .granted])
         wa.browsers.selectedBrowserID = SampleIDs.chrome
-        try r.render("settings-browsers-chrome-automation", size: size) { settingsView(wa, tab: .browsers) }
+        try r.render("settings-websites-chrome-automation", size: size) { settingsView(wa, tab: .websites) }
         // Zen (Firefox-based, no Automation), not checked yet.
         w.browsers.selectedBrowserID = SampleIDs.zen
-        try r.render("settings-browsers-zen", size: size) { settingsView(w, tab: .browsers) }
+        try r.render("settings-websites-zen", size: size) { settingsView(w, tab: .websites) }
 
-        // Permissions missing: Accessibility off, Secure Input on, conflicts.
+        // Setup needs attention: Accessibility off, Secure Input on, conflicts.
         let wt = try world(state: Self.troubledState)
-        try r.render("settings-permissions-missing", size: size) { settingsView(wt, tab: .permissions) }
-        try r.render("settings-permissions-missing-full", size: CGSize(width: size.width, height: 740)) {
-            tabContent(wt, tab: .permissions).padding(20)
+        try r.render("settings-general-setup-missing", size: settingsSize(height: 900)) {
+            VStack(spacing: 0) {
+                ToolbarTabsMock(selected: .general)
+                SettingsTabPane(tab: .general, panes: panes(wt, tab: .general), height: 900).environment(wt.languages)
+            }
+        }
+        try r.render("settings-advanced-diagnostics-troubled", size: size) {
+            settingsView(wt, tab: .advanced, advanced: .diagnostics)
         }
 
-        // Read-only preferences (a file from a newer Kytkin): the notice banners and disabled controls.
+        // Read-only preferences (a file from a newer Kytkin): the notice and disabled controls.
         let wr = try world(readOnly: true)
         try r.render("settings-general-readonly", size: size) { settingsView(wr, tab: .general) }
         try r.render("settings-rules-readonly", size: size, inWindow: true) { settingsView(wr, tab: .rules) }
@@ -188,25 +215,17 @@ import SwiftUI
         empty.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew)
         let we = try world(prefs: empty)
         try r.render("settings-rules-empty", size: size, inWindow: true) { settingsView(we, tab: .rules) }
-        try r.render("settings-apps-empty", size: size) { settingsView(we, tab: .apps) }
+        try r.render("settings-advanced-apps-empty", size: size) { settingsView(we, tab: .advanced) }
 
-        // A pair warning: Language B is installed but not turned on.
+        // A pair warning: the second language is on this Mac but not added.
         var badPair = Sample.preferences()
         badPair.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrewQWERTY)
         let wb = try world(prefs: badPair)
-        try r.render("settings-languages-warning", size: size) { settingsView(wb, tab: .languages) }
-    }
-
-    @ViewBuilder private func tabContent(_ w: World, tab: SettingsTab) -> some View {
-        switch tab {
-        case .general: GeneralSettingsView(model: w.general, showWelcome: {})
-        case .languages: LanguagesSettingsView().environment(w.languages)
-        case .rules: RulesSettingsView(model: w.rules)
-        case .convert: ConvertSettingsView(model: w.convert)
-        case .apps: AppsSettingsView(model: w.apps)
-        case .browsers: BrowsersSettingsView(model: w.browsers, openPermissions: {}, showWebsiteRules: {})
-        case .permissions: PermissionsSettingsView(model: w.permissionsTab)
-        case .about: AboutSettingsView(info: w.about, openSettingsFolder: {})
+        try r.render("settings-general-pair-warning", size: settingsSize(height: 760)) {
+            VStack(spacing: 0) {
+                ToolbarTabsMock(selected: .general)
+                SettingsTabPane(tab: .general, panes: panes(wb, tab: .general), height: 760).environment(wb.languages)
+            }
         }
     }
 
@@ -240,26 +259,40 @@ import SwiftUI
         var state = MenuState()
         state.accessibility = .notDetermined
         let w = try world(prefs: prefs, state: state)
-        let model = OnboardingModel(store: w.store, permissions: w.permissions, polling: w.polling, general: w.general,
-                                    languages: w.languages, appName: "Kytkin")
-        model.begin(firstLaunch: false)
-        let size = OnboardingView.size
-        func shot(_ name: String) throws {
-            try r.render(name, size: size) { OnboardingView(model: model, close: {}) }
+        let maps = try layouts().maps
+        let snapshot = maps[SampleIDs.abc].flatMap { a in maps[SampleIDs.hebrew].flatMap { b in
+            LayoutSnapshot(pair: LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew), a: a, b: b)
+        } }
+        func model(bundlePath: String = "/Applications/Kytkin.app") -> OnboardingModel {
+            OnboardingModel(store: w.store, permissions: w.permissions, polling: w.polling, general: w.general,
+                            languages: w.languages, appName: "Kytkin", bundlePath: bundlePath,
+                            layouts: { snapshot }, sourceName: { $0 == SampleIDs.hebrew ? "Hebrew" : "English" })
         }
-        try shot("onboarding-1-welcome")
-        model.next()
-        try shot("onboarding-2-languages")
-        model.next()
-        try shot("onboarding-3-accessibility")
-        model.grantAccessibility()   // the fake records nothing and asks nothing: the step shows "Waiting for you…"
-        try shot("onboarding-3-accessibility-waiting")
+        let m = model()
+        m.begin(firstLaunch: true)
+        let size = OnboardingView.size
+        func shot(_ name: String, _ m: OnboardingModel) throws {
+            try r.render(name, size: size) { OnboardingView(model: m, close: {}) }
+        }
+        try shot("onboarding-1-welcome", m)
+        m.next()
+        try shot("onboarding-2-permissions", m)
+        m.grantAccessibility()   // the fake records nothing and asks nothing: the step shows "Waiting…"
+        try shot("onboarding-2-permissions-waiting", m)
         w.permissions.status.grants.accessibility = .granted
-        model.reload()
-        try shot("onboarding-3-accessibility-granted")
-        model.next()
-        try shot("onboarding-4-finish")
-        model.finish()
+        m.reload()
+        try shot("onboarding-2-permissions-granted", m)
+        m.next()
+        try shot("onboarding-3-practice", m)
+        m.practiceText = "akuo"
+        m.practiceFocused = true
+        _ = m.practiceDoubleShift()
+        try shot("onboarding-3-practice-converted", m)
+        m.finish()
+
+        let moving = model(bundlePath: "/Volumes/Kytkin/Kytkin.app")
+        moving.begin(firstLaunch: true)
+        try shot("onboarding-0-move-to-applications", moving)
     }
 
     // MARK: - Menu-bar menu and label (SwiftUI stand-ins, MenuMock.swift)
@@ -324,12 +357,20 @@ import SwiftUI
         try r.render("menu-off-no-app", backdrop: desk) { MenuMock(items: storeItems) }
 
         let ok = Self.healthyState
+        var off = Self.healthyState
+        off.enabled = false
         let samples: [StatusLabelMock.Sample] = [
             .init(caption: "English (ABC) selected", label: MenuModel.label(languageCode: "en", state: ok)),
             .init(caption: "Hebrew selected", label: MenuModel.label(languageCode: "he", state: ok)),
-            .init(caption: "Hebrew, a warning applies (dot)", label: MenuModel.label(languageCode: "he", state: warn)),
-            .init(caption: "Paused (dot, dimmed)", label: MenuModel.label(languageCode: "en", state: paused)),
-            .init(caption: "Unknown input source", label: MenuModel.label(languageCode: nil, state: ok)),
+            .init(caption: "Hebrew, needs attention", label: MenuModel.label(languageCode: "he", state: warn)),
+            .init(caption: "Paused (dimmed)", label: MenuModel.label(languageCode: "en", state: paused)),
+            .init(caption: "Turned off (dimmed)", label: MenuModel.label(languageCode: "en", state: off)),
+            .init(caption: "Unknown language (icon only)", label: MenuModel.label(languageCode: nil, state: ok)),
+            .init(caption: "Icon only mode", label: MenuModel.label(languageCode: "he", state: ok, display: .iconOnly)),
+            .init(caption: "Language only mode",
+                  label: MenuModel.label(languageCode: "he", state: ok, display: .languageOnly)),
+            .init(caption: "Language only, needs attention",
+                  label: MenuModel.label(languageCode: "he", state: warn, display: .languageOnly)),
         ]
         try r.render("statusitem-labels", backdrop: desk) { StatusLabelMock(samples: samples) }
     }

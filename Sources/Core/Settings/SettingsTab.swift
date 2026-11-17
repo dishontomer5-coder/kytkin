@@ -1,57 +1,66 @@
-// P2-23: The tabs of the Settings window (001 §5.2), in the order they appear. General and About are built in P2-23;
-// the others show a one-line "coming soon" placeholder until their task lands (Languages P2-24, Rules/Apps/Convert
-// P2-25, Permissions P2-26), so each later task only replaces its placeholder. All are built now. P3-15: Browsers & Sites sits between Apps and Permissions (001 §14.8).
+// P2-23: The tabs of the Settings window (001 §5.2), in the order they appear.
+// P6-0c (owner 2026-11-17, visual review §2.2): 8 tabs became 6, ordered by how often a first-time user needs them:
+//   General      setup status (permissions, conflicts) on top, Kytkin on/off, your two languages, learning, menu bar,
+//                Open at Login, setup again (was General + Languages' pair + Permissions)
+//   Rules        unchanged
+//   Double-Shift was Convert
+//   Websites     was Browsers & Sites
+//   Advanced     app exceptions (was Apps), keyboard layouts (Languages' import/export), diagnostics (Permissions'
+//                keyboard status and typing protection), the Settings folder (was in About)
+//   About        unchanged, minus the Settings folder
+// The window draws them as toolbar tabs (icon over title, `NSTabViewController.tabStyle = .toolbar`).
 
 import Foundation
 
 enum SettingsTab: String, CaseIterable, Sendable, Identifiable {
-    case general, languages, rules, convert, apps, browsers, permissions, about
+    case general, rules, doubleShift, websites, advanced, about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: "General"
-        case .languages: "Languages"
         case .rules: "Rules"
-        case .convert: "Convert"
-        case .apps: "Apps"
-        case .browsers: "Browsers & Sites"
-        case .permissions: "Permissions"
+        case .doubleShift: "Double-Shift"
+        case .websites: "Websites"
+        case .advanced: "Advanced"
         case .about: "About"
         }
     }
 
-    /// SF Symbol name for the tab item.
+    /// SF Symbol name for the toolbar item.
     var symbolName: String {
         switch self {
         case .general: "gearshape"
-        case .languages: "globe"
-        case .rules: "list.bullet"
-        case .convert: "arrow.left.arrow.right"
-        case .apps: "square.grid.2x2"
-        case .browsers: "network"
-        case .permissions: "lock.shield"
+        case .rules: "list.bullet.rectangle"
+        case .doubleShift: "shift"
+        case .websites: "globe"
+        case .advanced: "slider.horizontal.3"
         case .about: "info.circle"
         }
     }
 
-    /// True while the tab is still a placeholder (the task that fills it isn't built yet).
-    var isPlaceholder: Bool {
-        switch self {
-        case .general, .languages, .about: false   // P2-24: Languages
-        case .rules, .convert, .apps: false   // P2-25
-        case .permissions: false              // P2-26
-        case .browsers: false                 // P3-15
+    /// P6-0c: where a menu item's "Open Settings…" lands. Permissions now live in General's setup section.
+    init(target: MenuItemModel.SettingsTarget) {
+        switch target {
+        case .general, .permissions: self = .general
+        case .doubleShift: self = .doubleShift
+        case .about: self = .about
         }
     }
+}
 
-    /// The one line a placeholder tab shows.
-    var comingSoonText: String {
+/// P6-0c: the parts of the Advanced tab (a segmented control at its top).
+enum AdvancedSection: String, CaseIterable, Sendable, Identifiable {
+    case apps, keyboardLayouts, diagnostics
+
+    var id: String { rawValue }
+
+    var title: String {
         switch self {
-        case .general, .languages, .about, .permissions: ""   // P2-26: Permissions
-        case .rules, .convert, .apps: ""   // P2-25
-        case .browsers: ""                 // P3-15
+        case .apps: "App Exceptions"
+        case .keyboardLayouts: "Keyboard Layouts"
+        case .diagnostics: "Diagnostics"
         }
     }
 }

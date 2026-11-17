@@ -128,11 +128,7 @@ import AppKit
         }
         // P2-22 + P2-23: the menu's "Settings…", "Open Settings…" and About open the Settings window on that tab.
         statusItem.openSettings = { [weak self] target in
-            switch target {
-            case .general: self?.openSettings(tab: .general)
-            case .permissions: self?.openSettings(tab: .permissions)
-            case .about: self?.openSettings(tab: .about)
-            }
+            self?.openSettings(tab: SettingsTab(target: target))   // P6-0c: the 6-tab mapping lives in Core
         }
 
         // P2-39 (001 §12 W2): Kytkin's own windows are not a context.
@@ -166,10 +162,17 @@ import AppKit
 
     /// P2-26: the welcome window. `firstLaunch` = shown by itself at launch; otherwise the user asked for it.
     func openOnboarding(firstLaunch: Bool = false) {
+        let convert = self.convert
+        let store = self.store
+        let languages = sharedModels.languages
         let window = onboardingWindow ?? OnboardingWindowController(model: OnboardingModel(
             store: store, permissions: permissions, polling: sharedModels.polling, general: sharedModels.general,
-            languages: sharedModels.languages, appName: Self.appName))
+            languages: languages, appName: Self.appName, bundlePath: Bundle.main.bundlePath,
+            // P6-0c: the practice box converts with the pair's layouts, in process.
+            layouts: { convert.snapshot(for: store.prefs.languagePair) },
+            sourceName: { id in languages.options.first { $0.inputSource == id }?.name ?? id.rawValue }))
         onboardingWindow = window
+        controller.practiceDoubleShift = { [weak window] in window?.practiceDoubleShift() }
         window.show(firstLaunch: firstLaunch)
     }
 

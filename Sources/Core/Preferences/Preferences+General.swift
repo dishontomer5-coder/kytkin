@@ -4,16 +4,18 @@ import Foundation
 
 extension Preferences {
     struct General: Sendable, Equatable {
-        /// What the menu-bar title shows. Only the language code exists in v1 (001 §5.1).
-        enum MenuBarLabel: String, Codable, Sendable, CaseIterable {
-            case languageCode
+        /// What the menu-bar item shows (001 §5.1). P6-0c (owner 2026-11-17): Kytkin's icon and the language letters
+        /// by default; Settings → General can show the icon only or the letters only. A file's old `languageCode`
+        /// (the only value before P6-0c, never a user choice) reads as the new default.
+        enum MenuBarLabel: String, Sendable, CaseIterable {
+            case iconAndLanguage, iconOnly, languageOnly
         }
 
         var enabled = true
         var learnFromManualSwitches = true
         /// keepCurrent by default (owner decision, 001 §11 Q3).
         var defaultBehavior: DefaultBehavior = .keepCurrent
-        var menuBarLabel: MenuBarLabel = .languageCode
+        var menuBarLabel: MenuBarLabel = .iconAndLanguage
         /// The optional daily update check (P6). The only network call Kytkin may make.
         var checkForUpdates = true
         /// P2-26: the welcome window was shown once (001 §6.1). Absent → false, so a fresh install (or a file
@@ -38,5 +40,21 @@ extension Preferences.General: Codable {
         if let v = c.lenient(MenuBarLabel.self, .menuBarLabel) { menuBarLabel = v }
         if let v = c.lenient(Bool.self, .checkForUpdates) { checkForUpdates = v }
         if let v = c.lenient(Bool.self, .onboardingSeen) { onboardingSeen = v }
+    }
+}
+
+extension Preferences.General.MenuBarLabel: Codable {
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        if raw == "languageCode" { self = .iconAndLanguage; return }   // before P6-0c
+        guard let v = Self(rawValue: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "menuBarLabel"))
+        }
+        self = v
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
     }
 }

@@ -38,7 +38,10 @@ import Observation
         self.languageName = languageName
     }
 
-    var title: String { subdomainOf == nil ? "Add Website" : "Add Subdomain Rule" }
+    /// P6-0c (copy review R-7): no "subdomain" jargon.
+    var title: String {
+        subdomainOf.map { "Add Rule for Part of \(HostNormalizer.unicodeForm($0))" } ?? "Add Website"
+    }
 
     var input: WebsiteInput { WebsiteInput.parse(text, extractor: extractor) }
 
@@ -53,7 +56,7 @@ import Observation
     var hint: String? {
         guard let subdomainOf else { return nil }
         let site = HostNormalizer.unicodeForm(subdomainOf)
-        return "Type the address that should get its own language, like news.\(site)."
+        return "Type the address that should have its own language, like news.\(site)."
     }
 
     /// "ynet.co.il already has a rule (Hebrew, learned). Saving replaces it."
@@ -64,7 +67,7 @@ import Observation
         default: ""
         }
         let origin = rule.origin == .pinned ? "pinned" : "learned"
-        return "\(name) already has a rule (\(languageName(rule.inputSource)), \(origin)). Saving replaces it."
+        return "\(name) already uses \(languageName(rule.inputSource)) (\(origin)). Adding replaces it."   // R-10
     }
 
     /// Esc closes the sheet only when nothing is typed (P3-12 QA note: Esc never loses input).
