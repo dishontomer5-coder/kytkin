@@ -57,6 +57,16 @@ struct AboutInfo: Equatable, Sendable {
     static let cleanRoomText = "An independent project, not affiliated with any other app."
     static let repository = URL(string: "https://github.com/dishontomer5-coder/kytkin") ?? URL(fileURLWithPath: "/")
 
+    /// P6-8 (owner, Clonitt listing): who made Kytkin and where to get help, under the repository link.
+    static let developerText = "Made by Tomer Dishon"
+    static let issuesTitle = "Report an Issue"
+    static let issuesURL = URL(string: "https://github.com/dishontomer5-coder/kytkin/issues")
+        ?? URL(fileURLWithPath: "/")
+    static let emailTitle = "Email"
+    /// The owner chose this address to be public (P6-8).
+    static let supportEmail = "dishontomer5@gmail.com"
+    static let emailURL = URL(string: "mailto:\(supportEmail)?subject=Kytkin") ?? URL(fileURLWithPath: "/")
+
     /// P6-0g: the Debug build's name ("Kytkin Dev") shows as "Kytkin"; "Dev" moves to the version line.
     static let devSuffix = " Dev"
 

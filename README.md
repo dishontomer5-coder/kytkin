@@ -8,8 +8,8 @@
 keyboard language for you, like a light switch.
 
 **[Download Kytkin for Mac](https://github.com/dishontomer5-coder/kytkin/releases/latest)**: get the file named
-`Kytkin-<version>.dmg` under **Assets**, not "Source code". It needs macOS 14 Sonoma or later, on Apple silicon or
-Intel.
+`Kytkin-<version>.dmg` under **Assets**, not "Source code". It needs macOS 14 Sonoma or later (tested on macOS 26),
+on Apple silicon or Intel.
 
 ## What it does
 
@@ -41,7 +41,9 @@ Intel.
    - **macOS 14 Sonoma:** the message says Kytkin *can't be opened*. Click **OK**, then go to **System Settings →
      Privacy & Security** and click **Open Anyway** next to the Kytkin message. (Or Control-click Kytkin in
      Applications, choose **Open**, then **Open**.)
-4. Kytkin's short setup asks for the permissions below and lets you try double-Shift in a practice box.
+4. Kytkin's short setup asks for the permissions below and lets you try double-Shift in a practice box. Setup also
+   turns on **Open Kytkin when I log in** by default: uncheck it there, or turn it off later in **Settings → General →
+   Open at Login**.
 
 **Updating:** quit Kytkin (menu-bar icon → Quit Kytkin). Drag the new version into Applications and choose
 **Replace**. Then do step 3 again: macOS asks once for every new download. Your settings stay. If double-Shift
@@ -111,6 +113,13 @@ Command Line Tools) and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew
 
 The Debug app is called **Kytkin Dev** and has its own bundle ID and settings folder, so it never mixes with an
 installed Kytkin. The Xcode project is generated from `project.yml`. Edit that file, not the `.xcodeproj`.
+
+## Developer and support
+
+Made by Tomer Dishon.
+
+Bug or question? [Open an issue on GitHub](https://github.com/dishontomer5-coder/kytkin/issues) or email
+[dishontomer5@gmail.com](mailto:dishontomer5@gmail.com).
 
 ## Clean-room statement
 
