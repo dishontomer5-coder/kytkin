@@ -45,21 +45,30 @@ struct AboutInfo: Equatable, Sendable {
         (repositoryURL.host ?? "") + repositoryURL.path
     }
 
-    static let licenseText = "Free and open source under the MIT License. Copyright © 2026 Kytkin contributors."
-    static let cleanRoomText = "Kytkin is an independent, clean-room implementation inspired by the idea of apps "
-        + "like FlicKey. It contains no code, text, or assets from FlicKey."
+    static let licenseText = "Free and open source under the MIT License. © 2026 Kytkin contributors."
+    /// P6-0g (design v2, About P1): no other app named here (the README keeps the clean-room statement).
+    static let cleanRoomText = "An independent project, not affiliated with any other app."
     static let repository = URL(string: "https://github.com/dishontomer5-coder/kytkin") ?? URL(fileURLWithPath: "/")
+
+    /// P6-0g: the Debug build's name ("Kytkin Dev") shows as "Kytkin"; "Dev" moves to the version line.
+    static let devSuffix = " Dev"
 
     init(infoDictionary info: [String: Any], suffixListVersion: String? = nil) {
         let display = (info["CFBundleDisplayName"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let bundleName = (info["CFBundleName"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        name = display ?? bundleName ?? "Kytkin"
+        var fullName = display ?? bundleName ?? "Kytkin"
+        let isDev = fullName.hasSuffix(Self.devSuffix)
+        if isDev { fullName = String(fullName.dropLast(Self.devSuffix.count)) }
+        name = fullName
         let short = (info["CFBundleShortVersionString"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "unknown"
+        var line: String
         if let build = (info["CFBundleVersion"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) {
-            version = "Version \(short) (\(build))"
+            line = "Version \(short) (\(build))"
         } else {
-            version = "Version \(short)"
+            line = "Version \(short)"
         }
+        if isDev { line += " · Dev" }
+        version = line
         license = Self.licenseText
         cleanRoom = Self.cleanRoomText
         repositoryURL = Self.repository
