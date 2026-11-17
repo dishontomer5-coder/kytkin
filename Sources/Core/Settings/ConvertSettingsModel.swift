@@ -22,7 +22,7 @@ import Observation
     /// P6-0d (owner): the "How it works" section, always visible: selection or before the cursor, again = back,
     /// mentions and :codes: kept, chat apps paste plain (P3-58).
     static let explanation = [
-        "With text selected, Kytkin converts only the selection. With nothing selected, it converts what's before "
+        "With text selected, Kytkin converts only the selection. With nothing selected, it converts what’s before "
             + "the cursor, back to the start of the box. Text already in the right language stays.",
         "Press Shift twice again to convert it back. You can also undo with ⌘Z.",
         "@mentions, :shortcodes: and links stay as they are.",
@@ -33,23 +33,35 @@ import Observation
     /// P6-0c: the one-line summary shown under the main switch (the rest sits behind "How it works").
     static let summary = "Typed in the wrong language? Press Shift twice to convert it."
 
-    /// P3-37; P6-0c (copy review C-3).
-    static let clipboardTitle = "Convert through the clipboard when needed"
+    /// P3-37; P6-0c (copy review C-3). P6-0g (design v2, P2): says what you gain.
+    static let clipboardTitle = "Work in more apps (uses the clipboard)"
 
-    /// P3-37: the caption under the clipboard toggle. P6-0c (copy review C-4, P3-18 audit M1 disclosure, P1).
-    /// P6-0d (owner: "what happens when it's off?"): the off behaviour, as ConvertController does it (`allowClipboard`).
-    /// P6-0d QA (Coordinator): two sentences (the "when off" part is its own line); not VS Code (an excluded editor:
-    /// never the clipboard there).
-    static let clipboardNote = "In apps Kytkin can't read directly (like Slack, or Gmail in Zen), it copies the text, "
-        + "pastes it back converted, then puts back what you had copied. Never in terminals, in password boxes, or "
-        + "while you have a password copied, but clipboard history apps (like Maccy, Raycast or Alfred) may briefly "
-        + "see the copied text and save it."
+    /// P6-0g (design v2, P1): the short text under the toggle, the review's wording (the P3-18 audit M1 disclosure
+    /// stays: clipboard managers). The rest is behind "Learn more…" (`clipboardDetails`).
+    static let clipboardNote = "For apps Kytkin can’t read directly, such as Slack. It copies the text, pastes it back "
+        + "converted, then restores your clipboard. Never in terminals or password fields. Clipboard managers may "
+        + "record the copied text."
+
+    /// P3-37 / P6-0c (copy review C-4) / P6-0d: the longer details behind "Learn more…", including what turning it off
+    /// does (as ConvertController does it, `allowClipboard`).
+    static let clipboardDetails = [
+        "In apps Kytkin can’t read directly (like Slack, or Gmail in Zen), it copies the text, pastes it back "
+            + "converted, then puts back what you had copied.",
+        "Never in terminals, in password boxes, or while you have a password copied. Clipboard history apps (like "
+            + "Maccy, Raycast or Alfred) may briefly see the copied text and save it.",
+        clipboardOffNote,
+    ]
 
     /// P6-0d: what turning it off does, per kind of app.
     static let clipboardOffNote = "When off: apps Kytkin can read (Notes, Mail, most web pages) work as before. In "
         + "the others, only what you typed since your last click or Return is converted, by retyping it, and a "
-        + "selection is retyped too (line breaks in it may be lost). In Slack, Discord and Teams, double-Shift only "
+        + "selection is retyped too (line breaks in it may be lost). In Slack, Discord and Teams, Double-Shift only "
         + "switches the language."
+
+    /// P6-0g: the main switch and the link to "How It Works".
+    static let toggleTitle = "Convert with Double-Shift"
+    static let howItWorksTitle = "How It Works"
+    static let howItWorksLink = "How Double-Shift works…"
 
     init(store: PreferencesStore) {
         self.store = store
