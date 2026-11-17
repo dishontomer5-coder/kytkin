@@ -62,16 +62,13 @@ struct MenuBarPreview: View {
     let label: MenuModel.Label
 
     var body: some View {
-        HStack(spacing: 3) {
-            if label.showsIcon, let image = MenuBarGlyph.image(for: label.look) {
+        // P6-0e: the very image the status item shows.
+        HStack {
+            if let image = MenuBarGlyph.itemImage(for: label) {
                 Image(nsImage: image).renderingMode(.template)
-            }
-            if let letters = label.letters {
-                Text(letters).font(Font(NSFont.menuBarFont(ofSize: 0)))
             }
         }
         .foregroundStyle(.primary)
-        .opacity(label.dimmed ? 0.5 : 1)
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(Capsule().fill(Color.primary.opacity(0.08)))

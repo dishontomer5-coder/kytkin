@@ -33,6 +33,8 @@ targets:
         buildPhase: resources
         includes:
           - "*.pdf"
+      # P6-0e: the app icon and the accent colour (#0E7A66), docs/design/artwork/Colors.md.
+      - path: Resources/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin
@@ -50,6 +52,9 @@ targets:
         # Not sandboxed for now: event taps / Accessibility need it (to be confirmed in P1-8).
         ENABLE_APP_SANDBOX: NO
         COMBINE_HIDPI_IMAGES: YES
+        # P6-0e: both configs (Debug keeps its own product name and bundle ID, the same icon).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
       configs:
         # P2-3: Debug gets its own bundle ID and name, so its permission (TCC) entries never
         # replace a release build's. Release keeps io.github.kytkin.Kytkin / "Kytkin".

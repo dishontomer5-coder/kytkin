@@ -89,6 +89,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         sut.menuBarDisplay = .languageOnly
         XCTAssertFalse(sut.menuBarPreview.showsIcon)
         XCTAssertEqual(sut.menuBarPreview.look, .active)
+        XCTAssertEqual(sut.menuBarPreview.side, .a, "P6-0e: no current language: the first half")
     }
 
     func testDefaultBehaviorPickerRoundTrips() {

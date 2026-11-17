@@ -478,7 +478,7 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(unknown.showsIcon)
         XCTAssertEqual(unknown.accessibilityLabel, "Kytkin")
         XCTAssertEqual(MenuModel.label(languageCode: "", state: MenuState()).letters, nil)
-        XCTAssertEqual(en.imageName, "kytkin-menubar-active")
+        XCTAssertEqual(en.imageName, "kytkin-menubar-active-a")
     }
 
     func testDisplayModes() {
@@ -501,7 +501,7 @@ final class MenuModelTests: XCTestCase {
         XCTAssertTrue(l.dimmed)
         XCTAssertEqual(l.letters, "HE", "no more trailing dot")
         XCTAssertEqual(l.accessibilityLabel, "Kytkin, Hebrew, paused")
-        XCTAssertEqual(l.imageName, "kytkin-menubar-paused")
+        XCTAssertEqual(l.imageName, "kytkin-menubar-paused-a")
     }
 
     func testOffWinsOverPausedAndWarnings() {
@@ -537,5 +537,56 @@ final class MenuModelTests: XCTestCase {
         a.tapMode = .active
         XCTAssertEqual(MenuModel.label(languageCode: "en", state: a), MenuModel.label(languageCode: "en", state: b),
                        "counters and the context line never change the button")
+    }
+
+    // MARK: - P6-0e: the artwork (docs/design/artwork/Colors.md)
+
+    func testTheFilledHalfIsTheLanguageThatIsOn() {
+        var s = MenuState()
+        s.pairInputSources = LanguagePair(a: IDs.abc, b: IDs.hebrew)
+        XCTAssertEqual(MenuModel.label(languageCode: "en", state: s, current: IDs.abc).side, .a)
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew).side, .b)
+        XCTAssertEqual(MenuModel.label(languageCode: "ru", state: s, current: IDs.russian).side, .a, "not in the pair")
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s).side, .a, "unknown current source")
+        s.pairInputSources = nil
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew).side, .a, "no pair known")
+        XCTAssertEqual(MenuModel.side(of: IDs.hebrew, in: LanguagePair(a: IDs.hebrew, b: IDs.hebrew)), .a,
+                       "a pair with one member twice: the first")
+    }
+
+    func testEveryLookAndSideHasItsGlyphName() {
+        var names: [String] = []
+        for look in MenuModel.Label.Look.allCases {
+            for side in [PairSide.a, .b] { names.append(MenuModel.glyphName(look, side: side)) }
+        }
+        XCTAssertEqual(names, ["kytkin-menubar-active-a", "kytkin-menubar-active-b", "kytkin-menubar-paused-a",
+                               "kytkin-menubar-paused-b", "kytkin-menubar-attention-a", "kytkin-menubar-attention-b",
+                               "kytkin-menubar-off-a", "kytkin-menubar-off-b"])
+    }
+
+    func testStatesMapToLooksAndOnlyOffFadesTheLetters() {
+        var s = MenuState()
+        s.pairInputSources = LanguagePair(a: IDs.abc, b: IDs.hebrew)
+        let active = MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew)
+        XCTAssertEqual(active.imageName, "kytkin-menubar-active-b")
+        XCTAssertEqual(active.lettersOpacity, 1)
+        s.paused = true
+        let paused = MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew)
+        XCTAssertEqual(paused.imageName, "kytkin-menubar-paused-b")
+        XCTAssertEqual(paused.lettersOpacity, 1, "paused: only the glyph's fill changes")
+        s.paused = false
+        s.conflicts.runningSwitchers = ["FlicKey"]
+        XCTAssertEqual(MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew).imageName,
+                       "kytkin-menubar-attention-b")
+        s.enabled = false
+        let off = MenuModel.label(languageCode: "he", state: s, current: IDs.hebrew)
+        XCTAssertEqual(off.imageName, "kytkin-menubar-off-b")
+        XCTAssertEqual(off.lettersOpacity, 0.35, "off: the letters fade to 35 % too")
+        XCTAssertEqual(off.letters, "HE", "the language is still shown")
+    }
+
+    /// P6-0e: AppController tells the label the pair as input sources.
+    func testMenuStateCarriesThePairForTheGlyph() {
+        XCTAssertNil(MenuState().pairInputSources)
     }
 }

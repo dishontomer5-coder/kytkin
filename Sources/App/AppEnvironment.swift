@@ -105,6 +105,13 @@ import AppKit
                                    })
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
+        // P6-0e: the menu-bar logo fills the half of the language that is on (an imported map's base counts).
+        let catalog = layoutCatalog
+        let prefsStore = store
+        controller.pairInputSources = {
+            let pair = prefsStore.prefs.languagePair
+            return LanguagePair(a: catalog.inputSource(for: pair.a) ?? pair.a, b: catalog.inputSource(for: pair.b) ?? pair.b)
+        }
         wire()
     }
 

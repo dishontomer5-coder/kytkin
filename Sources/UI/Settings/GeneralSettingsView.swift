@@ -18,7 +18,7 @@ struct GeneralSettingsView: View {
             NoticeSection(notices: model.notices)
             SetupSection(model: permissions)
 
-            Section {
+            Section("Kytkin") {   // P6-0e (mock-up settings-general): headed sections
                 Toggle(isOn: $model.enabled) {
                     // P6-0c (copy review S-4): off vs paused.
                     RowLabel("Kytkin is on", subtitle: "When off, Kytkin does nothing until you turn it back on. "
@@ -37,23 +37,28 @@ struct GeneralSettingsView: View {
             }
             .disabled(!model.isEditable)
 
-            Section {
+            Section("Languages") {
                 LanguagePairRow(model: languages)   // P6-0d (owner): one row, ⇄ between
             }
             .disabled(!languages.isEditable)
 
-            Section {
-                // P6-0c (copy review §4.2, visual G3): the menu-bar look.
-                Picker(selection: $model.menuBarDisplay) {
-                    ForEach(Preferences.General.MenuBarLabel.allCases, id: \.self) {
-                        Text(GeneralSettingsModel.title(of: $0)).tag($0)
+            Section("Menu Bar") {
+                // P6-0c (copy review §4.2, visual G3): the menu-bar look. P6-0d (owner): a live preview, drawn like
+                // the real status item; P6-0e (mock-up): beside the picker.
+                LabeledContent {
+                    HStack(spacing: 10) {
+                        MenuBarPreview(label: model.menuBarPreview)
+                        Picker("Show in menu bar", selection: $model.menuBarDisplay) {
+                            ForEach(Preferences.General.MenuBarLabel.allCases, id: \.self) {
+                                Text(GeneralSettingsModel.title(of: $0)).tag($0)
+                            }
+                        }
+                        .labelsHidden().fixedSize()
+                        .disabled(!model.isEditable)
                     }
                 } label: {
                     RowLabel("Show in menu bar", subtitle: GeneralSettingsModel.menuBarDisplayHelp)
                 }
-                .disabled(!model.isEditable)
-                // P6-0d (owner): a live preview, drawn like the real status item.
-                LabeledContent("Looks like") { MenuBarPreview(label: model.menuBarPreview) }
                 Toggle(isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) })) {
                     RowLabel("Open at Login", subtitle: model.loginItemHint)
                 }

@@ -436,6 +436,14 @@ final class AppControllerTests: XCTestCase {
     }
 
     /// P6-0c (visual review N2): "Turn Kytkin On" from the menu.
+    /// P6-0e: the menu-bar logo's half follows the pair (as input sources when AppEnvironment can tell them).
+    func testMenuStateCarriesThePair() {
+        make()
+        XCTAssertEqual(sut.menuState.pairInputSources, store.prefs.languagePair)
+        sut.pairInputSources = { LanguagePair(a: IDs.abc, b: IDs.hebrewQWERTY) }
+        XCTAssertEqual(sut.menuState.pairInputSources, LanguagePair(a: IDs.abc, b: IDs.hebrewQWERTY))
+    }
+
     func testMenuTurnOn() {
         make()
         store.update { $0.general.enabled = false }

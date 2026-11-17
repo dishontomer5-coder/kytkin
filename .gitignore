@@ -15,3 +15,6 @@ scripts/local.env
 *.cer
 *.p8
 *.mobileprovision
+# P6-0e: the designer's delivery zip (its contents live in docs/design/artwork/, Resources/, docs/assets/)
+docs/design/Kytkin-artwork.zip
+docs/design/artwork/_source/

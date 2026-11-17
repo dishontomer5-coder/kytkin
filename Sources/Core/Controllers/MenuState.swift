@@ -11,6 +11,9 @@ struct MenuState: Equatable {
     var convertOffInCurrentApp = false
     /// P6-0c: Settings → General → "Show in menu bar".
     var menuBarDisplay: Preferences.General.MenuBarLabel = .iconAndLanguage
+    /// P6-0e: the pair as the input sources Kytkin switches to (an imported map's base), so the menu-bar logo fills
+    /// the half of the language that is on. nil = unknown.
+    var pairInputSources: LanguagePair?
     var paused = false
     /// `general.enabled` (Settings → General → Enable Kytkin).
     var enabled = true

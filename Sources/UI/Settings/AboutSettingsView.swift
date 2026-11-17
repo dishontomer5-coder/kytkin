@@ -14,7 +14,7 @@ struct AboutSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 8) {
-                Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
+                Image(nsImage: NSApp.applicationIconImage ?? NSImage())
                     .resizable()
                     .frame(width: 64, height: 64)
                     .accessibilityHidden(true)

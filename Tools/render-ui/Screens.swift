@@ -356,21 +356,32 @@ import SwiftUI
         let storeItems = menuItems(store, current: Sample.abcInfo)
         try r.render("menu-off-no-app", backdrop: desk) { MenuMock(items: storeItems) }
 
-        let ok = Self.healthyState
-        var off = Self.healthyState
+        // P6-0e: the pair, so the logo fills the half of the language that is on (-a English, -b Hebrew).
+        let pair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew)
+        var ok = Self.healthyState
+        ok.pairInputSources = pair
+        var off = ok
         off.enabled = false
+        var warnP = warn
+        warnP.pairInputSources = pair
+        var pausedP = paused
+        pausedP.pairInputSources = pair
+        let en = SampleIDs.abc, he = SampleIDs.hebrew
         let samples: [StatusLabelMock.Sample] = [
-            .init(caption: "English (ABC) selected", label: MenuModel.label(languageCode: "en", state: ok)),
-            .init(caption: "Hebrew selected", label: MenuModel.label(languageCode: "he", state: ok)),
-            .init(caption: "Hebrew, needs attention", label: MenuModel.label(languageCode: "he", state: warn)),
-            .init(caption: "Paused (dimmed)", label: MenuModel.label(languageCode: "en", state: paused)),
-            .init(caption: "Turned off (dimmed)", label: MenuModel.label(languageCode: "en", state: off)),
+            .init(caption: "English (ABC) on: left half", label: MenuModel.label(languageCode: "en", state: ok, current: en)),
+            .init(caption: "Hebrew on: right half", label: MenuModel.label(languageCode: "he", state: ok, current: he)),
+            .init(caption: "Hebrew, needs attention",
+                  label: MenuModel.label(languageCode: "he", state: warnP, current: he)),
+            .init(caption: "Paused (45 % fill)", label: MenuModel.label(languageCode: "en", state: pausedP, current: en)),
+            .init(caption: "Turned off (35 %, letters too)",
+                  label: MenuModel.label(languageCode: "he", state: off, current: he)),
             .init(caption: "Unknown language (icon only)", label: MenuModel.label(languageCode: nil, state: ok)),
-            .init(caption: "Icon only mode", label: MenuModel.label(languageCode: "he", state: ok, display: .iconOnly)),
+            .init(caption: "Icon only mode",
+                  label: MenuModel.label(languageCode: "he", state: ok, display: .iconOnly, current: he)),
             .init(caption: "Language only mode",
-                  label: MenuModel.label(languageCode: "he", state: ok, display: .languageOnly)),
+                  label: MenuModel.label(languageCode: "he", state: ok, display: .languageOnly, current: he)),
             .init(caption: "Language only, needs attention",
-                  label: MenuModel.label(languageCode: "he", state: warn, display: .languageOnly)),
+                  label: MenuModel.label(languageCode: "he", state: warnP, display: .languageOnly, current: he)),
         ]
         try r.render("statusitem-labels", backdrop: desk) { StatusLabelMock(samples: samples) }
     }
