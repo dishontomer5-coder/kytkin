@@ -96,7 +96,8 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
 
     // MARK: - Texts
 
-    static let dataMissingText = "Website rules are unavailable: a file inside Kytkin is missing. Reinstall Kytkin."
+    static let dataMissingText = "Website rules are off because part of Kytkin is missing. Download Kytkin again to "
+        + "fix it."   // P6-0c (copy review R-5)
     /// D11: shown at the top of the tab when the bundled Public Suffix List didn't load.
     var dataMissingNotice: String? { suffixListLoaded ? nil : Self.dataMissingText }
 
@@ -108,8 +109,8 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     static let skipNote = "Some browsers don't support every option; Kytkin skips what a browser can't do."
     static let browserPickerTitle = "Browser"
     static let privateToggleTitle = "Don't use website rules in private windows"
-    static let privateExplanation = "Kytkin never remembers websites from private windows. With this on, it also "
-        + "doesn't read their address and uses only the browser's own language."
+    static let privateExplanation = "Kytkin never learns from private windows. With this on, it doesn't look at "
+        + "their address at all."   // P6-0c (copy review B-4)
     /// P3-16: what the private-window checks can tell, per browser (001 §14.4; owner probe 2026-11-08).
     static let privateDetectionText = "Kytkin recognizes private windows in Chrome when Chrome is in English or "
         + "Hebrew (in any language with Automation), and in Arc only with Automation. Tor Browser's windows always "
@@ -118,10 +119,23 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     /// (the privacy button also shows in normal windows when it's added to the toolbar).
     static let safariPrivateNote = "In Safari, Kytkin recognizes private windows only when Safari is in English."
     /// P3-4: how websites are grouped, and why gov.il is different.
-    static let groupingText = "A website rule covers the whole site: ynet.co.il also covers www.ynet.co.il and "
-        + "news.ynet.co.il. Some addresses are shared by many separate sites, such as gov.il or github.io. There each "
-        + "site gets its own rule (www.gov.il, police.gov.il). To use a different language on one part of a site, "
-        + "add a subdomain rule in Rules."
+    /// P6-0c (copy review B-6): the gov.il / github.io detail is where it matters (the Add Website sheet, R-9).
+    static let groupingText = "A website rule covers the whole website: ynet.co.il also covers news.ynet.co.il. "
+        + "To use a different language on one part, add it in Rules."
+
+    /// P6-0c (copy review B-5): the private-window line for one browser, shown in its status (one sentence for five
+    /// browsers was hard to scan). nil = nothing to say.
+    static func privateWindowNote(bundleID: String, engine: BrowserEngine) -> String? {
+        let known = BrowserCatalog.known[bundleID]
+        if known?.alwaysPrivate == true { return "Private windows: every window counts as private." }
+        if bundleID.hasPrefix("com.google.Chrome") {
+            return "Private windows: recognized when Chrome is in English or Hebrew (any language with Automation)."
+        }
+        if known?.appleScript == .arc { return "Private windows: recognized only with Automation." }
+        if known?.privateSignal == .safari { return "Private windows: recognized when Safari is in English." }
+        if engine == .gecko { return "Kytkin can't tell private windows apart yet." }
+        return nil
+    }
     static let noBrowsersText = "No browsers found."
 
     // MARK: - Rows (P3-26: the dropdown's choices)
@@ -158,7 +172,10 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         let support = readSupport(bundleID)
         let engine = known?.engine ?? .unknown
         var engineText = Self.engineTitle(engine)
-        if let known, !known.verified { engineText += " · not yet tested" }
+        // P6-0c (visual review B1, copy B-9): never next to a live "Works".
+        if let known, !known.verified, support != .works, support != .worksWithAutomation {
+            engineText += " · not tested yet"
+        }
         let automation: BrowserRow.Automation = if known?.appleScript != nil {
             .available(automationState(for: bundleID))
         } else if engine == .gecko {
@@ -169,7 +186,8 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         let (status, hint, action) = Self.statusTexts(support, name: name, siteRulesOn: on, automation: automation)
         return BrowserRow(bundleID: bundleID, name: name, engineText: engineText, isCatalogued: known != nil,
                           support: support, statusText: status, statusHint: hint, statusAction: action,
-                          automation: automation)
+                          automation: automation,
+                          privateNote: Self.privateWindowNote(bundleID: bundleID, engine: engine))
     }
 
     static func engineTitle(_ engine: BrowserEngine) -> String {
@@ -188,7 +206,7 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
         switch support {
         case .works: return ("Works", nil, nil)
         case .worksWithAutomation: return ("Works (using Automation)", nil, nil)
-        case .notSeenYet: return ("Not checked yet", "Open \(name) and visit a website to check.", nil)
+        case .notSeenYet: return ("Not checked yet", "Open \(name) and visit any website.", nil)   // P6-0c (B-7)
         case .cantRead:
             // P3-24: point to Automation when the browser supports it. P3-26: the switch is above (global); the
             // permission (Ask / Open System Settings) is below, next to this status.
@@ -261,8 +279,8 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
     // MARK: - Address bar (P3-29, plan.md decision 2026-11-08)
 
     static let addressBarToggleTitle = "Use the browser's language in the address bar"
-    static let addressBarExplanation = "While you type in the address bar, Kytkin uses the browser's own language: "
-        + "its rule, or English if it has none. Inside web pages it uses the website's language."
+    static let addressBarExplanation = "In the address bar, Kytkin uses the browser's language (English unless you "
+        + "set one). On web pages, it uses the website's language."   // P6-0c (B-3)
 
     /// P3-29: `browsers.browserLanguageInAddressBar` (on by default).
     var browserLanguageInAddressBar: Bool {
@@ -275,10 +293,10 @@ struct BrowserInventorySnapshot: Equatable, Sendable {
 
     // MARK: - Automation (P3-7, 001 §14.7–14.8; P3-26: one global switch)
 
-    static let automationToggleTitle = "Use Automation when a browser can't be read"
-    static let automationExplanation = "Kytkin then asks the browser for the page address. macOS asks you once for "
-        + "each browser: turning this on asks for the browsers that are open now. For another browser, open it, "
-        + "choose it below and click Ask."
+    // P6-0c (copy review B-1, B-2).
+    static let automationToggleTitle = "Ask the browser for the page address (Automation)"
+    static let automationExplanation = "Only for browsers Kytkin can't read by itself. macOS asks you once for each "
+        + "browser."
 
     /// The global "Use Automation" (`browsers.useAutomation`).
     var useAutomation: Bool { store.prefs.browsers.useAutomation }

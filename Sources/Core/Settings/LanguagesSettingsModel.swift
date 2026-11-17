@@ -135,11 +135,13 @@ import Observation
                 result.append("\(option.name) isn't on this Mac any more, so double-Shift can't convert. "
                               + "Choose another language.")
             case .inputMethod:
-                result.append("\(option.name) is an input method, so double-Shift can't convert. "
-                              + "Choose a keyboard layout.")
+                // P6-0c (copy review L-7).
+                result.append("Double-Shift can't convert \(option.name), because it's not a plain keyboard. "
+                              + "Choose another language.")
             case .installed:
-                result.append("\(option.name) isn't turned on in System Settings → Keyboard → Input Sources. "
-                              + "Kytkin can convert text to it but can't switch to it.")
+                // P6-0c (copy review L-8): effect first, then the fix, with the current macOS path.
+                result.append("Kytkin can convert to \(option.name) but can't switch to it. To fix this, add it in "
+                              + "System Settings → Keyboard → Text Input → Edit….")
             case .imported where option.inputSource == nil:
                 result.append("\(option.name) needs a keyboard that isn't installed. Choose another language.")
             case .imported, .enabled:

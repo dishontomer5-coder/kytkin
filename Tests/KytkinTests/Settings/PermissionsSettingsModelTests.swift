@@ -53,13 +53,16 @@ final class PermissionsSettingsModelTests: XCTestCase {
         set { $0.accessibility = .notDetermined; $0.inputMonitoring = .notDetermined }
         for r in sut.rows {
             XCTAssertEqual(r.status, .notGranted)
-            XCTAssertEqual(r.statusText, "Not allowed")
             XCTAssertTrue(r.showsGrant)
             XCTAssertTrue(r.showsOpenSettings, "P2-46: the link shows for notDetermined too")
             XCTAssertFalse(r.showsQuitAndReopen)
-            XCTAssertNotNil(r.withoutIt)
             XCTAssertNil(r.hint)
         }
+        XCTAssertEqual(row(.accessibility).statusText, "Not allowed")
+        XCTAssertNotNil(row(.accessibility).withoutIt)
+        // P6-0c (visual review P2, copy P-4): Input Monitoring is optional: never a red "Not allowed".
+        XCTAssertEqual(row(.inputMonitoring).statusText, "Optional")
+        XCTAssertNil(row(.inputMonitoring).withoutIt)
         XCTAssertEqual(row(.accessibility).grantTitle, "Allow Accessibility…")
         XCTAssertEqual(row(.inputMonitoring).grantTitle, "Allow Input Monitoring…")
     }
@@ -68,18 +71,18 @@ final class PermissionsSettingsModelTests: XCTestCase {
         set { $0.accessibility = .denied; $0.inputMonitoring = .denied }
         let ax = row(.accessibility)
         XCTAssertTrue(ax.showsGrant && ax.showsOpenSettings, "P2-46: the link shows for denied")
-        XCTAssertTrue(try XCTUnwrap(ax.hint).contains("Privacy & Security → Accessibility, turn on “Kytkin Dev”"))
+        XCTAssertTrue(try XCTUnwrap(ax.hint).contains("Privacy & Security → Accessibility, turn on Kytkin Dev."))
         XCTAssertTrue(try XCTUnwrap(row(.inputMonitoring).hint).contains("→ Input Monitoring"))
     }
 
     func testEachRowSaysWhatItEnablesAndWhatIsLost() {
         set { $0.accessibility = .notDetermined; $0.inputMonitoring = .notDetermined }
-        XCTAssertTrue(row(.accessibility).enables.contains("fix text"))
-        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("can't fix text"))
-        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("with Input Monitoring"),
-                      "QA: with neither permission Shift twice does nothing, so the toggle is conditional")
-        XCTAssertTrue(row(.inputMonitoring).enables.contains("never saved"))
-        XCTAssertTrue(try XCTUnwrap(row(.inputMonitoring).withoutIt).contains("does nothing"))
+        // P6-0c (copy review P-1, P-2, P-3): every use of Accessibility (websites too); Input Monitoring is a backup.
+        XCTAssertEqual(row(.accessibility).enables,
+                       "Lets Kytkin read and replace the text you convert, and see which website you're on.")
+        XCTAssertTrue(try XCTUnwrap(row(.accessibility).withoutIt).contains("website rules don't work"))
+        XCTAssertTrue(row(.inputMonitoring).enables.hasPrefix("Usually not needed."))
+        XCTAssertFalse(row(.inputMonitoring).enables.contains("learn"), "v1 learns nothing from typed words")
     }
 
     func testAccessibilityGrantedMakesInputMonitoringNotNeeded() {
@@ -141,7 +144,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertEqual(im.status, .needsRelaunch)
         XCTAssertTrue(im.showsQuitAndReopen)
         XCTAssertFalse(im.showsGrant || im.showsOpenSettings)
-        XCTAssertEqual(im.statusText, "Allowed, needs a restart of Kytkin")
+        XCTAssertEqual(im.statusText, "Allowed. Quit & Reopen Kytkin to use it.")
         XCTAssertFalse(row(.accessibility).showsQuitAndReopen)
 
         set { $0.showsQuitAndReopen = false }
@@ -218,25 +221,26 @@ final class PermissionsSettingsModelTests: XCTestCase {
             change(&s)
             return PermissionsSettingsModel.keyboardModeText(state: s, desired: desired)
         }
-        XCTAssertTrue(text({ $0.enabled = false }, desired: .off).hasPrefix("Kytkin is turned off"))
-        XCTAssertTrue(text({ $0.paused = true }, desired: .off).hasPrefix("Kytkin is paused"))
+        // P6-0c (copy review P-9/P-10): named after double-Shift, each with its next step.
+        XCTAssertEqual(text({ $0.enabled = false }, desired: .off), "Off: Kytkin is turned off.")
+        XCTAssertEqual(text({ $0.paused = true }, desired: .off), "Off: Kytkin is paused.")
         XCTAssertEqual(text({ $0.tapMode = .active }, desired: .active),
-                       "Full: pressing Shift twice fixes text and switches the language.")
+                       "Works: converts text and switches the language.")
         XCTAssertEqual(text({ $0.tapMode = .listenOnly }, desired: .listenOnly),
-                       "Limited: pressing Shift twice switches the language but can't fix text.")
+                       "Switches only: allow Accessibility to convert text too.")
         XCTAssertTrue(text({ $0.accessibility = .notDetermined }, desired: .off).hasPrefix("Off: allow Accessibility"))
-        XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .off).hasPrefix("Not in use"))
+        XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .off).hasPrefix("Off in Double-Shift settings"))
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .active)
-            .hasPrefix("Off: Kytkin couldn't start watching the keyboard."))
+            .hasPrefix("Stopped: Kytkin couldn't start it."))
         // P2-57 item 1: a start that timed out (or a failed restart) says what the menu says.
         XCTAssertTrue(text({ $0.accessibility = .granted }, desired: .active)
-            .hasSuffix("Some keyboard features are off. Use “Restart Keyboard Features” in the Kytkin menu."))
+            .hasSuffix("Part of it is off. Use Start Double-Shift Again in the Kytkin menu."))
         XCTAssertTrue(text({ $0.tapMode = .listenOnly; $0.showsQuitAndReopen = true }, desired: .active)
             .hasSuffix("Quit & Reopen Kytkin to use everything you allowed."))
         XCTAssertTrue(text({ $0.tapMode = .listenOnly; $0.degradedByWatchdog = true }, desired: .active)
-            .contains("Restart Keyboard Features"))
+            .contains("Start Double-Shift Again"))
         XCTAssertTrue(text({ $0.tapMode = .listenOnly }, desired: .active)
-            .hasSuffix("Some keyboard features are off. Use “Restart Keyboard Features” in the Kytkin menu."))
+            .hasSuffix("Part of it is off. Use Start Double-Shift Again in the Kytkin menu."))
         XCTAssertFalse(text({ $0.tapMode = .listenOnly; $0.degradedByWatchdog = true }, desired: .active)
             .contains("Some keyboard features are off"), "the watchdog keeps its own wording")
     }
@@ -249,7 +253,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
             $0.general.learnFromManualSwitches = false
         }
         XCTAssertEqual(sut.desiredTapMode, .off)
-        XCTAssertTrue(sut.keyboardModeText.hasPrefix("Not in use"))
+        XCTAssertTrue(sut.keyboardModeText.hasPrefix("Off in Double-Shift settings"))
     }
 
     func testSecureInputIsDisplayOnlyFromKeyWatcher() {
@@ -266,7 +270,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertEqual(sut.conflictLines, [])
         set { $0.conflicts = Conflicts(runningSwitchers: ["FlicKey"], perDocumentInputEnabled: true) }
         XCTAssertEqual(sut.conflictLines.count, 2)
-        XCTAssertTrue(sut.conflictLines[0].hasPrefix("FlicKey also switches keyboard languages"))
+        XCTAssertTrue(sut.conflictLines[0].hasPrefix("FlicKey also switches languages, so the two may undo each other."))
         XCTAssertTrue(sut.conflictLines[1].contains("Automatically switch to a document's input source"))
     }
 
@@ -296,7 +300,7 @@ final class PermissionsSettingsModelTests: XCTestCase {
         XCTAssertEqual(watcher.starts, [.active], "the retry happens in AppController (TapModePolicy)")
         XCTAssertEqual(tab.rows.first?.status, .granted)
         XCTAssertEqual(tab.rows.last?.status, .notNeeded)
-        XCTAssertEqual(tab.keyboardModeText, "Full: pressing Shift twice fixes text and switches the language.")
+        XCTAssertEqual(tab.keyboardModeText, "Works: converts text and switches the language.")
     }
 
     func testAnInputMonitoringGrantThatNeedsARelaunchShowsQuitAndReopen() {

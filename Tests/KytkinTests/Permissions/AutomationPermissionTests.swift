@@ -371,7 +371,7 @@ final class BrowserAutomationControllerTests: XCTestCase {
         XCTAssertEqual(s.action, .openSystemSettings)
         XCTAssertEqual(s.actionTitle(), "Open System Settings")
         XCTAssertTrue(s.actionEnabled)
-        XCTAssertTrue(s.statusText(browserName: "Arc").hasPrefix("Denied."))
+        XCTAssertTrue(s.statusText(browserName: "Arc").hasPrefix("Not allowed."))
         sut.openAutomationSettings()
         XCTAssertEqual(permissions.calls.last, .openAutomationSettings)
     }

@@ -72,8 +72,7 @@ import Observation
     }
 
     var emptyText: String {
-        "No apps yet. Add an app to turn Kytkin or double-Shift converting off in it, "
-            + "or to change how Kytkin replaces text there."
+        "No apps here yet. Add an app to turn Kytkin or double-Shift off in it."   // P6-0c (A-9)
     }
 
     func methodOptions(for row: AppRow) -> [AppMethodOption] {

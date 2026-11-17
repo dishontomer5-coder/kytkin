@@ -82,7 +82,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         sut.refresh()
         XCTAssertEqual(sut.defaultBehaviorID, DefaultBehaviorOption.keepCurrentID)
         XCTAssertEqual(sut.defaultBehaviorOptions.map(\.title),
-                       ["Leave the language as it is", "Switch to ABC", "Switch to Hebrew"])
+                       ["Leave as is", "Switch to ABC", "Switch to Hebrew"])
         sut.defaultBehaviorID = "switchTo:" + IDs.hebrew.rawValue
         XCTAssertEqual(store.prefs.general.defaultBehavior, .switchTo(IDs.hebrew))
         XCTAssertEqual(sut.defaultBehaviorID, "switchTo:" + IDs.hebrew.rawValue)
@@ -108,7 +108,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         sut.defaultBehaviorID = "switchTo:" + IDs.abc.rawValue
         XCTAssertEqual(store.prefs, before, "nothing changes, not even in memory")
         XCTAssertEqual(sut.notices.first?.kind, .readOnly)
-        XCTAssertTrue(sut.notices[0].message.contains("newer version"))
+        XCTAssertTrue(sut.notices[0].message.contains("newer Kytkin"))
         sut.setLaunchAtLogin(true)
         XCTAssertEqual(login.actions, [.register], "not stored in the preferences file")
     }
@@ -175,7 +175,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         login.registerError = FakeLoginItems.Failure()
         sut.setLaunchAtLogin(true)
         XCTAssertFalse(sut.launchAtLogin)
-        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login.")
+        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login. Try again, or add Kytkin in System Settings → General → Login Items.")
         sut.refresh()
         XCTAssertNil(sut.loginItemError, "cleared when Settings opens again")
     }
@@ -196,7 +196,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         login.statusAfterRegister = .notFound
         sut.setLaunchAtLogin(true)
         XCTAssertFalse(sut.launchAtLogin)
-        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login.")
+        XCTAssertEqual(sut.loginItemError, "Couldn't turn on Open at Login. Try again, or add Kytkin in System Settings → General → Login Items.")
         XCTAssertNil(sut.loginItemHint)
     }
 

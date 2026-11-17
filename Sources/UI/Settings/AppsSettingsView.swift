@@ -30,12 +30,12 @@ struct AppsSettingsView: View {
                                 get: { row.convertOn }, set: { model.setConvertOn($0, for: row.bundleID) }))
                                 .disabled(!row.kytkinOn)
                             Text(AppsSettingsModel.convertOffText).font(.caption).foregroundStyle(.secondary)
-                            Picker("How Kytkin replaces text", selection: Binding(
+                            Picker("How double-Shift changes text", selection: Binding(
                                 get: { row.methodID }, set: { model.setMethod($0, for: row.bundleID) })) {
                                 ForEach(model.methodOptions(for: row)) { Text($0.title).tag($0.id) }
                             }
                             .disabled(!row.kytkinOn || !row.convertOn)
-                            Text(AppMethodOption.explanation(of: row.effectiveMethod))
+                            Text(AppMethodOption.explanation(of: row.effectiveMethod, userChosen: row.methodID != AppMethodOption.defaultID))
                                 .font(.caption).foregroundStyle(.secondary)
                         } header: {
                             HStack {
@@ -47,7 +47,7 @@ struct AppsSettingsView: View {
                                 }
                                 Spacer()
                                 Button("Remove") { model.remove(row.bundleID) }
-                                    .help("Use Kytkin's defaults for this app again")
+                                    .help("Use the usual settings for this app again")
                                     .disabled(!model.isEditable)
                             }
                         }
@@ -91,7 +91,7 @@ struct AppsSettingsView: View {
         if let id = Bundle(url: url)?.bundleIdentifier, model.addApp(bundleID: id) {
             chooseError = nil
         } else {
-            chooseError = "That app can't be added."
+            chooseError = "That app can't be added. Choose an app from the Applications folder."
         }
     }
 }

@@ -24,7 +24,7 @@ struct LanguagesSettingsView: View {
 
                 Section("Imported layouts") {
                     if model.importedRows.isEmpty {
-                        Text("None yet. Import a Kytkin layout file (.json) to add a language.")
+                        Text("None yet. Most people don't need this: any language added in your Mac's Keyboard settings already works.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(model.importedRows) { row in
@@ -36,7 +36,7 @@ struct LanguagesSettingsView: View {
                             Spacer()
                             Button("Remove") { model.remove(row.id) }
                                 .disabled(!model.isEditable || row.isInPair)
-                                .help(row.isInPair ? "It's one of your two languages. Choose another one first." : "")
+                                .help(row.isInPair ? "You're using this language. Choose another one above first." : "")
                         }
                     }
                     if let notice = model.skippedFilesNotice {

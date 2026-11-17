@@ -73,7 +73,8 @@ struct BrowserAutomationState: Sendable, Equatable {
         case .off: "Off (\"Use Automation\" is off above)"
         case .allowed: "Allowed"
         case .denied:
-            "Denied. To allow it, open System Settings → Privacy & Security → Automation and turn on \(name) under Kytkin."
+            // P6-0c (copy review B-8).
+            "Not allowed. To allow it: System Settings → Privacy & Security → Automation → Kytkin, turn on \(name)."
         case .notAsked:
             browserIsRunning ? "Not asked yet. Click Ask, then OK in the box macOS shows."
                 : "Not asked yet. Open \(name), then click Ask."

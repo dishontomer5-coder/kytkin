@@ -93,8 +93,9 @@ import Observation
     /// Shown when the list is empty.
     var emptyText: String {
         if !hasRules {
-            return "No rules yet. Switch the language yourself in an app and Kytkin remembers it, "
-                + "or use \"Always use…\" in the menu."
+            // P6-0c (copy review R-3).
+            return "No rules yet. Switch the language yourself in an app or website, and Kytkin remembers it. "
+                + "To set one now, use \"Always Use…\" in the menu."
         }
         return "No rules match."
     }
@@ -147,7 +148,14 @@ import Observation
     /// False when the Public Suffix List is missing (D11) or the preferences are read-only.
     var canAddWebsite: Bool { extractor != nil && isEditable }
 
-    static let websiteDataMissingText = "Website rules are unavailable: a file inside Kytkin is missing. Reinstall Kytkin."
+    static let websiteDataMissingText = BrowsersSettingsModel.dataMissingText   // P6-0c (R-5)
+
+    /// P6-0c (copy review R-4): the site row's button for a single-address rule.
+    static let addPartTitle = "Add Rule for Part of a Website…"
+
+    /// P6-0c (copy review R-6): defines learned and pinned once.
+    static let pinFooter = "Learned rules follow your latest switch. Pinned rules stay until you change them. "
+        + "Choosing a language here pins the rule."
 
     /// "Add Website…". `subdomainOf` = a site row's "Add Subdomain Rule…": the field starts with that site.
     func beginAddWebsite(subdomainOf site: String? = nil) {
@@ -208,7 +216,7 @@ import Observation
             name = HostNormalizer.unicodeForm(domain)
             detail = name == domain ? nil : domain
         case .siteHost(let host):
-            kind = "Website, only this address"
+            kind = "Part of a website"   // P6-0c (R-2)
             name = HostNormalizer.unicodeForm(host)
             detail = name == host ? nil : host
         case .chat(let bundleID, _):

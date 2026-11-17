@@ -37,7 +37,7 @@ struct RulesSettingsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Table(rows, selection: $selection) {
-                    TableColumn("For") { row in
+                    TableColumn("App or Website") { row in
                         VStack(alignment: .leading, spacing: 1) {
                             Text(row.name)
                             Text([row.kindTitle, row.detail].compactMap { $0 }.joined(separator: " · "))
@@ -76,7 +76,7 @@ struct RulesSettingsView: View {
                 }
                 .disabled(selected == nil || !model.isEditable)
                 if let selected, model.offersSubdomainRule(selected), case .site(let domain) = selected.scope {
-                    Button("Add Subdomain Rule…") { model.beginAddWebsite(subdomainOf: domain) }
+                    Button(RulesSettingsModel.addPartTitle) { model.beginAddWebsite(subdomainOf: domain) }
                 }
                 Spacer()
                 Button("Add Website…") { model.beginAddWebsite() }
@@ -85,7 +85,7 @@ struct RulesSettingsView: View {
                 Button("Forget All Learned Rules…") { confirmingForgetAll = true }
                     .disabled(model.learnedCount == 0 || !model.isEditable)
             }
-            Text("Choosing a language for a rule pins it: Kytkin won't change a pinned rule by learning.")
+            Text(RulesSettingsModel.pinFooter)
                 .font(.caption).foregroundStyle(.secondary)
         }
         .sheet(item: $model.addWebsite) { form in

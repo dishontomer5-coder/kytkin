@@ -36,14 +36,14 @@ final class SettingsMappingTests: XCTestCase {
             info(IDs.abc, "ABC"), info(IDs.russian, "Russian", enabled: false), info(IDs.hebrew, "Hebrew"),
             info(IDs.abc, "ABC again"), info(InputSourceID(""), "Blank"),
         ])
-        XCTAssertEqual(opts.map(\.title), ["Leave the language as it is", "Switch to ABC", "Switch to Hebrew"])
+        XCTAssertEqual(opts.map(\.title), ["Leave as is", "Switch to ABC", "Switch to Hebrew"])
         XCTAssertEqual(opts.map(\.behavior), [.keepCurrent, .switchTo(IDs.abc), .switchTo(IDs.hebrew)])
         XCTAssertEqual(Set(opts.map(\.id)).count, opts.count, "ids are unique")
     }
 
     func testSavedSourceThatIsNotEnabledIsStillListed() {
         let opts = DefaultBehaviorOption.options(current: .switchTo(IDs.russian), sources: [info(IDs.abc, "ABC")])
-        XCTAssertEqual(opts.last?.title, "Switch to Russian (not turned on)")
+        XCTAssertEqual(opts.last?.title, "Switch to Russian (not added in Keyboard settings)")
         XCTAssertEqual(opts.last?.id, DefaultBehaviorOption.id(for: .switchTo(IDs.russian)))
         XCTAssertEqual(opts.count, 3)
     }
@@ -71,7 +71,7 @@ final class SettingsMappingTests: XCTestCase {
         let newer = SettingsNotice.notices(loadIssue: .newerSchemaReadOnly, isReadOnly: true, lastSaveFailed: false,
                                            loadWasLossy: false, originalBackupURL: nil)
         XCTAssertEqual(newer.map(\.kind), [.readOnly])
-        XCTAssertTrue(newer[0].message.contains("newer version"))
+        XCTAssertTrue(newer[0].message.contains("newer Kytkin"))
 
         let unreadable = SettingsNotice.notices(loadIssue: .unreadable, isReadOnly: true, lastSaveFailed: true,
                                                 loadWasLossy: false, originalBackupURL: nil)

@@ -96,7 +96,9 @@ import Observation
         } else if threw || after.isOn != on {
             // QA (P2-23): also when the call "succeeded" but the status didn't follow (e.g. `.notFound` for a copy
             // macOS can't register), so the switch never flips back silently.
-            loginItemError = on ? "Couldn't turn on Open at Login." : "Couldn't turn off Open at Login."
+            // P6-0c (copy review S-8): what to do.
+            loginItemError = on ? "Couldn't turn on Open at Login. Try again, or add Kytkin in System Settings → "
+                + "General → Login Items." : "Couldn't turn off Open at Login."
         } else {
             loginItemError = nil
         }
@@ -105,7 +107,7 @@ import Observation
     /// Shown under the switch while macOS waits for the user's approval.
     var loginItemHint: String? {
         guard loginItemStatus == .requiresApproval else { return nil }
-        return "macOS needs your OK: turn Kytkin on in System Settings → General → Login Items."
+        return "macOS needs your OK: in System Settings → General → Login Items, turn on Kytkin."   // P6-0c (S-7)
     }
 
     var showsOpenLoginItems: Bool { loginItemStatus == .requiresApproval }

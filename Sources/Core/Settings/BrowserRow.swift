@@ -34,6 +34,8 @@ struct BrowserRow: Identifiable, Equatable, Sendable {
     let statusHint: String?
     let statusAction: StatusAction?
     let automation: Automation
+    /// P6-0c (copy review B-5): how this browser's private windows are recognized; nil = nothing to say.
+    var privateNote: String? = nil
 
     var isWorking: Bool { support == .works || support == .worksWithAutomation }
 

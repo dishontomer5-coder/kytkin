@@ -63,7 +63,7 @@ enum WebsiteInput: Equatable, Sendable {
         case .empty: nil
         case .invalid: "Enter a website address, like ynet.co.il or a link copied from your browser."
         case .sharedSuffix(let host):
-            "\(HostNormalizer.unicodeForm(host)) is shared by many websites. Enter one site, like "
+            "\(HostNormalizer.unicodeForm(host)) is shared by many websites. Enter one of them, like "
                 + "www.\(HostNormalizer.unicodeForm(host))."
         case .single(let key, let hostOnly):
             hostOnly ? "Only \(HostNormalizer.unicodeForm(key))"

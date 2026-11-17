@@ -48,10 +48,10 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertEqual(sut.options.map(\.id), [IDs.abc, IDs.hebrew, IDs.hebrewQWERTY, pinyin])
         XCTAssertEqual(sut.options.map(\.kind), [.enabled, .enabled, .installed, .inputMethod])
         XCTAssertEqual(sut.options.map(\.title),
-                       ["ABC", "Hebrew", "Hebrew-QWERTY (not turned on)", "Pinyin - Simplified (can't convert)"])
+                       ["ABC", "Hebrew", "Hebrew-QWERTY (not added)", "Pinyin - Simplified (can't convert)"])
         XCTAssertEqual(sut.options.map(\.isSelectable), [true, true, true, false])
         XCTAssertEqual(sut.optionGroups.map(\.title),
-                       ["Turned on", "Other installed layouts (convert only)", "Can't convert"])
+                       ["In your Keyboard settings", "On this Mac, not added (convert only)", "Can't convert"])
     }
 
     func testImportedMapWithAnInstalledBaseIsAnOption() throws {
@@ -63,7 +63,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertEqual(option.title, "Hebrew (custom) (imported, types with Hebrew)")
         XCTAssertEqual(option.inputSource, IDs.hebrew)
         XCTAssertTrue(option.isSelectable)
-        XCTAssertEqual(sut.optionGroups.map(\.title).prefix(2), ["Turned on", "Imported"])
+        XCTAssertEqual(sut.optionGroups.map(\.title).prefix(2), ["In your Keyboard settings", "Imported"])
     }
 
     func testImportedMapWithoutAnInstalledBaseIsNotAnOption() throws {

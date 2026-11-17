@@ -16,18 +16,19 @@ struct SettingsNotice: Equatable, Sendable, Identifiable {
         var result: [SettingsNotice] = []
         if isReadOnly {
             let message = if loadIssue == .newerSchemaReadOnly {
-                "Your settings file comes from a newer version of Kytkin, so settings can't be changed here. "
+                "These settings come from a newer Kytkin, so you can't change them here. "   // P6-0c (S-1)
                     + "Update Kytkin to change them."
             } else {
-                "Kytkin couldn't read its settings file, so it is using the defaults and won't touch the file. "
-                    + "Settings can't be changed until Kytkin can read it again."
+                // P6-0c (copy review S-2): a way out.
+                "Kytkin couldn't read its settings, so it is using the defaults. Your file is left as it is. "
+                    + "To start fresh, move it out of the Settings folder (Advanced → Open Settings Folder)."
             }
             result.append(SettingsNotice(kind: .readOnly, message: message))
         }
         if lastSaveFailed, !isReadOnly {
             result.append(SettingsNotice(kind: .saveFailed,
-                                         message: "Couldn't save settings. Your changes work for now, "
-                                             + "but may be lost when Kytkin quits."))
+                                         message: "Settings couldn't be saved. Your changes work until "
+                                             + "Kytkin quits."))   // P6-0c (S-3)
         }
         if case .corruptQuarantined(let url)? = loadIssue {
             result.append(SettingsNotice(kind: .quarantined,
