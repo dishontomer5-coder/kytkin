@@ -859,4 +859,20 @@ final class ConvertControllerRichContentTests: XCTestCase {
         XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .richContent))
         XCTAssertTrue(log.performs.isEmpty, "no Backspace after the budget")
     }
+
+    // MARK: - P3-57: Slack's image emoji (odd units in AXValue, an AXImage child)
+
+    @TextActor func testOwnersSlackImageEmojiBoxConvertsThroughAX() async {
+        // `akuo :smile: akuo hello` → page text `akuo  akuo hello`, AXValue 2 units longer at the image.
+        let rig = rig("akuo  akuo hello")
+        rig.field.oddValueUnits = (5, [0xE000, 0xE001])
+        rig.field.imageCount = 1
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .axSelectAndType, switched: true))
+        XCTAssertEqual(rig.field.text, "שלום  שלום יקךךם")
+        XCTAssertEqual(pastes(rig.poster), 0)
+        let line = sink.traces.first?.line ?? ""
+        XCTAssertTrue(line.contains("oddUnits=2:U+E000,U+E001") && line.contains("oddRunsStripped=1"), line)
+        XCTAssertFalse(line.contains("akuo") || line.contains("hello"), "no text in the trace")
+    }
 }

@@ -879,4 +879,56 @@ final class ChromiumAXConvertTests: XCTestCase {
         XCTAssertTrue(ax.lastDiagnostic.quoteBoundary)
         XCTAssertEqual(ax.lastDiagnostic.atoms, 0)
     }
+
+    // MARK: - P3-57: Slack's image emoji: odd units in AXValue the app's offsets don't count
+
+    @TextActor private func imageBox(_ text: String, at: Int, odd: [UInt16], images: Int = 1) -> FakeChromiumField {
+        let f = field(text)
+        f.oddValueUnits = (at, odd)
+        f.imageCount = images
+        return f
+    }
+
+    @TextActor func testVhFireVhVhWithTwoPrivateUseUnits() async {
+        // The owner's numbers: page text `vh  vh vh` (9 units), AXValue 11 (2 odd units at the image).
+        let f = imageBox("vh  vh vh", at: 3, odd: [0xE000, 0xE001])
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .converted(pieces: 3))
+        XCTAssertEqual(f.text, "הי  הי הי", "the image (not in the page text) untouched, every vh converted once")
+        XCTAssertEqual(ax.lastDiagnostic.valueUnits, 11)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 1)
+        XCTAssertEqual(ax.lastDiagnostic.oddUnits, "2:U+E000,U+E001")
+    }
+
+    @TextActor func testAZeroWidthSpacePairAndAVS16OnlyShape() async {
+        for odd in [[0x200B, 0x200B], [0xFE0F, 0xFE0F]] as [[UInt16]] {
+            clock = FakeClock(nowNanos: 1_000_000_000)
+            poster = RecordingPoster()
+            let f = imageBox("akuo  akuo hello", at: 5, odd: odd)
+            let (result, _) = await runWithAtoms(f)
+            XCTAssertEqual(result, .converted(pieces: 3), "\(odd)")
+            XCTAssertEqual(f.text, "שלום  שלום יקךךם")
+        }
+    }
+
+    @TextActor func testRunsThatDontMatchTheImagesStaySwitchOnly() async {
+        let f = imageBox("vh  vh vh", at: 3, odd: [0xE000, 0xE001], images: 2)
+        let (result, ax) = await runWithAtoms(f)
+        XCTAssertEqual(result, .unavailable(.inconsistent))
+        XCTAssertEqual(ax.lastDiagnostic.readCheck, .prefix)
+        XCTAssertEqual(ax.lastDiagnostic.oddRunsStripped, 0)
+        XCTAssertEqual(ax.lastDiagnostic.spanShape, "ax[Z,L,L,Z,L,L] value[U+E000/Co,U+E001/Co,Z,L,L,Z]")
+        XCTAssertTrue(poster.events.isEmpty)
+    }
+
+    func testOddUnitHelpers() {
+        XCTAssertEqual(ChromiumAXConvert.oddRuns(in: "a\u{E000}\u{E001}b\u{200B}c"), [1..<3, 4..<5])
+        XCTAssertEqual(ChromiumAXConvert.strippingOddUnits("a\u{E000}\u{FE0F}b"), "ab")
+        XCTAssertFalse(ChromiumAXConvert.isOddUnit("\u{FFFC}"), "U+FFFC is P3-51's object, counted by the app")
+        XCTAssertFalse(ChromiumAXConvert.isOddUnit("😄"), "an emoji is text, not an odd unit")
+        XCTAssertEqual(ChromiumAXConvert.shapeCode("a"), "L")
+        XCTAssertEqual(ChromiumAXConvert.shapeCode("7"), "N")
+        XCTAssertEqual(ChromiumAXConvert.shapeCode("\u{200B}"), "U+200B/Cf")
+        XCTAssertNil(ChromiumAXConvert.oddUnitsSummary("plain"))
+    }
 }
