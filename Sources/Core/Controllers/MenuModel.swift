@@ -2,22 +2,24 @@
 // closures (the UI's cached app names and the switcher's source list), so every line, text and enabled state is
 // unit-tested. StatusItemController only renders the result.
 //
-// Layout (P6-0f, owner "why is it so cluttered?"; earlier P6-0c: visual review §3.3, flows S2, S3, copy review M-*):
+// Layout (P6-0g, design v2 review "Menu-bar menu" and lg-menu; earlier P6-0f, P6-0c):
 //   Turn Kytkin On                                    (only while it is turned off; then no context block, no Pause)
-//   <App> · <Language>[, always | , remembered]       (section header; omitted with no app yet; the state word says
-//                                                      whether the language is pinned or learned, nothing otherwise)
-//     ✓ Always Use <current language> in <App>        (indented; checked = that pin exists; choosing it again unpins)
-//     ✓ Don't Convert in <App>                        (indented; double-Shift only; the per-app switch in Advanced)
-//     Forget <App>                                    (indented; only when a learned or pinned rule matches)
-//   P3-9, on a site in a watched browser (001 §14.9): "<site> · <Language>", "Always Use … on <site>",
-//   "Forget <site>" (only for a matched site or subdomain rule, D6).
+//   In <App>                                          (section header; "On <site>" on a website; omitted with no app)
+//   Always use        [EN | HE]                       (the Kytkin key: the filled half = the pinned pair language;
+//                                                      a click on the other half pins it, on the filled half unpins)
+//   ✓ Follow My Last Switch                           (checked = no pin here: the learned rule follows your switches)
+//   ──
+//   ✓ Turn Off Double-Shift in <App>                  (the per-app switch, Rules' Double-Shift column)
+//   Forget Rule for <App>                             (only when a learned or pinned rule matches)
+//   P3-9, on a site in a watched browser (001 §14.9): the same for the site ("Forget Rule for <site>" only for a
+//   matched site or subdomain rule, D6).
 //   ── ⚠ warnings, only when any apply (MenuWarning order): one clickable line each, the fix as its subtitle;
 //      then "Update available: …" when the optional update check found one ──
 //   Pause Kytkin | Resume Kytkin
-//   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23; About is
-//                                                      a Settings tab, not a menu line any more)
-//   ── Debug ▸ (Debug builds only: the DEBUG lines and "Switch to ▸" in one submenu) ──
+//   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23)
+//   ── Debug ▸ (Debug builds only, and only when the menu is opened with Option-click) ──
 //   Quit Kytkin  ⌘Q
+// One left inset for every item (review P3): no indentation.
 //
 // User-visible texts are plain English with no implementation words (no "tap", "TIS"); DEBUG lines may use them.
 // Menu items use Title Case, grayed info lines sentence case (copy review rule 6).
@@ -64,7 +66,8 @@ enum MenuModel {
     /// language, its letters being known, the look or a warning: the items beside Kytkin never move.
     enum ItemLayout {
         static let glyphWidth: Double = 18
-        static let gap: Double = 4
+        /// P6-0g (review P3): 5 pt from the icon to "EN".
+        static let gap: Double = 5
         static let lettersWidth: Double = 20
         /// Letters-only mode: room for the "needs attention" dot after the letters, kept even without one.
         static let dotRoom: Double = 8
@@ -124,8 +127,11 @@ enum MenuModel {
     /// - appName: display name for a bundle ID ("Notes"); the UI caches it.
     /// - settingsAvailable: the Settings window hook is set (P2-23). Without it "Settings…" is disabled and the
     ///   "Open Settings…" hints are hidden.
+    /// - sourceCode: P6-0g, the letters for a language ("EN"), from its input source's language; nil = the first two
+    ///   letters of its name.
     static func items(state: MenuState, currentSource: InputSourceInfo?, settingsAvailable: Bool,
                       includeDebug: Bool, sourceName: (InputSourceID) -> String,
+                      sourceCode: (InputSourceID) -> String? = { _ in nil },
                       appName: (String) -> String) -> [MenuItemModel] {
         // P6-0f: the menu is built from sections; a separator goes only between non-empty ones.
         var sections: [[MenuItemModel]] = []
@@ -133,8 +139,8 @@ enum MenuModel {
             // P6-0c (visual review N2, copy M-10): one click turns it back on; nothing else applies while it is off.
             sections.append([.action("Turn Kytkin On", .turnOn)])
         } else {
-            sections.append(contextItems(state: state, currentSource: currentSource, sourceName: sourceName,
-                                         appName: appName))
+            sections += contextSections(state: state, currentSource: currentSource, sourceName: sourceName,
+                                        sourceCode: sourceCode, appName: appName)
         }
 
         var notices = MenuWarning.list(for: state).filter { $0 != .kytkinOff }
@@ -182,12 +188,25 @@ enum MenuModel {
     }
     #endif
 
-    // MARK: - Context, Pin, Forget, Don't Convert
+    // MARK: - Context: Always use, Follow My Last Switch, Double-Shift, Forget
 
-    /// P6-0c: the block about the app (or website) in front. Empty with no app yet (copy review M-3).
+    /// P6-0c / P6-0g: the block about the app (or website) in front, as one list (tests and stand-ins).
     static func contextItems(state: MenuState, currentSource: InputSourceInfo?,
                              sourceName: (InputSourceID) -> String,
+                             sourceCode: (InputSourceID) -> String? = { _ in nil },
                              appName: (String) -> String) -> [MenuItemModel] {
+        contextSections(state: state, currentSource: currentSource, sourceName: sourceName, sourceCode: sourceCode,
+                        appName: appName).filter { !$0.isEmpty }.enumerated().flatMap { i, section in
+            i == 0 ? section : [.separator] + section
+        }
+    }
+
+    /// P6-0g: two sections: the language ("In <App>", "Always use" [EN | HE], "Follow My Last Switch"), then
+    /// "Turn Off Double-Shift in <App>" and "Forget Rule for <App>". Empty with no app yet (copy review M-3).
+    static func contextSections(state: MenuState, currentSource: InputSourceInfo?,
+                                sourceName: (InputSourceID) -> String,
+                                sourceCode: (InputSourceID) -> String? = { _ in nil },
+                                appName: (String) -> String) -> [[MenuItemModel]] {
         guard let rule = state.currentRule else { return [] }
         let c = rule.context
         let resolution = rule.resolution
@@ -200,49 +219,49 @@ enum MenuModel {
         }
         let appTitle = appName(c.bundleID)
 
-        // The language shown: the rule's, else what is selected now.
-        let language = (resolution.matched?.inputSource ?? resolution.target).map(sourceName)
-            ?? currentSource?.name
-        var head = language.map { "\(here) · \($0)" } ?? here
-
-        // P6-0f (was a grayed line, P6-0c flows S2): a short state word in the header: "always" for a pin,
-        // "remembered" for a learned rule, nothing without a rule of its own (none, the default, the browser's).
-        if let matched = resolution.matched {
-            let browsersOwn: Bool
-            if case .app = matched.scope { browsersOwn = isSite } else { browsersOwn = false }
-            if !browsersOwn { head += matched.origin == .pinned ? ", always" : ", remembered" }
-        }
+        // P6-0g (review P1): "In cmux" / "On ynet.co.il"; the key and the menu-bar letters say the language.
+        var head = (isSite ? "On " : "In ") + here
         if isSite, c.isPrivateWindow == true { head += " (private)" }
 
-        // P6-0f: only when there is a rule to forget; plain wording.
-        let forget: [MenuItemModel] = rule.forgetScope.map {
-            [.action("Forget \(isSite ? here : scopeName($0, appName: appName))", .forgetCurrent, indent: 1)]
-        } ?? []
-
-        // P6-0c (flows S3; owner: double-Shift only): the per-app convert switch (Advanced → App Exceptions).
-        let dontConvert = MenuItemModel.action("Don't Convert in \(appTitle)", .toggleConvertInCurrentApp,
-                                               checked: state.convertOffInCurrentApp, indent: 1)
-
-        // P6-0f: the actions are indented under the header so they read as belonging to it.
-        return [.header(head),
-                pinItem(rule, currentSource: currentSource, preposition: isSite ? "on" : "in", here: here),
-                dontConvert] + forget
-    }
-
-    /// "Always Use <language> in|on <here>": checked once exactly that pin exists; choosing it again unpins it
-    /// (visual review N5: never checked and greyed).
-    private static func pinItem(_ rule: SwitchController.CurrentRule, currentSource: InputSourceInfo?,
-                                preposition: String, here: String) -> MenuItemModel {
-        guard let current = currentSource else {
-            return .action("Always Use This Language \(preposition) \(here)", .pinCurrent, enabled: false, indent: 1)
+        // The pin of exactly this scope. P3-9: compare normalized scopes, so an old hand-edited Unicode key still
+        // reads as "this pin".
+        let pin = resolution.matched.flatMap {
+            $0.origin == .pinned && RuleEngine.normalized($0.scope) == RuleEngine.normalized(rule.pinScope) ? $0 : nil
         }
-        // P3-9: compare normalized scopes, so an old hand-edited Unicode key still reads as "this pin".
-        let done = rule.resolution.matched.map {
-            $0.origin == .pinned && RuleEngine.normalized($0.scope) == RuleEngine.normalized(rule.pinScope)
-                && $0.inputSource == current.id
-        } ?? false
-        return .action("Always Use \(current.name) \(preposition) \(here)", done ? .unpinCurrent : .pinCurrent,
-                       checked: done, indent: 1)
+
+        var language: [MenuItemModel] = [.header(head)]
+        if let pair = state.pairInputSources, !pair.a.rawValue.isEmpty, !pair.b.rawValue.isEmpty, pair.a != pair.b {
+            // P6-0g (review P2): both languages can be chosen, not only the current one.
+            func half(_ id: InputSourceID) -> MenuItemModel.LanguageKey.Half {
+                let name = sourceName(id)
+                let code = sourceCode(id) ?? String(name.prefix(2)).uppercased()
+                return .init(letters: code, name: name, source: id)
+            }
+            let chosen: PairSide? = pin.flatMap {
+                $0.inputSource == pair.a ? .a : $0.inputSource == pair.b ? .b : nil
+            }
+            language.append(.languageKey("Always use", MenuItemModel.LanguageKey(a: half(pair.a), b: half(pair.b),
+                                                                                  chosen: chosen)))
+            if let pin, chosen == nil {
+                // Pinned (by hand in the file, or before the pair changed) to a language outside the pair.
+                language.append(.info("Always \(sourceName(pin.inputSource))"))
+            }
+        } else if let current = currentSource {
+            // No pair known: pin what is selected now.
+            let done = pin?.inputSource == current.id
+            language.append(.action("Always Use \(LanguageNames.friendly(current))", done ? .unpinCurrent : .pinCurrent,
+                                    checked: done))
+        }
+        language.append(.action("Follow My Last Switch", .unpinCurrent, checked: pin == nil))
+
+        // P6-0c (flows S3; owner: double-Shift only): the per-app convert switch (Rules' Double-Shift column).
+        var app: [MenuItemModel] = [.action("Turn Off Double-Shift in \(appTitle)", .toggleConvertInCurrentApp,
+                                            checked: state.convertOffInCurrentApp)]
+        // P6-0f: only when there is a rule to forget.
+        if let scope = rule.forgetScope {
+            app.append(.action("Forget Rule for \(isSite ? here : scopeName(scope, appName: appName))", .forgetCurrent))
+        }
+        return [language, app]
     }
 
     /// How a rule's scope is named in the menu: the app's name, the site, or the chat (P3/P4).
@@ -274,13 +293,13 @@ enum MenuModel {
                            subtitle: "Kytkin opens again by itself")
         case .accessibilityNeeded(let toggleStillWorks):
             // P6-0c (flows M3): websites need it too.
-            return open(toggleStillWorks ? "Double-Shift can't convert: Accessibility is off"
+            return open(toggleStillWorks ? "Double-Shift can’t convert: Accessibility is off"
                                          : "Double-Shift and website rules are off: Accessibility is off",
                         .permissions, "Allow Accessibility…")
         case .otherSwitchers(let names):
             // Owner 2026-11-17: a warning only; Settings explains.
             return open("\(joined(names)) also switch\(names.count == 1 ? "es" : "") languages", .general,
-                        names.count == 1 ? "Quit it so the two don't undo each other" : "Quit them so they don't undo Kytkin")
+                        names.count == 1 ? "Quit it so the two don’t undo each other" : "Quit them so they don’t undo Kytkin")
         case .perDocumentInput:
             // P6-0c (copy review M-14, P1): the old menu path was wrong; Settings shows the right steps.
             return open("Not learning: macOS is switching languages per document", .permissions, "How to Turn It Off…")
@@ -296,13 +315,13 @@ enum MenuModel {
         case .secureInput:
             return .info("Double-Shift waits: another app is protecting your typing", symbol: warn)
         case .settingsReadOnly(let newerVersion):
-            return open(newerVersion ? "Settings are from a newer Kytkin" : "Settings couldn't be read",
+            return open(newerVersion ? "Settings are from a newer Kytkin" : "Settings couldn’t be read",
                         .general, newerVersion ? "Update Kytkin to change them" : "Kytkin is using the defaults")
         case .saveFailed:
-            return .info("Settings couldn't be saved. Changes last until you quit.", symbol: warn)
+            return .info("Settings couldn’t be saved. Changes last until you quit.", symbol: warn)
         case .settingsPartlyReset(let original):
-            guard let original else { return .info("Some settings couldn't be read and were reset", symbol: warn) }
-            return .action("Some settings couldn't be read and were reset", .revealFile(original), symbol: warn,
+            guard let original else { return .info("Some settings couldn’t be read and were reset", symbol: warn) }
+            return .action("Some settings couldn’t be read and were reset", .revealFile(original), symbol: warn,
                            subtitle: "Show Original File")
         case .settingsReset(let movedTo):
             return .action("Settings were damaged, so Kytkin started fresh", .revealFile(movedTo), symbol: warn,

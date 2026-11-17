@@ -230,9 +230,15 @@ import AppKit
                                                       state: { controller.menuState },
                                                       relaunch: { AppRelauncher.quitAndReopen() })
         // P2-25: Rules, Convert and Apps. Names come from LaunchServices; running apps only when Settings opens.
+        // P6-0g: the app exceptions live in Rules now (the same per-app preferences the menu changes).
+        let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
+                                     runningApps: Self.runningApps,
+                                     ownBundleID: Bundle.main.bundleIdentifier ?? "")
         let rules = RulesSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
                                        sources: { switcher.sources(includeDisabled: true) },
-                                       extractor: DomainExtractor.bundled)   // P3-15: "Add Website…"
+                                       extractor: DomainExtractor.bundled,   // P3-15: "Add Website…"
+                                       apps: apps,
+                                       inputSourceForPairMember: { [layoutCatalog] in layoutCatalog.inputSource(for: $0) })
         // P3-15: Browsers & Sites. The inventory is read when Settings opens (P3-22: AppController re-reads the
         // web-link handlers and re-pushes the policy if they changed); LaunchServices lookups only.
         let browsers = BrowsersSettingsModel(
@@ -245,18 +251,48 @@ import AppKit
             support: { controller.browserSupport(for: $0) },
             automation: automation,   // P3-7: the switch, the states, Ask / Open System Settings; silent refresh
             lastFrontBrowser: { controller.lastFrontBrowserID })   // P3-26: the dropdown's default
-        let apps = AppsSettingsModel(store: store, appName: StatusItemController.lookUpAppName,
-                                     runningApps: Self.runningApps,
-                                     ownBundleID: Bundle.main.bundleIdentifier ?? "")
         let fileURL = store.fileURL
+        let store = self.store
+        let importedLayouts = self.importedLayouts
         return SettingsWindowController(general: general,
                                         about: AboutInfo(infoDictionary: Bundle.main.infoDictionary ?? [:],
                                                          suffixListVersion: PublicSuffixList.bundledVersion),
                                         tabs: .init(languages: languages, rules: rules,
-                                                    convert: ConvertSettingsModel(store: store), apps: apps,
+                                                    convert: ConvertSettingsModel(store: store),
                                                     permissions: permissionsTab, browsers: browsers),
                                         showWelcome: { [weak self] in self?.openOnboarding() },
-                                        openSettingsFolder: { Self.openSettingsFolder(fileURL) })
+                                        openSettingsFolder: { Self.openSettingsFolder(fileURL) },
+                                        copyDiagnostics: {
+                                            Self.copyDiagnostics(DiagnosticsReport.text(
+                                                appVersion: Self.versionText, macOSVersion: Self.macOSVersionText,
+                                                state: controller.menuState, prefs: store.prefs,
+                                                importedLayoutCount: importedLayouts.maps.count))
+                                        })
+    }
+
+    /// P6-0g: Advanced → "Copy Diagnostics" (the user's click only): the privacy-safe report (`DiagnosticsReport`:
+    /// versions, states and counts, never typed text, websites or rules) on the clipboard. App behaviour; agents and
+    /// tests never call it.
+    private static func copyDiagnostics(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    private static var versionText: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let short = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        #if DEBUG
+        return "\(short) (\(build)) Dev"
+        #else
+        return "\(short) (\(build))"
+        #endif
+    }
+
+    private static var macOSVersionText: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
     }
 
     /// P3-15: About → "Open Settings Folder" (a click only): Finder shows the preferences file, or its folder.

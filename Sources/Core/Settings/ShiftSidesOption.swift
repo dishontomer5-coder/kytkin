@@ -21,10 +21,10 @@ struct ShiftSidesOption: Identifiable, Equatable, Sendable {
 
     static func title(of sides: DoubleShiftConfig.SidePolicy) -> String {
         switch sides {
-        case .sameSide: "Same Shift twice"   // P6-0c (copy review C-2)
+        case .sameSide: "Same Shift Twice"   // P6-0c (copy review C-2); P6-0g: title case (mock-up)
         case .either: "Either Shift"
-        case .leftOnly: "Left Shift only"
-        case .rightOnly: "Right Shift only"
+        case .leftOnly: "Left Shift Only"
+        case .rightOnly: "Right Shift Only"
         }
     }
 }

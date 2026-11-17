@@ -12,20 +12,33 @@ struct LanguageOption: Identifiable, Equatable, Sendable {
         -> [LanguageOption] {
         var result: [LanguageOption] = []
         var seen = Set<InputSourceID>()
+        var ids: [(InputSourceID, String)] = []
         func add(_ id: InputSourceID, suffix: String = "") {
             guard !id.rawValue.isEmpty, seen.insert(id).inserted else { return }
-            result.append(LanguageOption(id: id, name: name(of: id, in: sources) + suffix))
+            ids.append((id, suffix))
         }
         add(pair.a)
         add(pair.b)
         for s in sources where s.isEnabled { add(s.id) }
         if let current { add(current, suffix: " (not turned on)") }
+        // P6-0g: "English", "Hebrew"; two layouts of one language are told apart by the layout ("English (ABC)").
+        let names = ids.map { name(of: $0.0, in: sources) }
+        for (i, (id, suffix)) in ids.enumerated() {
+            let clash = names.filter { $0 == names[i] }.count > 1
+            result.append(LanguageOption(id: id, name: (clash ? pickerTitle(of: id, in: sources) : names[i]) + suffix))
+        }
         return result
     }
 
-    /// The source's name from `sources` (enabled or not), else the last part of its id.
+    /// P6-0g: the language's name ("English", "Hebrew") from `sources` (enabled or not), else the last part of its id.
     static func name(of id: InputSourceID, in sources: [InputSourceInfo]) -> String {
-        if let s = sources.first(where: { $0.id == id }), !s.name.isEmpty { return s.name }
+        if let s = sources.first(where: { $0.id == id }) { return LanguageNames.friendly(s) }
+        return DefaultBehaviorOption.fallbackName(id)
+    }
+
+    /// P6-0g: "English (ABC)".
+    static func pickerTitle(of id: InputSourceID, in sources: [InputSourceInfo]) -> String {
+        if let s = sources.first(where: { $0.id == id }) { return LanguageNames.pickerTitle(s) }
         return DefaultBehaviorOption.fallbackName(id)
     }
 }

@@ -1,0 +1,88 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.98431,0.99216,0.98824,1.00000",
+          "srgb:0.89020,0.93333,0.91765,1.00000"
+        ]
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.07059,0.20000,0.17255,1.00000",
+          "srgb:0.03922,0.12941,0.10980,1.00000"
+        ]
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.04314,0.23137,0.20000,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:0.15686,0.50196,0.43529,1.00000"
+              }
+            }
+          ],
+          "glass" : true,
+          "image-name" : "2-left-half.svg",
+          "name" : "Left half"
+        }
+      ],
+      "name" : "Left half (first language)",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.1
+      }
+    },
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "srgb:0.23922,0.83922,0.69020,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "1-right-half.svg",
+          "name" : "Right half",
+          "opacity-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : 0.45
+            }
+          ]
+        }
+      ],
+      "name" : "Right half (second language)",
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.1
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

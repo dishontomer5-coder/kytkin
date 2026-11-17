@@ -44,12 +44,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Label refresh (any input-source change, Pause, context, warnings). Touches the button only on a change.
     /// P6-0e: the whole item is one template image (`MenuBarGlyph.itemImage`: the logo with the on language's half
-    /// filled, 4 pt, the letters in a fixed 20 pt frame), so its width never moves. A language change cross-fades
+    /// filled, 5 pt (P6-0g), the letters in a fixed 20 pt frame), so its width never moves. A language change cross-fades
     /// over 150 ms (Colors.md), never with Reduce Motion.
     func refresh() {
         let state = menuControl.menuState
         let info = switcher.currentInfo
-        let label = MenuModel.label(languageCode: info?.languageCode, languageName: info?.name, state: state,
+        let label = MenuModel.label(languageCode: info?.languageCode, languageName: info.map(LanguageNames.friendly), state: state,
                                     display: state.menuBarDisplay, current: info?.id)
         guard label != shownLabel, let button = statusItem.button else { return }
         let languageChanged = shownLabel.map { $0.look == label.look && ($0.side != label.side || $0.letters != label.letters) }
@@ -92,10 +92,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
         let sources = switcher.sources(includeDisabled: true)
+        // P6-0g (review P1): the Debug submenu only in Debug builds, and only when the menu is opened with Option-click.
+        let optionClick = NSEvent.modifierFlags.contains(.option)
         let models = MenuModel.items(
             state: menuControl.menuState, currentSource: switcher.currentInfo,
-            settingsAvailable: openSettings != nil, includeDebug: Self.includeDebug,
-            sourceName: { id in sources.first { $0.id == id }?.name ?? id.rawValue },
+            settingsAvailable: openSettings != nil, includeDebug: Self.includeDebug && optionClick,
+            sourceName: { id in sources.first { $0.id == id }.map(LanguageNames.friendly) ?? id.rawValue },   // P6-0g
+            sourceCode: { id in
+                let code = InputSourceLabel.label(forLanguages: [sources.first { $0.id == id }?.languageCode ?? ""])
+                return code == InputSourceLabel.unknown ? nil : code
+            },
             appName: { [appNames] in appNames.name(for: $0) })
         for model in models { menu.addItem(render(model)) }
     }
@@ -124,6 +130,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.state = model.isChecked ? .on : .off
             item.indentationLevel = model.indent
             decorate(item, model)
+            return item
+        case .languageKey(let key):
+            // P6-0g (lg-menu): "Always use" with the Kytkin key, a custom view.
+            // P6-0g QA: the keyboard fallback. Arrow keys highlight the line and Return sends the item's action
+            // (a view item gets no keys itself): it pins a language (`keyboardAction`); a mouse click on a half goes
+            // to the view instead.
+            let item = NSMenuItem(title: model.title, action: #selector(performMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ActionBox(key.keyboardAction(current: switcher.current))
+            item.isEnabled = model.isEnabled
+            item.view = KytkinKeyMenuView(title: model.title, key: key, enabled: model.isEnabled) { [weak self] side in
+                self?.perform(key.action(for: side))
+            }
             return item
         case .submenu(let lines):
             // P6-0f: "Debug ▸" (DEBUG builds only).
@@ -160,8 +179,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func performMenuAction(_ sender: NSMenuItem) {
         guard let action = (sender.representedObject as? ActionBox)?.action else { return }
+        perform(action)
+    }
+
+    private func perform(_ action: MenuItemModel.Action) {
         switch action {
         case .pinCurrent: menuControl.pinCurrent()
+        case .pinCurrentTo(let source): menuControl.pinCurrent(to: source)
         case .unpinCurrent: menuControl.unpinCurrent()
         case .forgetCurrent: menuControl.forgetCurrent()
         case .toggleConvertInCurrentApp:
@@ -172,7 +196,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .quitAndReopen: AppRelauncher.quitAndReopen()
         case .restartKeyboard: menuControl.restartKeyboard()
         case .revealFile(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
-        case .openURL(let url): NSWorkspace.shared.open(url)   // P6-3: the release page, on the user's click
+        case .openURL(let url): NSWorkspace.shared.open(url)   // P6-3: the release page, on the user’s click
         case .quit: NSApp.terminate(nil)
         }
         refresh()

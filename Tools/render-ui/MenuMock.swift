@@ -36,6 +36,16 @@ struct MenuMock: View {
             // P6-0c: NSMenuItem.sectionHeader (small, bold, secondary).
             Text(item.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 .padding(.horizontal, 12).frame(height: 20)
+        case .languageKey(let key):
+            // P6-0g: KytkinKeyMenuView (AppKit in the app): the title, the key on the right (92 × 26 pt).
+            HStack(spacing: 0) {
+                Text(item.title).font(.system(size: 13)).padding(.leading, 28)
+                Spacer(minLength: 24)
+                KytkinKey(left: key.a.letters, right: key.b.letters, chosen: key.chosen,
+                          size: CGSize(width: 92, height: 26), leftName: key.a.name, rightName: key.b.name) { _ in }
+            }
+            .padding(.trailing, 14)
+            .frame(height: 34)
         default:
             HStack(spacing: 0) {
                 Text(item.isChecked ? "✓" : "").frame(width: 22, alignment: .center)
@@ -117,7 +127,7 @@ struct ToolbarTabsMock: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Kytkin Settings").font(.system(size: 13, weight: .semibold)).padding(.top, 8)
+            Text(selected.title).font(.system(size: 13, weight: .semibold)).padding(.top, 8)   // P6-0g: the tab's name
             HStack(spacing: 4) {
                 ForEach(SettingsTab.allCases) { tab in
                     VStack(spacing: 3) {

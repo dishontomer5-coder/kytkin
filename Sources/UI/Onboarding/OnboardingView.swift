@@ -200,7 +200,7 @@ private struct PermissionsStep: View {
         VStack(alignment: .leading, spacing: 12) {
             StepHeader(tile: .symbol("accessibility"), title: "One permission: Accessibility",
                        subtitle: "Kytkin needs Accessibility to read and replace the text you convert, and to see "
-                           + "which website you're on. macOS asks you once.")
+                           + "which website you’re on. macOS asks you once.")
             Text("Kytkin only reads text when you press Shift twice, and never saves it.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Without it, Kytkin still switches the language for each app.")
@@ -250,7 +250,7 @@ private struct PracticeStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            StepHeader(tile: .symbol("keyboard"), title: "Try double-Shift",
+            StepHeader(tile: .symbol("keyboard"), title: "Try Double-Shift",
                        subtitle: "Type in the box below with the wrong keyboard, then press Shift twice.")
             TextField("Type here…", text: $model.practiceText)
                 .textFieldStyle(.roundedBorder)
@@ -276,7 +276,7 @@ private struct PracticeStep: View {
                 Toggle(isOn: $model.checkForUpdates) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Check for updates")
-                        Text("Once a day, asks GitHub whether a newer version is out. Only Kytkin's version number is sent.")
+                        Text("Once a day, asks GitHub whether a newer version is out. Only Kytkin’s version number is sent.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -295,7 +295,7 @@ private struct PracticeStep: View {
         case .none:
             EmptyView()
         case .converted(let language):
-            StatusLabel(text: "That's it. Kytkin converted it and switched to \(language).",
+            StatusLabel(text: "That’s it. Kytkin converted it and switched to \(language).",
                         symbol: "checkmark.circle.fill", tint: .green)
         case .convertedBack:
             StatusLabel(text: "Pressing Shift twice again converts it back.", symbol: "arrow.uturn.backward.circle",
@@ -321,7 +321,7 @@ private struct MoveToApplicationsView: View {
             Image(nsImage: NSApp.applicationIconImage ?? NSImage())
                 .resizable().frame(width: 80, height: 80).accessibilityHidden(true)
             Text("Move Kytkin to Applications first").font(.system(size: 18, weight: .bold))
-            Text("Kytkin is running from the disk image (or Downloads), so macOS won't keep its permissions. Drag "
+            Text("Kytkin is running from the disk image (or Downloads), so macOS won’t keep its permissions. Drag "
                  + "Kytkin into Applications, then open it from there.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

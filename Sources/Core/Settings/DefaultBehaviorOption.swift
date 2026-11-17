@@ -21,11 +21,11 @@ struct DefaultBehaviorOption: Identifiable, Equatable, Sendable {
     /// Keep current first, then each enabled source (in the given order, duplicates dropped), then the saved one if
     /// it isn't among them.
     static func options(current: DefaultBehavior, sources: [InputSourceInfo]) -> [DefaultBehaviorOption] {
-        var result = [DefaultBehaviorOption(id: keepCurrentID, title: "Leave as is",   // P6-0c (visual G4)
+        var result = [DefaultBehaviorOption(id: keepCurrentID, title: "Leave As Is",   // P6-0c (visual G4); P6-0g: title case (mock-up)
                                             behavior: .keepCurrent)]
         var seen = Set<InputSourceID>()
         for s in sources where s.isEnabled && !s.id.rawValue.isEmpty && seen.insert(s.id).inserted {
-            let name = s.name.isEmpty ? fallbackName(s.id) : s.name
+            let name = LanguageNames.pickerTitle(s)   // P6-0g: a picker, so "English (ABC)"
             result.append(DefaultBehaviorOption(id: id(for: .switchTo(s.id)), title: "Switch to \(name)",
                                                 behavior: .switchTo(s.id)))
         }

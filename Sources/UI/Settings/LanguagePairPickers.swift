@@ -4,6 +4,7 @@
 // P6-0d (owner): Settings → General shows them as one row (`LanguagePairRow`): two compact pickers with their
 // menu-bar letters and a ⇄ swap button between them; the setup window keeps the two labelled pickers.
 
+import AppKit
 import SwiftUI
 
 struct LanguagePairPickers: View {
@@ -48,7 +49,7 @@ struct LanguagePairRow: View {
 }
 
 /// One pair member's pop-up, grouped like the system's lists.
-private struct LanguagePairMenu: View {
+struct LanguagePairMenu: View {
     let model: LanguagesSettingsModel
     let title: String
     @Binding var selection: String
@@ -68,7 +69,7 @@ private struct LanguagePairMenu: View {
 }
 
 /// The refusal line and the pair warnings (P6-0c: colour only on the symbol).
-private struct LanguagePairProblems: View {
+struct LanguagePairProblems: View {
     let model: LanguagesSettingsModel
 
     var body: some View {
@@ -79,6 +80,74 @@ private struct LanguagePairProblems: View {
             WarningLabel(text: warning).font(.caption)
         }
     }
+}
+
+/// P6-0g (design v2, lg-general "Language pair"): one wide key with two halves. Each half is a standard language picker
+/// ("First language", "Second language") beside the half-filled key icon it is in the menu bar (review P3: the one
+/// place that teaches the icon); a round button on the seam swaps them.
+struct LanguagePairKey: View {
+    @Bindable var model: LanguagesSettingsModel
+    static let height: CGFloat = 64
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 0) {
+                half(.a)
+                half(.b)
+            }
+            .background {
+                ZStack {
+                    KeyHalf(side: .a, gap: 6, radius: 16, slant: 0.12).fill(Color.primary.opacity(0.07))
+                    KeyHalf(side: .b, gap: 6, radius: 16, slant: 0.12).fill(Color.kytkinMint)
+                }
+            }
+            Button { model.swap() } label: {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.kytkinCard).shadow(color: .black.opacity(0.18), radius: 3, y: 1))
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            .help("Swap the two languages")
+            .accessibilityLabel("Swap the two languages")
+        }
+        .frame(height: Self.height)
+    }
+
+    private func half(_ side: PairSide) -> some View {
+        let id = side == .a ? model.pair.a : model.pair.b
+        let title = side == .a ? "First language" : "Second language"
+        return HStack(spacing: 10) {
+            if let glyph = MenuBarGlyph.image(for: .active, side: side) {
+                Image(nsImage: glyph).renderingMode(.template).foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                LanguagePairMenu(model: model, title: title, selection: side == .a ? $model.pairA : $model.pairB)
+                    .labelsHidden()
+                    .frame(maxWidth: 210, alignment: .leading)
+                    .accessibilityLabel("\(title): \(model.name(of: id))")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, side == .a ? 14 : 34)
+        .padding(.trailing, side == .a ? 34 : 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension Color {
+    /// The second language's half (lg-general): mint, light #D8F5EC, dark #1E3F37.
+    static let kytkinMint = Color(nsColor: NSColor(name: "KytkinMint") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x1E / 255, green: 0x3F / 255, blue: 0x37 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xD8 / 255, green: 0xF5 / 255, blue: 0xEC / 255, alpha: 1)
+    })
 }
 
 /// P6-0d: the letters the menu bar shows for a language ("EN", "HE").

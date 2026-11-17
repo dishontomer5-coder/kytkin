@@ -2,68 +2,98 @@
 // hold every rule and wording and are tested. Every button here is a user click: "Allow…" is the only way to the
 // macOS permission dialog, "Open System Settings" the only way to System Settings, "Quit & Reopen" the only relaunch.
 // P6-0c (visual review §2.2): no Permissions tab any more. `SetupSection` is the top of General (one line when all is
-// fine; the window controller polls permissions once a second while General shows), and `DiagnosticsView` (keyboard
-// status, typing protection) is Advanced → Diagnostics.
+// fine; the window controller polls permissions once a second while General shows).
+// P6-0g (design v2): `TroubleshootingSection` is Advanced's second part (was Diagnostics): the same row style as every
+// tab, a status word on the right; "Secure typing"; Input Monitoring only when it could help; "Copy Diagnostics".
 
 import SwiftUI
 
 struct SetupSection: View {
     let model: PermissionsSettingsModel
+    /// General → "Show Setup Again…" (a click).
+    var showWelcome: (@MainActor () -> Void)? = nil
 
     var body: some View {
-        Section {
+        // P6-0d (owner): no "check again" button: the 1 s poll re-reads while General shows.
+        SettingsSection("Setup") {
             if model.setupIsComplete {
-                StatusLabel(text: PermissionsSettingsModel.setupCompleteText, symbol: "checkmark.circle.fill",
-                            tint: .green)
+                HStack {
+                    StatusLabel(text: PermissionsSettingsModel.setupCompleteText, symbol: "checkmark.circle.fill",
+                                tint: .green)
+                    Spacer()
+                    if let showWelcome {
+                        Button("Show Setup Again…") { showWelcome() }.buttonStyle(.kytkinLink)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 40)
             } else {
                 ForEach(model.setupRows) { row in
-                    PermissionRowView(row: row,
-                                      grant: { model.grant(row.pane) },
-                                      openSettings: { model.openSystemSettings(row.pane) },
-                                      quitAndReopen: { model.quitAndReopen() })
+                    SettingsCardContent {
+                        PermissionRowView(row: row,
+                                          grant: { model.grant(row.pane) },
+                                          openSettings: { model.openSystemSettings(row.pane) },
+                                          quitAndReopen: { model.quitAndReopen() })
+                    }
                 }
                 if let problem = model.keyboardProblemText {
-                    WarningLabel(text: "Double-Shift: " + problem)
+                    SettingsCardContent { WarningLabel(text: "Double-Shift: " + problem) }
                 }
-                ForEach(model.conflictLines, id: \.self) { WarningLabel(text: $0) }
+                ForEach(model.conflictLines, id: \.self) { line in
+                    SettingsCardContent { WarningLabel(text: line) }
+                }
+                if let showWelcome {
+                    SettingsRow("Setup", subtitle: "The 3-step setup: what Kytkin does, permissions and a practice box.") {
+                        Button("Show Setup Again…") { showWelcome() }
+                    }
+                }
             }
-        } header: {
-            // P6-0d (owner): no "check again" button: the 1 s poll re-reads while General shows.
-            Text("Setup")
         }
     }
 }
 
-/// P6-0c: Advanced → Diagnostics. Plain status lines; nothing here changes a setting.
-struct DiagnosticsView: View {
+/// P6-0g: Advanced → Troubleshooting. Plain status lines; nothing here changes a setting.
+struct TroubleshootingSection: View {
     let model: PermissionsSettingsModel
     let openSettingsFolder: @MainActor () -> Void
+    let copyDiagnostics: @MainActor () -> Void
 
     var body: some View {
-        Form {
-            Section {
-                LabeledContent("Double-Shift") { Text(model.keyboardModeText).foregroundStyle(.secondary) }
-                    .fixedSize(horizontal: false, vertical: true)
-                LabeledContent("Typing protection") { Text(model.secureInputText).foregroundStyle(.secondary) }
-                    .fixedSize(horizontal: false, vertical: true)
+        SettingsSection("Troubleshooting") {
+            let doubleShift = model.doubleShiftStatus
+            SettingsRow("Double-Shift", subtitle: doubleShift.detail) {
+                StatusLabel(text: doubleShift.status, symbol: doubleShift.ok ? "checkmark.circle.fill" : "info.circle",
+                            tint: doubleShift.ok ? .green : .secondary)
             }
-            Section {
-                ForEach(model.rows) { row in
-                    PermissionRowView(row: row,
-                                      grant: { model.grant(row.pane) },
-                                      openSettings: { model.openSystemSettings(row.pane) },
-                                      quitAndReopen: { model.quitAndReopen() })
+            ForEach(model.troubleshootingRows) { row in
+                if row.showsGrant || row.showsOpenSettings || row.showsQuitAndReopen {
+                    SettingsCardContent {
+                        PermissionRowView(row: row,
+                                          grant: { model.grant(row.pane) },
+                                          openSettings: { model.openSystemSettings(row.pane) },
+                                          quitAndReopen: { model.quitAndReopen() })
+                    }
+                } else {
+                    SettingsRow(row.title, subtitle: row.enables) {
+                        StatusLabel(text: row.statusText, symbol: PermissionRowView.symbol(row),
+                                    tint: PermissionRowView.tint(row))
+                    }
                 }
             }
-            Section {
-                LabeledContent {
+            let secure = model.secureTyping
+            SettingsRow(PermissionsSettingsModel.secureTypingTitle, subtitle: secure.detail) {
+                Text(secure.status).foregroundStyle(.secondary)
+            }
+            SettingsRow("Settings folder", subtitle: "Where Kytkin keeps your rules and settings.") {
+                HStack(spacing: 8) {
+                    Button("Copy Diagnostics") { copyDiagnostics() }
+                        .help("Copies Kytkin’s version, settings switches, permissions and counts for a bug report. "
+                              + "Never what you type, your websites or your rules.")
                     Button("Open Settings Folder") { openSettingsFolder() }   // P6-0c (visual Ab3): moved from About
-                } label: {
-                    RowLabel("Settings folder", subtitle: "Where Kytkin keeps your rules and settings.")
                 }
+                .fixedSize()
             }
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -75,19 +105,20 @@ struct PermissionRowView: View {
     let quitAndReopen: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
-                Text(row.title).bold()
+                Text(row.title).font(.system(size: SettingsMetrics.titleSize))   // P6-0g: no bold titles
                 Spacer()
-                StatusLabel(text: row.statusText, symbol: symbol, tint: tint, secondaryText: true)
+                StatusLabel(text: row.statusText, symbol: Self.symbol(row), tint: Self.tint(row), secondaryText: true)
             }
-            Text(row.enables).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Text(row.enables).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let without = row.withoutIt {
-                Text(without).font(.caption).foregroundStyle(.secondary)
+                Text(without).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let hint = row.hint {
-                Text(hint).font(.caption).foregroundStyle(.secondary)
+                Text(hint).font(.system(size: SettingsMetrics.secondarySize)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if row.showsGrant || row.showsOpenSettings || row.showsQuitAndReopen {
@@ -96,12 +127,12 @@ struct PermissionRowView: View {
                     if row.showsOpenSettings { Button("Open System Settings", action: openSettings).buttonStyle(.kytkinLink) }
                     if row.showsQuitAndReopen { Button("Quit & Reopen", action: quitAndReopen) }
                 }
+                .padding(.top, 2)
             }
         }
-        .padding(.vertical, 2)
     }
 
-    private var symbol: String {
+    static func symbol(_ row: PermissionRow) -> String {
         switch row.status {
         case .granted: "checkmark.circle.fill"
         case .needsRelaunch: "arrow.clockwise.circle.fill"
@@ -112,7 +143,7 @@ struct PermissionRowView: View {
     }
 
     /// P6-0c (visual X2): colour on the symbol only. Input Monitoring is optional, so never red.
-    private var tint: Color {
+    static func tint(_ row: PermissionRow) -> Color {
         switch row.status {
         case .granted: .green
         case .needsRelaunch: .orange

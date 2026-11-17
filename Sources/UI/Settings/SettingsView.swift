@@ -4,6 +4,8 @@
 // in the content and dropped the symbols). The window controller puts one `SettingsTabPane` per tab into an
 // `NSTabViewController` with toolbar-style tabs; `SettingsView` (the selected tab's pane) is what the headless
 // renderer draws.
+// P6-0g (design v2, P1): no fixed size any more. Each pane reports its natural height (`SettingsPage`), and the window
+// sizes itself to the tab: at least 380 pt, at most 640 pt, then the tab scrolls.
 
 import SwiftUI
 
@@ -14,32 +16,36 @@ struct SettingsPanes {
     let about: AboutInfo
     let rules: RulesSettingsModel
     let convert: ConvertSettingsModel
-    let apps: AppsSettingsModel
     let permissions: PermissionsSettingsModel
     let browsers: BrowsersSettingsModel
-    /// Advanced → Diagnostics → "Open Settings Folder".
+    /// Advanced → Troubleshooting → "Open Settings Folder".
     let openSettingsFolder: @MainActor () -> Void
     /// General → "Show Setup Again…".
     let showWelcome: @MainActor () -> Void
     /// Switches the window to another tab (Websites → "Open Setup", "Show in Rules").
     let select: @MainActor (SettingsTab) -> Void
+    /// P6-0g: Advanced → "Copy Diagnostics" (a user click; the app writes the privacy-safe text to the clipboard).
+    var copyDiagnostics: @MainActor () -> Void = {}
+    /// P6-0g: a tab's natural content height changed (the window sizes itself to it).
+    var reportHeight: @MainActor (SettingsTab, CGFloat) -> Void = { _, _ in }
 }
 
-/// One tab's content, padded to the shared content inset (visual review X5).
+/// One tab's content.
 struct SettingsTabPane: View {
     let tab: SettingsTab
     let panes: SettingsPanes
-    /// The headless renderer's tall shots; nil = the window's fixed size.
+    /// A fixed height (the headless renderer); nil = the window's.
     var height: CGFloat? = nil
 
-    /// A fixed size: grouped Forms scroll and have no natural height to size the window from.
-    static let size = CGSize(width: 680, height: 520)
+    static let width = SettingsMetrics.width
 
     var body: some View {
         content
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .frame(width: Self.size.width, height: height ?? Self.size.height)
+            .onPreferenceChange(SettingsContentHeightKey.self) { natural in
+                MainActor.assumeIsolated { panes.reportHeight(tab, natural) }
+            }
+            .frame(width: Self.width, height: height)
+            .frame(maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder private var content: some View {
@@ -56,8 +62,8 @@ struct SettingsTabPane: View {
                                      panes.select(.rules)
                                  })
         case .advanced:
-            AdvancedSettingsView(selection: panes.selection, apps: panes.apps, permissions: panes.permissions,
-                                 openSettingsFolder: panes.openSettingsFolder)
+            AdvancedSettingsView(permissions: panes.permissions, openSettingsFolder: panes.openSettingsFolder,
+                                 copyDiagnostics: panes.copyDiagnostics)
         case .about: AboutSettingsView(info: panes.about)
         }
     }
@@ -66,10 +72,9 @@ struct SettingsTabPane: View {
 /// The selected tab's pane (the headless renderer; the real window uses one pane per toolbar tab).
 struct SettingsView: View {
     let panes: SettingsPanes
-
-    static var size: CGSize { SettingsTabPane.size }
+    var height: CGFloat? = nil
 
     var body: some View {
-        SettingsTabPane(tab: panes.selection.tab, panes: panes)
+        SettingsTabPane(tab: panes.selection.tab, panes: panes, height: height)
     }
 }

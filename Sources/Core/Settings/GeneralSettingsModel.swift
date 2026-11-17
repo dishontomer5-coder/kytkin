@@ -43,7 +43,7 @@ import Observation
 
     /// P6-3: Settings → General → "Check for updates" (subtitle).
     /// P6-3 QA: exact: the request carries Kytkin's version (User-Agent) and nothing else of the Mac's.
-    static let updateCheckHelp = "Once a day, Kytkin asks GitHub whether a newer version is out. Only Kytkin's "
+    static let updateCheckHelp = "Once a day, Kytkin asks GitHub whether a newer version is out. Only Kytkin’s "
         + "version number is sent, never anything you type, and nothing is downloaded."
 
     /// P6-3: when the last check ran, for the "Check Now" row.
@@ -52,13 +52,25 @@ import Observation
     }
 
     /// P6-0d: how the status item looks with `menuBarDisplay` (the real label model, the normal look).
-    var menuBarPreview: MenuModel.Label {
+    var menuBarPreview: MenuModel.Label { menuBarPreview(for: menuBarDisplay) }
+
+    /// P6-0g (lg-general): the three "Show in menu bar" tiles each show the real item in their mode.
+    func menuBarPreview(for display: Preferences.General.MenuBarLabel) -> MenuModel.Label {
         let info = currentLanguage()
         var state = MenuState()
         state.pairInputSources = store.prefs.languagePair   // P6-0e: the filled half of the language that is on
-        return MenuModel.label(languageCode: info?.languageCode ?? "en", languageName: info?.name, state: state,
-                               display: menuBarDisplay, current: info?.id)
+        return MenuModel.label(languageCode: info?.languageCode ?? "en", languageName: info.map(LanguageNames.friendly),
+                               state: state, display: display, current: info?.id)
     }
+
+    /// P6-0g (review P3): the switch's title is just "Kytkin" (the switch shows the state).
+    static let enabledTitle = "Kytkin"
+    static let enabledHelp = "Switches languages and fixes text. To stop it for a while, use Pause in the menu."
+    static let learnTitle = "Learn from my switches"
+    static let learnHelp = "When you switch the language yourself, Kytkin remembers it for that app or website."
+    static let languagesTitle = "Your two languages"
+    static let languagesHelp = "Press Shift twice to convert text between them. The first language is the left half "
+        + "of the menu-bar icon."
 
     /// When Settings opens or comes to the front: fresh login-item status and layout list.
     func refresh() {
@@ -85,15 +97,16 @@ import Observation
 
     static func title(of display: Preferences.General.MenuBarLabel) -> String {
         switch display {
-        case .iconAndLanguage: "Icon and language"
-        case .iconOnly: "Icon only"
-        case .languageOnly: "Language only"
+        // P6-0g (lg-general): title case, like the tiles.
+        case .iconAndLanguage: "Icon and Language"
+        case .iconOnly: "Icon Only"
+        case .languageOnly: "Language Only"
         }
     }
 
     /// P6-0e (mock-up settings-general): the filled half of the logo is the language that is on.
-    static let menuBarDisplayHelp = "The filled half shows which language is on. With Icon only, Kytkin still marks "
-        + "the icon when it is paused or needs your attention."
+    /// P6-0g (lg-general): the short line of the v2 mock-up.
+    static let menuBarDisplayHelp = "The filled half shows which language is on."
 
     var learnFromManualSwitches: Bool {
         get { store.prefs.general.learnFromManualSwitches }
@@ -144,8 +157,8 @@ import Observation
             // QA (P2-23): also when the call "succeeded" but the status didn't follow (e.g. `.notFound` for a copy
             // macOS can't register), so the switch never flips back silently.
             // P6-0c (copy review S-8): what to do.
-            loginItemError = on ? "Couldn't turn on Open at Login. Try again, or add Kytkin in System Settings → "
-                + "General → Login Items." : "Couldn't turn off Open at Login."
+            loginItemError = on ? "Couldn’t turn on Open at Login. Try again, or add Kytkin in System Settings → "
+                + "General → Login Items." : "Couldn’t turn off Open at Login."
         } else {
             loginItemError = nil
         }

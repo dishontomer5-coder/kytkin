@@ -17,7 +17,6 @@ final class SettingsMappingTests: XCTestCase {
                        ["General", "Rules", "Double-Shift", "Websites", "Advanced", "About"])
         XCTAssertEqual(SettingsTab.allCases.map(\.symbolName),
                        ["gearshape", "list.bullet.rectangle", "shift", "globe", "slider.horizontal.3", "info.circle"])
-        XCTAssertEqual(AdvancedSection.allCases.map(\.title), ["App Exceptions", "Keyboard Layouts", "Diagnostics"])
     }
 
     func testEveryMenuTargetLandsOnATab() {
@@ -40,7 +39,7 @@ final class SettingsMappingTests: XCTestCase {
             info(IDs.abc, "ABC"), info(IDs.russian, "Russian", enabled: false), info(IDs.hebrew, "Hebrew"),
             info(IDs.abc, "ABC again"), info(InputSourceID(""), "Blank"),
         ])
-        XCTAssertEqual(opts.map(\.title), ["Leave as is", "Switch to ABC", "Switch to Hebrew"])
+        XCTAssertEqual(opts.map(\.title), ["Leave As Is", "Switch to ABC", "Switch to Hebrew"])
         XCTAssertEqual(opts.map(\.behavior), [.keepCurrent, .switchTo(IDs.abc), .switchTo(IDs.hebrew)])
         XCTAssertEqual(Set(opts.map(\.id)).count, opts.count, "ids are unique")
     }
@@ -80,7 +79,7 @@ final class SettingsMappingTests: XCTestCase {
         let unreadable = SettingsNotice.notices(loadIssue: .unreadable, isReadOnly: true, lastSaveFailed: true,
                                                 loadWasLossy: false, originalBackupURL: nil)
         XCTAssertEqual(unreadable.map(\.kind), [.readOnly], "a read-only store never saves, so no save notice")
-        XCTAssertTrue(unreadable[0].message.contains("couldn't read"))
+        XCTAssertTrue(unreadable[0].message.contains("couldn’t read"))
 
         XCTAssertEqual(SettingsNotice.notices(loadIssue: nil, isReadOnly: false, lastSaveFailed: true,
                                               loadWasLossy: false, originalBackupURL: nil).map(\.kind), [.saveFailed])
@@ -91,7 +90,7 @@ final class SettingsMappingTests: XCTestCase {
         XCTAssertTrue(lossy[0].message.contains("~/Library/x/preferences.lossy.bak.json"), lossy[0].message)
         let lossyNoBackupYet = SettingsNotice.notices(loadIssue: nil, isReadOnly: false, lastSaveFailed: false,
                                                       loadWasLossy: true, originalBackupURL: nil)
-        XCTAssertEqual(lossyNoBackupYet[0].message, "Some settings couldn't be read and were reset.")
+        XCTAssertEqual(lossyNoBackupYet[0].message, "Some settings couldn’t be read and were reset.")
 
         let corrupt = SettingsNotice.notices(loadIssue: .corruptQuarantined(backup), isReadOnly: false,
                                              lastSaveFailed: false, loadWasLossy: false, originalBackupURL: nil)
@@ -104,10 +103,16 @@ final class SettingsMappingTests: XCTestCase {
     func testAboutFromInfoPlist() {
         let about = AboutInfo(infoDictionary: ["CFBundleDisplayName": "Kytkin Dev", "CFBundleName": "Kytkin Dev",
                                                "CFBundleShortVersionString": "0.0.1", "CFBundleVersion": "1"])
-        XCTAssertEqual(about.name, "Kytkin Dev")
-        XCTAssertEqual(about.version, "Version 0.0.1 (1)")
+        // P6-0g (design v2, About P1): the name is "Kytkin"; "Dev" moves to the version line.
+        XCTAssertEqual(about.name, "Kytkin")
+        XCTAssertEqual(about.version, "Version 0.0.1 (1) · Dev")
         XCTAssertTrue(about.license.contains("MIT License"))
-        XCTAssertTrue(about.cleanRoom.contains("clean-room"))
+        XCTAssertEqual(about.cleanRoom, "An independent project, not affiliated with any other app.")
+        XCTAssertFalse(about.cleanRoom.contains("FlicKey"), "P6-0g: no other app named in the app")
+        let release = AboutInfo(infoDictionary: ["CFBundleDisplayName": "Kytkin", "CFBundleShortVersionString": "1.0.0",
+                                                 "CFBundleVersion": "1"])
+        XCTAssertEqual(release.name, "Kytkin")
+        XCTAssertEqual(release.version, "Version 1.0.0 (1)")
         XCTAssertEqual(about.repositoryURL.absoluteString, "https://github.com/dishontomer5-coder/kytkin")
         XCTAssertEqual(about.repositoryText, "github.com/dishontomer5-coder/kytkin")
     }

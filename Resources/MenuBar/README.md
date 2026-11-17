@@ -10,9 +10,12 @@ half of the key is the language that is on: `-a` = the pair's first language (le
 | `kytkin-menubar-off-{a,b}.pdf` | Kytkin turned off (35 %; the letters fade to 35 % too) |
 | attention | Drawn in code from the active PDF (see below) |
 
+- P6-0g (design v2 review, P3: "outline 1.5 pt, gap to EN 5 pt"): the six PDFs here are written by
+  `xcrun swift Tools/menubar-glyphs/main.swift Resources/MenuBar` from the v2 SVG paths, with the outline half at
+  1.5 pt (the export had 1.2 pt). The 5 pt gap is `MenuModel.ItemLayout.gap`.
 - 18 × 18 pt, black + alpha. Kytkin marks them as **template** images, so macOS tints them for every menu bar.
 - The whole status item is one image, drawn by `MenuBarGlyph.itemImage(for:)` (`Sources/UI/MenuBarGlyph.swift`): the
-  glyph, 4 pt, then the letters (SF Pro Text 13 pt medium) in a fixed 20 pt frame. Names come from
+  glyph, 5 pt (P6-0g), then the letters (SF Pro Text 13 pt medium) in a fixed 20 pt frame. Names come from
   `MenuModel.glyphName(_:side:)` (`Sources/Core/Controllers/MenuModel.swift`).
 - **Attention:** the exported `kytkin-menubar-attention-{a,b}.pdf` lost the SVG mask (only the badge dot is left), so
   they aren't bundled. `MenuBarGlyph` draws the same thing as `kytkin-menubar-attention-*.svg` from the active PDF (a

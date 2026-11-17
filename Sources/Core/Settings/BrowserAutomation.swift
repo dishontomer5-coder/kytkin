@@ -68,8 +68,8 @@ struct BrowserAutomationState: Sendable, Equatable {
     /// The dropdown's Automation line for this browser, plain English.
     func statusText(browserName name: String) -> String {
         switch status {
-        case .notAvailableGecko: "Automation isn't available for Firefox-based browsers."
-        case .notAvailable: "Automation isn't available for \(name)."
+        case .notAvailableGecko: "Automation isn’t available for Firefox-based browsers."
+        case .notAvailable: "Automation isn’t available for \(name)."
         case .off: "Off (\"Use Automation\" is off above)"
         case .allowed: "Allowed"
         case .denied:

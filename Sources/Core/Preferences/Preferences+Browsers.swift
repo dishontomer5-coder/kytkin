@@ -14,8 +14,11 @@ import Foundation
 
 extension Preferences {
     struct Browsers: Sendable, Equatable {
-        /// With this on, no site rules apply in windows known to be private (001 §3 flow d).
-        var ignorePrivateWindowsCompletely = false
+        /// With this on, no site rules apply in windows known to be private (001 §3 flow d): Settings → Websites →
+        /// "Ignore private windows". P6-0g (design v2, P2): on for a new install. A file that has the key keeps its
+        /// value; a `browsers` section written without it (only by hand: every build writes it) reads as off, the old
+        /// default, so nobody's current behaviour changes (`init(from:)`).
+        var ignorePrivateWindowsCompletely = true
         /// P3-26: "Use website rules" for every browser (was per browser in `siteRulesEnabled`, P3-9). Off → no watch
         /// request (SitePolicy), so every browser is app-only. Meaningful only while `legacySiteRulesOff` is empty.
         var siteRulesOn = true
@@ -67,7 +70,8 @@ extension Preferences.Browsers: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
-        if let v = c.lenient(Bool.self, .ignorePrivateWindowsCompletely) { ignorePrivateWindowsCompletely = v }
+        // P6-0g: missing = the pre-P6-0g default (off), so an existing file's behaviour never changes.
+        ignorePrivateWindowsCompletely = c.lenient(Bool.self, .ignorePrivateWindowsCompletely) ?? false
         if let v = c.lenient(Bool.self, .siteRulesOn) {
             siteRulesOn = v
         } else if let v = c.lenient([String: Lossy<Bool>].self, .siteRulesEnabled) {

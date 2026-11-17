@@ -21,7 +21,7 @@ SOURCES=(
   $(find Sources/Core -name '*.swift' | sort)
   Sources/UI/Settings/AboutSettingsView.swift
   Sources/UI/Settings/AddWebsiteSheet.swift
-  Sources/UI/Settings/AppsSettingsView.swift
+  Sources/UI/Settings/SettingsLayout.swift
   Sources/UI/Settings/BrowsersSettingsView.swift
   Sources/UI/Settings/ConvertSettingsView.swift
   Sources/UI/Settings/GeneralSettingsView.swift

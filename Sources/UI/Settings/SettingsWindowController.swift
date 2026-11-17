@@ -14,6 +14,8 @@
 //   cover it (the window's occlusion state; the poll resumes, with a fresh read, when it shows again).
 // - Kytkin's own window is not a context (001 §12 W2): ContextMonitor ignores it; AppController hears about it
 //   through the app's didBecomeActive / didResignActive notifications (AppEnvironment).
+// - P6-0g (design v2): the window's title is the tab's name (P3), and its height follows the tab's content (P1:
+//   380–640 pt, `SettingsMetrics`), the top edge staying put.
 
 import AppKit
 import SwiftUI
@@ -25,29 +27,35 @@ import SwiftUI
     private let tabs: TabModels   // P2-24, P2-25
     private var window: NSWindow?
     private var tabController: SettingsTabController?
+    private var hostings: [SettingsTab: NSViewController] = [:]
+    /// P6-0g: each tab's natural content height, as its pane last reported it.
+    private var heights: [SettingsTab: CGFloat] = [:]
 
     /// P2-24 Languages (via the environment) and P2-25 Rules, Convert and Apps.
     struct TabModels {
         let languages: LanguagesSettingsModel
         let rules: RulesSettingsModel
         let convert: ConvertSettingsModel
-        let apps: AppsSettingsModel
         let permissions: PermissionsSettingsModel   // P2-26
         let browsers: BrowsersSettingsModel         // P3-15
     }
 
     /// P2-26: General → "Show Welcome Again".
     private let showWelcome: @MainActor () -> Void
-    /// P3-15: About → "Open Settings Folder".
+    /// P3-15: Advanced → "Open Settings Folder".
     private let openSettingsFolder: @MainActor () -> Void
+    /// P6-0g: Advanced → "Copy Diagnostics".
+    private let copyDiagnostics: @MainActor () -> Void
 
     init(general: GeneralSettingsModel, about: AboutInfo, tabs: TabModels,
-         showWelcome: @escaping @MainActor () -> Void, openSettingsFolder: @escaping @MainActor () -> Void) {
+         showWelcome: @escaping @MainActor () -> Void, openSettingsFolder: @escaping @MainActor () -> Void,
+         copyDiagnostics: @escaping @MainActor () -> Void) {
         self.general = general
         self.about = about
         self.tabs = tabs
         self.showWelcome = showWelcome
         self.openSettingsFolder = openSettingsFolder
+        self.copyDiagnostics = copyDiagnostics
         super.init()
         // P3-25: Browsers & Sites' Ask button is enabled only while that browser runs; a launch or quit while Settings
         // is open (and stays key) must show at once, not only when Settings next comes to the front.
@@ -66,7 +74,7 @@ import SwiftUI
 
     /// Opens Settings on `tab`, or switches an open window to it, and brings it to the front.
     func show(tab: SettingsTab) {
-        general.refresh()          // fresh login-item status and layout list (R8: don't cache the status)
+        general.refresh()          // fresh login-item status and layout list (R8: don’t cache the status)
         refreshTabs()
         let window = self.window ?? makeWindow()
         select(tab)
@@ -82,7 +90,7 @@ import SwiftUI
     }
 
     /// P2-26: the 1 s permission poll runs only while the permission rows show in an open window. P6-0c: they are
-    /// General's setup section and Advanced → Diagnostics.
+    /// General's setup section and Advanced → Troubleshooting.
     private func updatePermissionsPolling() {
         tabs.permissions.setVisible(isOpen && (selection.tab == .general || selection.tab == .advanced))
     }
@@ -93,23 +101,58 @@ import SwiftUI
         if let index = SettingsTab.allCases.firstIndex(of: tab), tabController?.selectedTabViewItemIndex != index {
             tabController?.selectedTabViewItemIndex = index
         }
+        tabDidChange()
+    }
+
+    /// P6-0g: the title is the tab's name; the window takes the tab's height.
+    private func tabDidChange() {
+        window?.title = selection.tab.title
+        resizeWindow(animated: window?.isVisible ?? false)
         updatePermissionsPolling()
+    }
+
+    /// P6-0g: a pane reported its natural height.
+    private func heightReported(_ tab: SettingsTab, _ natural: CGFloat) {
+        guard natural > 0, heights[tab].map({ abs($0 - natural) > 0.5 }) ?? true else { return }
+        heights[tab] = natural
+        let size = contentSize(for: tab)
+        hostings[tab]?.preferredContentSize = size
+        if tab == selection.tab { resizeWindow(animated: window?.isVisible ?? false) }
+    }
+
+    private func contentSize(for tab: SettingsTab) -> CGSize {
+        CGSize(width: SettingsMetrics.width, height: SettingsMetrics.height(for: heights[tab] ?? SettingsMetrics.minHeight))
+    }
+
+    /// Keeps the window's top edge where it is.
+    private func resizeWindow(animated: Bool) {
+        guard let window else { return }
+        let size = contentSize(for: selection.tab)
+        let current = window.contentRect(forFrameRect: window.frame)
+        guard abs(current.height - size.height) > 0.5 || abs(current.width - size.width) > 0.5 else { return }
+        var frame = window.frameRect(forContentRect: CGRect(origin: current.origin, size: size))
+        frame.origin.y = window.frame.maxY - frame.height
+        window.setFrame(frame, display: true, animate: animated)
     }
 
     private func makeWindow() -> NSWindow {
         let panes = SettingsPanes(selection: selection, general: general, about: about, rules: tabs.rules,
-                                  convert: tabs.convert, apps: tabs.apps, permissions: tabs.permissions,
+                                  convert: tabs.convert, permissions: tabs.permissions,
                                   browsers: tabs.browsers, openSettingsFolder: openSettingsFolder,
-                                  showWelcome: showWelcome, select: { [weak self] in self?.select($0) })
+                                  showWelcome: showWelcome, select: { [weak self] in self?.select($0) },
+                                  copyDiagnostics: copyDiagnostics,
+                                  reportHeight: { [weak self] tab, natural in self?.heightReported(tab, natural) })
         // P6-0c (owner 2026-11-17, visual review X4): toolbar tabs, icon over title, one hosted pane per tab.
         let controller = SettingsTabController()
         controller.tabStyle = .toolbar
         controller.canPropagateSelectedChildViewControllerTitle = false
+        controller.transitionOptions = []   // P6-0g: the window controller sizes the window (top edge fixed)
         for tab in SettingsTab.allCases {
             let hosting = NSHostingController(rootView: SettingsTabPane(tab: tab, panes: panes)
                 .environment(tabs.languages))   // P2-24: the Languages model goes through the environment
             hosting.sizingOptions = []
-            hosting.preferredContentSize = SettingsTabPane.size
+            hosting.preferredContentSize = contentSize(for: tab)
+            hostings[tab] = hosting
             let item = NSTabViewItem(viewController: hosting)
             item.label = tab.title
             item.image = NSImage(systemSymbolName: tab.symbolName, accessibilityDescription: tab.title)
@@ -119,18 +162,18 @@ import SwiftUI
             guard let self, SettingsTab.allCases.indices.contains(index) else { return }
             let tab = SettingsTab.allCases[index]
             if self.selection.tab != tab { self.selection.tab = tab }
-            self.updatePermissionsPolling()
+            self.tabDidChange()
         }
         tabController = controller
         let window = KytkinWindow(contentViewController: controller)   // P2-56: Esc closes it
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
         // nowhere) and skips windowWillClose, so Kytkin never hides; Settings windows don't minimize anyway.
         window.styleMask = [.titled, .closable]
-        window.title = "Kytkin Settings"
+        window.title = selection.tab.title
         window.toolbarStyle = .preference
-        window.setContentSize(SettingsTabPane.size)
+        window.setContentSize(contentSize(for: selection.tab))
         window.isReleasedWhenClosed = false
-        window.collectionBehavior.insert(.moveToActiveSpace)   // open on the Space you're on, not jump away
+        window.collectionBehavior.insert(.moveToActiveSpace)   // open on the Space you’re on, not jump away
         window.delegate = self
         self.window = window
         return window
@@ -149,14 +192,13 @@ import SwiftUI
         refreshTabs()
     }
 
-    /// P2-24/P2-25: layouts, layout names for Rules, and the running apps Apps can add (read only when Settings
+    /// P2-24/P2-25: layouts, layout names for Rules, and the running apps Rules can add (read only when Settings
     /// opens or comes to the front, e.g. back from System Settings → Keyboard → Input Sources).
     private func refreshTabs() {
         tabs.languages.refresh()
         tabs.rules.refresh()
-        tabs.apps.refresh()
         tabs.permissions.reload()
-        tabs.browsers.refresh()   // P3-15 / P3-22: browsers installed since launch, this session's statuses
+        tabs.browsers.refresh()   // P3-15 / P3-22: browsers installed since launch, this session’s statuses
     }
 
     func windowWillClose(_ notification: Notification) {

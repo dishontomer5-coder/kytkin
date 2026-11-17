@@ -47,9 +47,55 @@ final class BrowsersSettingsModelTests: XCTestCase {
                                              webLinkHandlers: [chrome, other, safari, "io.github.kytkin.Kytkin.dev", ""])
         make()
         sut.refresh()
-        XCTAssertEqual(sut.rows.map(\.name), ["Google Chrome", "Safari", "Zen", "Electronish"],
-                       "catalog by name (a catalog handler counts as installed), then best effort; never Kytkin")
-        XCTAssertEqual(sut.rows.map(\.isCatalogued), [true, true, true, false])
+        // P6-0g (design v2, P1): only real browsers (BrowserCatalog): a terminal that opens links (cmux) isn't one.
+        XCTAssertEqual(sut.rows.map(\.name), ["Google Chrome", "Safari", "Zen"],
+                       "catalog by name (a catalog handler counts as installed); never other link handlers or Kytkin")
+        XCTAssertEqual(sut.rows.map(\.isCatalogued), [true, true, true])
+    }
+
+    /// P6-0g: other link handlers aren't listed, but they still count for an old file's "Use website rules".
+    func testOtherLinkHandlersStillCountForAnOldFilesSwitch() {
+        inventory = BrowserInventorySnapshot(installedCatalog: [zen], webLinkHandlers: [other])
+        var prefs = Preferences()
+        prefs.browsers.legacySiteRulesOff = [zen]
+        make(prefs)
+        sut.refresh()
+        XCTAssertEqual(sut.rows.map(\.bundleID), [zen])
+        XCTAssertTrue(sut.siteRulesOn, "the other handler still had them on")
+    }
+
+    /// P6-0g (design v2, P2): one status line per browser, with the one button that fixes it.
+    func testOneStatusLinePerBrowser() throws {
+        inventory = BrowserInventorySnapshot(installedCatalog: [zen, chrome, safari, edge])
+        support = [safari: .works, chrome: .worksWithAutomation, zen: .cantRead, edge: .needsAccessibility]
+        make()
+        sut.refresh()
+        XCTAssertEqual(sut.statusLine(for: try row(safari)).text, "Works")
+        XCTAssertEqual(sut.statusLine(for: try row(chrome)).text, "Works")
+        XCTAssertNil(sut.statusLine(for: try row(chrome)).action)
+        XCTAssertEqual(sut.statusLine(for: try row(zen)).text, "Not supported", "Firefox-based: no Automation")
+        let edgeLine = sut.statusLine(for: try row(edge))
+        XCTAssertEqual(edgeLine.text, "Needs permission")
+        XCTAssertEqual(edgeLine.action, .openSetup)
+        XCTAssertEqual(edgeLine.actionTitle, "Open Setup")
+
+        support = [edge: .cantRead]
+        sut.refresh()
+        let off = sut.statusLine(for: try row(edge))
+        XCTAssertEqual(off.text, "Needs permission", "Automation could help")
+        XCTAssertNil(off.action, "the switch is off: no button, the tooltip says to turn it on")
+        XCTAssertTrue(off.help?.contains("Work in more browsers") == true)
+        XCTAssertEqual(sut.statusLine(for: try row(safari)).text, "Not checked yet")
+    }
+
+    func testFooterLine() {
+        var prefs = Preferences()
+        prefs.rules = [Rule(scope: .site(domain: "ynet.co.il"), inputSource: IDs.hebrew, origin: .pinned,
+                            updatedAt: Date(timeIntervalSince1970: 0))]
+        make(prefs)
+        XCTAssertTrue(sut.footerText.hasPrefix("1 website rule is saved."))
+        sut.siteRulesOn = false
+        XCTAssertEqual(sut.footerText, "Website rules are off, so the settings above are paused. 1 website rule is saved.")
     }
 
     func testRefreshReadsTheInventoryAgain() {
@@ -70,7 +116,6 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertEqual(try row(chrome).engineText, "Chromium-based")
         XCTAssertEqual(try row(safari).engineText, "Safari-based · not tested yet")
         XCTAssertEqual(try row(edge).engineText, "Chromium-based · not tested yet")
-        XCTAssertEqual(try row(other).engineText, "Other browser (best effort)")
     }
 
     // MARK: - Status
@@ -80,7 +125,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
         make()
         let cases: [(BrowserSupport, String)] = [
             (.works, "Works"), (.worksWithAutomation, "Works (using Automation)"), (.notSeenYet, "Not checked yet"),
-            (.cantRead, "Can't read this browser"), (.needsAccessibility, "Needs Accessibility"),
+            (.cantRead, "Can’t read this browser"), (.needsAccessibility, "Needs Accessibility"),
             (.siteDataMissing, "Website rules are unavailable"), (.off, "Off"),
         ]
         for (status, text) in cases {
@@ -102,7 +147,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
         make()
         sut.refresh()
         XCTAssertEqual(try row(chrome).statusHint,
-                       "Kytkin can't see the page address. Turn on \"Use Automation\" above.", "P3-24, P3-26")
+                       "Kytkin can’t see the page address. Turn on \"Use Automation\" above.", "P3-24, P3-26")
         XCTAssertTrue(try XCTUnwrap(row(zen).statusHint).contains("Not supported yet"))
         XCTAssertFalse(try XCTUnwrap(row(zen).statusHint).contains("Automation"))
     }
@@ -145,11 +190,10 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertNil(try row(zen).automationState)
         XCTAssertNil(try row("com.kagi.kagimacOS").automationState, "Orion: no toggle")
         XCTAssertEqual(try row(zen).automation,
-                       .notAvailable("Automation isn't available for Zen: Firefox-based browsers don't support it."),
+                       .notAvailable("Automation isn’t available for Zen: Firefox-based browsers don’t support it."),
                        "no Automation for Gecko (P3-26: named)")
         XCTAssertEqual(try row("com.kagi.kagimacOS").automation,
-                       .notAvailable("Automation isn't available for Orion."))
-        XCTAssertEqual(try row(other).automation, .notAvailable("Automation isn't available for Electronish."))
+                       .notAvailable("Automation isn’t available for Orion."))
     }
 
     // MARK: - Switches
@@ -179,13 +223,15 @@ final class BrowsersSettingsModelTests: XCTestCase {
         sut.refresh()
         XCTAssertFalse(sut.siteRulesOn, "every listed browser had them off")
         sut.siteRulesOn = true
-        XCTAssertEqual(store.prefs.browsers.legacySiteRulesOff, [], "the user's choice settles the old switches")
+        XCTAssertEqual(store.prefs.browsers.legacySiteRulesOff, [], "the user’s choice settles the old switches")
         XCTAssertTrue(store.prefs.browsers.siteRulesOn)
     }
 
     func testPrivateWindowsSwitch() {
         make()
-        XCTAssertFalse(sut.ignorePrivateWindows)
+        XCTAssertTrue(sut.ignorePrivateWindows, "P6-0g: on for a new install")
+        sut.ignorePrivateWindows = false
+        XCTAssertFalse(store.prefs.browsers.ignorePrivateWindowsCompletely)
         sut.ignorePrivateWindows = true
         XCTAssertTrue(store.prefs.browsers.ignorePrivateWindowsCompletely)
         sut.ignorePrivateWindows = false
@@ -200,7 +246,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertFalse(store.prefs.browsers.browserLanguageInAddressBar)
         sut.browserLanguageInAddressBar = true
         XCTAssertTrue(store.prefs.browsers.browserLanguageInAddressBar)
-        XCTAssertEqual(BrowsersSettingsModel.addressBarToggleTitle, "Use the browser's language in the address bar")
+        XCTAssertEqual(BrowsersSettingsModel.addressBarToggleTitle, "Use the browser’s language in the address bar")
         XCTAssertTrue(BrowsersSettingsModel.addressBarExplanation.contains("English"))
     }
 
@@ -241,9 +287,9 @@ final class BrowsersSettingsModelTests: XCTestCase {
         sut.refresh()
         let before = store.prefs
         sut.selectedBrowserID = zen
-        XCTAssertEqual(sut.selectedRow?.bundleID, zen, "the user's choice beats the default")
+        XCTAssertEqual(sut.selectedRow?.bundleID, zen, "the user’s choice beats the default")
         XCTAssertEqual(sut.selectedRow?.automation,
-                       .notAvailable("Automation isn't available for Zen: Firefox-based browsers don't support it."))
+                       .notAvailable("Automation isn’t available for Zen: Firefox-based browsers don’t support it."))
         XCTAssertEqual(store.prefs, before, "never stored")
         inventory = BrowserInventorySnapshot(installedCatalog: [chrome])
         sut.refresh()
@@ -279,7 +325,7 @@ final class BrowsersSettingsModelTests: XCTestCase {
             .app("com.apple.Notes", IDs.abc),
         ]
         make(prefs)
-        XCTAssertEqual(sut.websiteRuleCount, 2, "a duplicate key counts once; app rules don't count")
+        XCTAssertEqual(sut.websiteRuleCount, 2, "a duplicate key counts once; app rules don’t count")
         XCTAssertEqual(sut.websiteRuleCountText, "2 website rules")
     }
 
@@ -292,13 +338,16 @@ final class BrowsersSettingsModelTests: XCTestCase {
         XCTAssertTrue(note("com.google.Chrome")?.contains("Chrome is in English or Hebrew") == true)
         XCTAssertTrue(note("company.thebrowser.Browser")?.contains("only with Automation") == true)
         XCTAssertTrue(note("org.torproject.torbrowser")?.contains("every window") == true)
-        XCTAssertTrue(note("app.zen-browser.zen")?.contains("can't tell") == true)
+        XCTAssertTrue(note("app.zen-browser.zen")?.contains("can’t tell") == true)
         XCTAssertTrue(note("com.apple.Safari")?.contains("when Safari is in English") == true)
         XCTAssertFalse(note("com.apple.Safari")?.contains("any language") == true)
-        XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Ask the browser for the page address (Automation)")
+        // P6-0g (design v2, P2): the review's wording.
+        XCTAssertEqual(BrowsersSettingsModel.automationToggleTitle, "Work in more browsers")
+        XCTAssertEqual(BrowsersSettingsModel.automationExplanation,
+                       "For browsers Kytkin can’t read by itself. macOS asks you once for each browser.")
         XCTAssertTrue(BrowsersSettingsModel.groupingText.contains("news.ynet.co.il"))
-        XCTAssertTrue(BrowsersSettingsModel.privateExplanation.contains("doesn't look at their address"))
-        XCTAssertEqual(BrowsersSettingsModel.privateToggleTitle, "Don't use website rules in private windows")
+        XCTAssertEqual(BrowsersSettingsModel.privateExplanation, "Kytkin doesn’t look at addresses in private windows.")
+        XCTAssertEqual(BrowsersSettingsModel.privateToggleTitle, "Ignore private windows")
     }
 }
 

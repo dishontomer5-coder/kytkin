@@ -448,6 +448,13 @@ import Observation
         onDisplayChange?()
     }
 
+    /// P6-0g: the menu's Kytkin key. The pin applies at once (the rule's language is selected now).
+    func pinCurrent(to source: InputSourceID) {
+        switching.pinCurrent(to: source)
+        preferencesDidChange()
+        onDisplayChange?()
+    }
+
     func forgetCurrent() {
         switching.forgetCurrent()
         preferencesDidChange()

@@ -166,7 +166,7 @@ import Observation
                 let anyGrant = state.accessibility == .granted || state.inputMonitoring == .granted
                 text = anyGrant ? "Off in Double-Shift settings." : "Off: allow Accessibility to use it."
             } else {
-                text = "Stopped: Kytkin couldn't start it. Quit & Reopen Kytkin."
+                text = "Stopped: Kytkin couldn’t start it. Quit & Reopen Kytkin."
             }
         }
         if TapModePolicy.rank(achieved) < TapModePolicy.rank(desired) {
@@ -181,6 +181,40 @@ import Observation
         }
         return text
     }
+
+    // MARK: - P6-0g: Advanced → Troubleshooting (one row style: a status word on the right, the detail below)
+
+    /// The Double-Shift row: "Works" / "Converts text and switches the language.", from `keyboardModeText`.
+    var doubleShiftStatus: (status: String, detail: String, ok: Bool) {
+        let (status, detail) = Self.split(keyboardModeText)
+        return (status, detail, state.enabled && !state.paused && state.tapMode == .active
+                    && TapModePolicy.rank(state.tapMode) >= TapModePolicy.rank(desiredTapMode))
+    }
+
+    /// "Works: converts text…" → ("Works", "Converts text…").
+    static func split(_ text: String) -> (String, String) {
+        guard let range = text.range(of: ": ") else { return (text, "") }
+        let rest = text[range.upperBound...]
+        return (String(text[..<range.lowerBound]), rest.prefix(1).uppercased() + rest.dropFirst())
+    }
+
+    /// P6-0g (review P3): "Secure typing" (was "Typing protection").
+    static let secureTypingTitle = "Secure typing"
+
+    var secureTyping: (status: String, detail: String) { Self.secureTyping(state: state) }
+
+    static func secureTyping(state: MenuState) -> (status: String, detail: String) {
+        guard state.enabled, !state.paused, state.tapMode != .off else {
+            return ("Not checked", "Kytkin checks this only while it watches the keyboard.")
+        }
+        return state.secureInputOn
+            ? ("Active", "Another app is protecting your typing, like a password box. Double-Shift waits until it ends.")
+            : ("Not active", "No app is blocking Kytkin right now.")
+    }
+
+    /// P6-0g (review P3): Troubleshooting lists Input Monitoring only while it could help (no Accessibility) or a
+    /// relaunch is pending, like General's setup section.
+    var troubleshootingRows: [PermissionRow] { setupRows }
 
     static func secureInputText(state: MenuState) -> String {
         guard state.enabled, !state.paused, state.tapMode != .off else {
@@ -200,9 +234,9 @@ import Observation
                 + "this.")
         }
         if conflicts.perDocumentInputEnabled {
-            lines.append("macOS is switching languages per document, so Kytkin isn't learning. "
+            lines.append("macOS is switching languages per document, so Kytkin isn’t learning. "
                 + "To turn that off: System Settings → Keyboard → Text Input → Edit…, then turn off "
-                + "“Automatically switch to a document's input source”.")
+                + "“Automatically switch to a document’s input source”.")
         }
         return lines
     }

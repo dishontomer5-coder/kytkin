@@ -31,8 +31,9 @@ import SwiftUI
                 .frame(width: size?.width, height: size?.height)
                 .background(Color(nsColor: backdrop))
                 .environment(\.colorScheme, dark ? .dark : .light)
-                // P6-0e: the app's AccentColor asset (#0E7A66); the renderer has no asset catalog.
-                .tint(Color(red: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255))
+                // P6-0e / P6-0g: the app's AccentColor asset (light #0E7A66, dark #2FA88B); no asset catalog here.
+                .tint(dark ? Color(red: 0x2F / 255, green: 0xA8 / 255, blue: 0x8B / 255)
+                           : Color(red: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255))
                 .environment(\.controlActiveState, .key)   // draw controls as in the front window
             let host = NSHostingView(rootView: root)
             host.appearance = appearance

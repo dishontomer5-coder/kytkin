@@ -48,10 +48,10 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertEqual(sut.options.map(\.id), [IDs.abc, IDs.hebrew, IDs.hebrewQWERTY, pinyin])
         XCTAssertEqual(sut.options.map(\.kind), [.enabled, .enabled, .installed, .inputMethod])
         XCTAssertEqual(sut.options.map(\.title),
-                       ["ABC", "Hebrew", "Hebrew-QWERTY (not added)", "Pinyin - Simplified (can't convert)"])
+                       ["ABC", "Hebrew", "Hebrew-QWERTY (not added)", "Chinese (Pinyin - Simplified) (can’t convert)"])   // P6-0g: language (layout)
         XCTAssertEqual(sut.options.map(\.isSelectable), [true, true, true, false])
         XCTAssertEqual(sut.optionGroups.map(\.title),
-                       ["In your Keyboard settings", "On this Mac, not added (convert only)", "Can't convert"])
+                       ["In your Keyboard settings", "On this Mac, not added (convert only)", "Can’t convert"])
     }
 
     func testImportedMapWithAnInstalledBaseIsAnOption() throws {
@@ -85,7 +85,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertFalse(last?.isSelectable ?? true)
         XCTAssertEqual(sut.pairB, IDs.russian.rawValue, "the picker shows the saved value, not a blank")
         XCTAssertEqual(sut.pairWarnings.count, 1)
-        XCTAssertTrue(sut.pairWarnings[0].contains("Russian isn't on this Mac"), sut.pairWarnings[0])
+        XCTAssertTrue(sut.pairWarnings[0].contains("Russian isn’t on this Mac"), sut.pairWarnings[0])
     }
 
     func testRefreshReadsTheListsAgain() {
@@ -105,7 +105,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertEqual(store.prefs.languagePair, LanguagePair(a: IDs.abc, b: IDs.hebrewQWERTY))
         XCTAssertNil(sut.pairProblem)
         XCTAssertEqual(sut.pairWarnings.count, 1, "not turned on: convert only")
-        XCTAssertTrue(sut.pairWarnings[0].contains("can't switch to it"), sut.pairWarnings[0])
+        XCTAssertTrue(sut.pairWarnings[0].contains("can’t switch to it"), sut.pairWarnings[0])
     }
 
     func testTheSameLayoutTwiceIsRefused() {
@@ -119,7 +119,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
     func testAnInputMethodOrUnknownIsRefused() {
         make()
         sut.pairA = pinyin.rawValue
-        XCTAssertEqual(sut.pairProblem, .notConvertible("Pinyin - Simplified"))
+        XCTAssertEqual(sut.pairProblem, .notConvertible("Chinese"), "P6-0g: the language’s name")
         sut.pairA = "com.example.nothing"
         XCTAssertEqual(sut.pairProblem, .notConvertible("nothing"))
         XCTAssertEqual(store.prefs.languagePair, .default)
@@ -172,7 +172,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
             installed: [FakeSystemLayouts.info(IDs.abc, "ABC"), FakeSystemLayouts.info(IDs.hebrew, "")],
             systemIDs: [IDs.abc, IDs.hebrew], inputMethods: [], pair: .default, inputSource: { $0 },
             baseName: { $0.rawValue })
-        XCTAssertEqual(options.map(\.title), ["ABC", "Hebrew"], "an empty name falls back to the id's last part")
+        XCTAssertEqual(options.map(\.title), ["ABC", "Hebrew"], "an empty name falls back to the id’s last part")
         XCTAssertNil(LanguagePairProblem.check(.default, options: options, name: { $0.rawValue }))
         XCTAssertEqual(LanguagePairProblem.check(LanguagePair(a: IDs.abc, b: IDs.russian), options: options,
                                                  name: { $0.rawValue }), .notConvertible("Russian"))
@@ -222,7 +222,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
         XCTAssertEqual(sut.status?.isError, false)
         XCTAssertTrue(sut.status?.text.contains("needs a \"base\"") ?? false, sut.status?.text ?? "")
         XCTAssertEqual(sut.importedRows.first?.detail,
-                       "Full layout. It can't be in the pair: it names no keyboard to type with.")
+                       "Full layout. It can’t be in the pair: it names no keyboard to type with.")
     }
 
     func testImportErrorsUseTheLayoutMapMessages() throws {
@@ -231,7 +231,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
         sut.importFile(at: picked)
         let status = try XCTUnwrap(sut.status)
         XCTAssertTrue(status.isError)
-        XCTAssertTrue(status.text.hasPrefix("Couldn't import “picked.json”: Key "), status.text)
+        XCTAssertTrue(status.text.hasPrefix("Couldn’t import “picked.json”: Key "), status.text)
         XCTAssertTrue(status.text.contains("control character"), status.text)
         try pick("invalid/id-reserved.json")
         sut.importFile(at: picked)
@@ -290,7 +290,7 @@ final class LanguagesSettingsModelTests: XCTestCase {
         fs.failWrites = true
         sut.export(to: exported)
         XCTAssertEqual(sut.status?.isError, true)
-        XCTAssertEqual(sut.status?.text, "Couldn't export “ABC”: Kytkin couldn't write the file there. Try another folder.")
+        XCTAssertEqual(sut.status?.text, "Couldn’t export “ABC”: Kytkin couldn’t write the file there. Try another folder.")
     }
 
     // MARK: - Read-only (§12 S1)

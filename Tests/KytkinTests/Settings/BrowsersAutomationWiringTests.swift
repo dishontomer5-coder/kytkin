@@ -79,7 +79,7 @@ final class BrowsersAutomationWiringTests: XCTestCase {
             XCTAssertNil(try row(id).automationState, id)
             XCTAssertNil(try row(id).automationStatusText, id)
             guard case .notAvailable(let text) = try row(id).automation else { return XCTFail(id) }
-            XCTAssertTrue(text.hasPrefix("Automation isn't available"), id)
+            XCTAssertTrue(text.hasPrefix("Automation isn’t available"), id)
         }
         XCTAssertNotNil(try row(chrome).automationState)
         sut.askAutomation(for: zen)
@@ -159,7 +159,7 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         prefs.browsers.useAutomation = true
         make(prefs)
         sut.refresh()
-        XCTAssertEqual(fake.calls, [.refresh([chrome, arc])], "Safari isn't installed, Zen has no Automation")
+        XCTAssertEqual(fake.calls, [.refresh([chrome, arc])], "Safari isn’t installed, Zen has no Automation")
         make()
         sut.refresh()
         XCTAssertTrue(fake.calls.isEmpty, "switch off: no check at all")
@@ -174,10 +174,10 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         fake.states = [arc: state(.notAsked), safari: state(.allowed)]
         sut.refresh()
         XCTAssertEqual(try row(chrome).statusHint,
-                       "Kytkin can't see the page address. Turn on \"Use Automation\" above.")
-        XCTAssertEqual(try row(arc).statusHint, "Kytkin can't see the page address. Allow Automation below.")
-        XCTAssertEqual(try row(safari).statusHint, "Kytkin can't see the page address, even with Automation.")
-        XCTAssertEqual(try row(zen).statusHint, "Kytkin can't see the page address here. Not supported yet.")
+                       "Kytkin can’t see the page address. Turn on \"Use Automation\" above.")
+        XCTAssertEqual(try row(arc).statusHint, "Kytkin can’t see the page address. Allow Automation below.")
+        XCTAssertEqual(try row(safari).statusHint, "Kytkin can’t see the page address, even with Automation.")
+        XCTAssertEqual(try row(zen).statusHint, "Kytkin can’t see the page address here. Not supported yet.")
     }
 
     // MARK: - End to end with the real controller
@@ -243,7 +243,7 @@ final class BrowsersAutomationWiringTests: XCTestCase {
         sut.setUseAutomation(true)
         XCTAssertTrue(store.prefs.browsers.useAutomation)
         XCTAssertEqual(permissions.promptingCalls, [.requestAutomation(chrome)],
-                       "only the running browser that supports it and isn't allowed yet")
+                       "only the running browser that supports it and isn’t allowed yet")
         XCTAssertEqual(try row(safari).automationStatusText, "Not asked yet. Open Safari, then click Ask.",
                        "the others: open it, then Ask")
         XCTAssertEqual(try row(arc).automationStatusText, "Allowed")

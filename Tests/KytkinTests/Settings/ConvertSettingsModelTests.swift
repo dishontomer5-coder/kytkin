@@ -89,20 +89,23 @@ final class ConvertSettingsModelTests: XCTestCase {
         let text = ConvertSettingsModel.explanation.joined(separator: " ")
         XCTAssertTrue(text.contains("terminals"))
         // P6-0c (copy review C-4, P3-18 audit M1): the clipboard detail sits under its own switch.
+        // P6-0g (design v2, P1): the short text is the review's wording, the disclosure (clipboard managers) kept.
         let note = ConvertSettingsModel.clipboardNote
-        for part in ["clipboard history apps", "Never in terminals", "while you have a password copied"] {
-            XCTAssertTrue(note.contains(part), part)
-        }
+        XCTAssertEqual(note, "For apps Kytkin can’t read directly, such as Slack. It copies the text, pastes it back "
+            + "converted, then restores your clipboard. Never in terminals or password fields. Clipboard managers may "
+            + "record the copied text.")
         // P6-0d QA: VS Code is an excluded editor (the clipboard never runs there), so it's no example.
         XCTAssertFalse(note.contains("VS Code"))
         XCTAssertFalse(ReplacementCapabilities.isEditor("com.tinyspeck.slackmacgap"), "Slack is a fair example")
-        // P6-0d (owner): what "off" does, as ConvertController does it.
-        let off = ConvertSettingsModel.clipboardOffNote
-        for part in ["apps Kytkin can read", "work as before", "since your last click or Return",
-                     "In Slack, Discord and Teams, double-Shift only switches the language"] {
-            XCTAssertTrue(off.contains(part), part)
+        // P6-0g: the longer details behind "Learn more…", including what "off" does (P6-0d, as ConvertController
+        // does it).
+        let details = ConvertSettingsModel.clipboardDetails.joined(separator: " ")
+        for part in ["Clipboard history apps", "Never in terminals", "while you have a password copied",
+                     "apps Kytkin can read", "work as before", "since your last click or Return",
+                     "In Slack, Discord and Teams, Double-Shift only switches the language"] {
+            XCTAssertTrue(details.contains(part), part)
         }
-        XCTAssertEqual(ConvertSettingsModel.clipboardTitle, "Convert through the clipboard when needed")
+        XCTAssertEqual(ConvertSettingsModel.clipboardTitle, "Work in more apps (uses the clipboard)")
         XCTAssertTrue(Preferences().convert.useClipboardInUnreadableApps)
     }
 

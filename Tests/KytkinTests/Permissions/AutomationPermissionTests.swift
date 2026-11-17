@@ -236,9 +236,9 @@ final class PermissionsManagerAutomationTests: XCTestCase {
         XCTAssertEqual(pending.count, 2, "the new click asks")
         let (stuckWork, stuckDone) = pending.removeFirst()
         requester.answer = .denied
-        stuckDone(stuckWork())   // Chrome's late answer
+        stuckDone(stuckWork())   // Chrome’s late answer
         XCTAssertEqual(m.automation[chrome], .denied, "its state is still taken")
-        XCTAssertEqual(pending.count, 1, "but it starts nothing: Safari's question is on screen")
+        XCTAssertEqual(pending.count, 1, "but it starts nothing: Safari’s question is on screen")
         requester.answer = .granted
         var rounds = 0
         while !pending.isEmpty && rounds < 5 {   // bounded
@@ -307,7 +307,7 @@ final class BrowserAutomationControllerTests: XCTestCase {
     func testGeckoAndUnknownBrowsersAreNotAvailable() {
         XCTAssertEqual(sut.automationState(for: zen).status, .notAvailableGecko)
         XCTAssertEqual(sut.automationState(for: zen).statusText(browserName: "Zen"),
-                       "Automation isn't available for Firefox-based browsers.")
+                       "Automation isn’t available for Firefox-based browsers.")
         XCTAssertEqual(sut.automationState(for: "org.mozilla.firefox").status, .notAvailableGecko)
         XCTAssertEqual(sut.automationState(for: orion).status, .notAvailable)
         XCTAssertEqual(sut.automationState(for: "com.example.Other").status, .notAvailable)
@@ -332,7 +332,7 @@ final class BrowserAutomationControllerTests: XCTestCase {
         sut.setUseAutomation(true)
         XCTAssertTrue(store.prefs.browsers.useAutomation)
         XCTAssertEqual(permissions.calls, [.requestAutomation(chrome), .requestAutomation(arc)],
-                       "Chrome and Arc run and support it; Zen runs but has no Automation; Safari isn't running")
+                       "Chrome and Arc run and support it; Zen runs but has no Automation; Safari isn’t running")
         XCTAssertEqual(sut.automationState(for: chrome).status, .checking)
         permissions.set(automation: chrome, .granted)
         XCTAssertEqual(sut.automationState(for: chrome).status, .allowed)

@@ -9,6 +9,8 @@ import Foundation
     /// From `menuNeedsUpdate` (P2-48): silent, cheap refreshes so warnings are fresh when the menu opens.
     func menuWillOpen()
     func pinCurrent()
+    /// P6-0g: "Always use" a pair language (a half of the menu's Kytkin key).
+    func pinCurrent(to source: InputSourceID)
     /// P6-0c (visual review N5): the checked "Always Use …" chosen again.
     func unpinCurrent()
     func forgetCurrent()
