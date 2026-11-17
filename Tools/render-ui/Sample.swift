@@ -75,6 +75,10 @@ enum Sample {
              inputSource: SampleIDs.abc, origin: .learned, label: nil, updatedAt: date(17, 9, 20)),
     ]
 
+    /// P6-0k: Settings → Statistics (total 1,234).
+    static let stats = UsageStats(converted: 412, switchedByApp: 689, switchedByWebsite: 133,
+                                  since: date(1, 9, 0))
+
     static func preferences() -> Preferences {
         var p = Preferences()
         p.languagePair = LanguagePair(a: SampleIDs.abc, b: SampleIDs.hebrew)

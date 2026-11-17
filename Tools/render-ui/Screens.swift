@@ -35,7 +35,8 @@ import SwiftUI
 
     private func store(_ prefs: Preferences, readOnly: Bool = false) throws -> PreferencesStore {
         let data = try PreferencesCodec.encode(
-            prefs, schemaVersion: Preferences.currentSchemaVersion + (readOnly ? 1 : 0))
+            prefs, schemaVersion: Preferences.currentSchemaVersion + (readOnly ? 1 : 0),
+            stats: Sample.stats)   // P6-0k: sample counts for Settings → Statistics
         return PreferencesStore(fileURL: prefsURL, clock: FrozenClock(), fileSystem: MemoryPreferencesFS(files: [prefsURL: data]))
     }
 
@@ -50,6 +51,7 @@ import SwiftUI
         let apps: AppsSettingsModel
         let permissionsTab: PermissionsSettingsModel
         let browsers: BrowsersSettingsModel
+        let statistics: StatisticsSettingsModel   // P6-0k
         let about: AboutInfo
         let polling: PermissionPollingDemand
     }
@@ -101,7 +103,9 @@ import SwiftUI
         browsers.refresh()
         return World(store: store, permissions: permissions, general: general, languages: languages, rules: rules,
                      convert: ConvertSettingsModel(store: store), apps: apps, permissionsTab: permissionsTab,
-                     browsers: browsers, about: about, polling: polling)
+                     browsers: browsers,
+                     statistics: StatisticsSettingsModel(store: store, locale: Locale(identifier: "en_US")),
+                     about: about, polling: polling)
     }
 
     static let healthyState: MenuState = {
@@ -130,7 +134,7 @@ import SwiftUI
     private func panes(_ w: World, tab: SettingsTab, heights: Heights? = nil) -> SettingsPanes {
         SettingsPanes(selection: SettingsSelection(tab: tab), general: w.general,
                       about: w.about, rules: w.rules, convert: w.convert, permissions: w.permissionsTab,
-                      browsers: w.browsers, openSettingsFolder: {}, showWelcome: {}, select: { _ in },
+                      browsers: w.browsers, statistics: w.statistics, openSettingsFolder: {}, showWelcome: {}, select: { _ in },
                       reportHeight: { tab, h in heights?.natural[tab] = max(heights?.natural[tab] ?? 0, h) })
     }
 
@@ -138,7 +142,7 @@ import SwiftUI
     /// icons and titles sits above the real tab pane (MenuMock.swift).
     private func settingsView(_ w: World, tab: SettingsTab, height: CGFloat) -> some View {
         VStack(spacing: 0) {
-            ToolbarTabsMock(selected: tab)
+            ToolbarTabsMock(selected: tab, statisticsTitle: w.statistics.totalText)   // P6-0k: the total
             SettingsView(panes: panes(w, tab: tab), height: height)
                 .environment(w.languages)
         }

@@ -17,6 +17,8 @@ import Foundation
     private var cached: (pair: LanguagePair, a: LayoutMap, b: LayoutMap, snapshot: LayoutSnapshot)?
     /// The last hop queued, so the next one runs after it (and tests can await it).
     private(set) var lastTask: Task<Void, Never>?
+    /// P6-0k: a double-Shift converted text (not a toggle-only switch): Settings → Statistics counts it, on main.
+    var onConverted: (@MainActor () -> Void)?
 
     init(controller: ConvertController, maps: any LayoutMapProviding) {
         self.controller = controller
@@ -27,7 +29,12 @@ import Foundation
         let layouts = request.mode == .convert ? snapshot(for: request.pair) : nil
         let switchPair = maps.inputSources(for: request.pair)
         let resolved = switchPair == request.pair ? request : request.with(pair: switchPair)
-        enqueue { controller in await controller.handle(resolved, layouts: layouts) }
+        let onConverted = self.onConverted
+        enqueue { controller in
+            let outcome = await controller.handle(resolved, layouts: layouts)
+            // P6-0k: counted on main, after the finish (the held keys already replayed); never written from here.
+            if case .converted = outcome, let onConverted { Task { @MainActor in onConverted() } }
+        }
     }
 
     /// P3-37 (b): queued like any request, so the anchor is read on @TextActor, never on main.

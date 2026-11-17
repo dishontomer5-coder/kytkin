@@ -28,6 +28,8 @@ import SwiftUI
     private var window: NSWindow?
     private var tabController: SettingsTabController?
     private var hostings: [SettingsTab: NSViewController] = [:]
+    /// P6-0k: the Statistics toolbar item, whose title is the total.
+    private var statisticsItem: NSTabViewItem?
     /// P6-0g: each tab's natural content height, as its pane last reported it.
     private var heights: [SettingsTab: CGFloat] = [:]
 
@@ -38,6 +40,7 @@ import SwiftUI
         let convert: ConvertSettingsModel
         let permissions: PermissionsSettingsModel   // P2-26
         let browsers: BrowsersSettingsModel         // P3-15
+        let statistics: StatisticsSettingsModel     // P6-0k
     }
 
     /// P2-26: General → "Show Welcome Again".
@@ -149,7 +152,8 @@ import SwiftUI
     private func makeWindow() -> NSWindow {
         let panes = SettingsPanes(selection: selection, general: general, about: about, rules: tabs.rules,
                                   convert: tabs.convert, permissions: tabs.permissions,
-                                  browsers: tabs.browsers, openSettingsFolder: openSettingsFolder,
+                                  browsers: tabs.browsers, statistics: tabs.statistics,
+                                  openSettingsFolder: openSettingsFolder,
                                   showWelcome: showWelcome, select: { [weak self] in self?.select($0) },
                                   copyDiagnostics: copyDiagnostics,
                                   reportHeight: { [weak self] tab, natural in self?.heightReported(tab, natural) })
@@ -166,6 +170,7 @@ import SwiftUI
             hostings[tab] = hosting
             let item = NSTabViewItem(viewController: hosting)
             item.label = tab.title
+            if tab == .statistics { statisticsItem = item }
             item.image = NSImage(systemSymbolName: tab.symbolName, accessibilityDescription: tab.title)
             controller.addTabViewItem(item)
         }
@@ -176,6 +181,7 @@ import SwiftUI
             self.tabDidChange()
         }
         tabController = controller
+        updateStatisticsLabel()
         let window = KytkinWindow(contentViewController: controller)   // P2-56: Esc closes it
         // QA (P2-23): no minimize. A minimized window leaves the accessory app active with no window (keys go
         // nowhere) and skips windowWillClose, so Kytkin never hides; Settings windows don't minimize anyway.
@@ -188,6 +194,15 @@ import SwiftUI
         window.delegate = self
         self.window = window
         return window
+    }
+
+    /// P6-0k: the Statistics tab's toolbar title is the total ("1,234"), kept current while the window exists.
+    private func updateStatisticsLabel() {
+        guard let item = statisticsItem else { return }
+        let text = withObservationTracking { tabs.statistics.totalText } onChange: { [weak self] in
+            Task { @MainActor in self?.updateStatisticsLabel() }
+        }
+        if item.label != text { item.label = text }
     }
 
     // MARK: - NSWindowDelegate

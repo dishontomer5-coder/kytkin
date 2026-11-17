@@ -18,6 +18,8 @@ struct SettingsPanes {
     let convert: ConvertSettingsModel
     let permissions: PermissionsSettingsModel
     let browsers: BrowsersSettingsModel
+    /// P6-0k: Settings → Statistics.
+    let statistics: StatisticsSettingsModel
     /// Advanced → Troubleshooting → "Open Settings Folder".
     let openSettingsFolder: @MainActor () -> Void
     /// General → "Show Setup Again…".
@@ -64,6 +66,7 @@ struct SettingsTabPane: View {
         case .advanced:
             AdvancedSettingsView(permissions: panes.permissions, openSettingsFolder: panes.openSettingsFolder,
                                  copyDiagnostics: panes.copyDiagnostics)
+        case .statistics: StatisticsSettingsView(model: panes.statistics)   // P6-0k
         case .about: AboutSettingsView(info: panes.about)
         }
     }

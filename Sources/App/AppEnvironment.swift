@@ -92,7 +92,9 @@ import AppKit
                 && !UserDefaults.standard.bool(forKey: ChromiumAXConvert.killSwitchDefaultsKey),
             // P3-44: DEBUG builds only: one privacy-safe line per double-Shift (paths tried, stop reasons; no text).
             diagnose: ConvertDiagnosticsLog.hook)
-        convert = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
+        let dispatcher = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
+        dispatcher.onConverted = { [store] in store.recordStat(.converted) }   // P6-0k: Settings → Statistics
+        convert = dispatcher
 
         controller = AppController(switcher: switcher, context: contextMonitor, store: store,
                                    permissions: permissions, conflicts: conflicts, keyWatcher: keyWatcher,
@@ -272,7 +274,8 @@ import AppKit
                                                          suffixListVersion: PublicSuffixList.bundledVersion),
                                         tabs: .init(languages: languages, rules: rules,
                                                     convert: ConvertSettingsModel(store: store),
-                                                    permissions: permissionsTab, browsers: browsers),
+                                                    permissions: permissionsTab, browsers: browsers,
+                                                    statistics: StatisticsSettingsModel(store: store)),   // P6-0k
                                         showWelcome: { [weak self] in self?.openOnboarding() },
                                         openSettingsFolder: { Self.openSettingsFolder(fileURL) },
                                         copyDiagnostics: {
