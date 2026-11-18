@@ -19,8 +19,8 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     # P4-3: Sparkle compares CURRENT_PROJECT_VERSION (CFBundleVersion, the appcast's sparkle:version), so raise it by
     # one for every release, together with MARKETING_VERSION.
-    MARKETING_VERSION: "1.1.1"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "1.1.2"
+    CURRENT_PROJECT_VERSION: "4"
     # Local ad-hoc signing: no Apple team needed. Developer ID signing comes in Phase 4.
     # P2-3: build.sh overrides CODE_SIGN_IDENTITY for Debug from KYTKIN_SIGN_IDENTITY.
     CODE_SIGN_STYLE: Manual

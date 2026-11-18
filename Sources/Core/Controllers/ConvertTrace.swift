@@ -57,6 +57,12 @@ struct ConvertTrace: Sendable, Equatable {
     /// P6-0j: the focused element belongs to another app than the frontmost one (Spotlight and other system panels);
     /// `bundleID` is the focus owner's.
     var focusOwnerDiffers = false
+    /// P4-5: a chat app: what the double-Shift's own `AXManualAccessibility` check did (`alreadySet`, `wrote:set`,
+    /// `wrote:noAnswer`…), nil = not a chat app / no enabler.
+    var chatAX: String?
+    /// P4-5: a chat app named no text box: the flag was written again and the focus looked up again
+    /// (`found` / `notFound` with the poll count and the ms since the request arrived), or why not (`notTried(…)`).
+    var chatAXRetry: String?
     /// The final outcome, as an enum case name.
     var outcome: String = ""
 
@@ -65,6 +71,8 @@ struct ConvertTrace: Sendable, Equatable {
         var parts = ["paths=" + (steps.isEmpty ? "none" : steps.map { "\($0.path.rawValue):\($0.reason)" }
             .joined(separator: " > "))]
         if focusOwnerDiffers { parts.append("focusOwner≠frontmost") }
+        if let chatAX { parts.append("chatAX=\(chatAX)") }                       // P4-5
+        if let chatAXRetry { parts.append("chatAXRetry=\(chatAXRetry)") }        // P4-5
         if let chatClipboard { parts.append("chatClipboard=\(chatClipboard)") }
         if let siteKnown { parts.append("siteKnown=\(siteKnown)") }
         if let pageState { parts.append("pageState=\(pageState)") }

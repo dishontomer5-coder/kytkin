@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2
+
+### Fixed
+
+- Convert now works in Slack, Discord and Teams on Macs without other accessibility helper apps. Before, double-Shift
+  did nothing there unless another app (a clipboard manager, a window switcher…) had already asked the chat app to show
+  its text boxes to accessibility tools. Kytkin now asks them itself. It reads nothing more and sends nothing.
+- If Kytkin still can't find the text box in a chat app, double-Shift at least switches the keyboard language.
+
 ## 1.1.1
 
 ### Fixed

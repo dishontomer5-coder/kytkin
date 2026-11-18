@@ -201,7 +201,22 @@ import Observation
         }
         keyWatcher.checkSecureInputNow()      // P2-45: on every app change
         retryTapAfterLaunchTimeout()          // P2-52 item 2: at most once per run
+        prepareChatApp(c)                     // P4-5
         afterEvent()
+    }
+
+    /// P4-5: a chat app (Slack, Discord, Teams) in front: ask the convert side to turn its accessibility tree on (once
+    /// per pid, on @TextActor). Not while Kytkin is off or paused, nor for an app the user turned Kytkin off in, and
+    /// never for a browser (only `ReplacementCapabilities.chatAppBundleIDs`).
+    private func prepareChatApp(_ c: Context) {
+        guard ReplacementCapabilities.isChatApp(c.bundleID), c.pid > 0, !switching.paused else { return }
+        let prefs = store.prefs
+        guard prefs.general.enabled, prefs.apps[c.bundleID]?.disabled != true else { return }
+        // P4-5 QA: only when a double-Shift there would convert (chat apps convert only by the clipboard): not with
+        // convert off (globally or for this app: double-Shift just switches) or the clipboard switch off.
+        guard availability.doubleShiftConvert, prefs.apps[c.bundleID]?.convertEnabled != false,
+              prefs.convert.useClipboardInUnreadableApps else { return }
+        convert.chatAppBecameFrontmost(bundleID: c.bundleID, pid: c.pid)
     }
 
     /// P3-7: the browsers the user turned Automation on for. P3-26: the global switch × the installed browsers

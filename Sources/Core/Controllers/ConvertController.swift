@@ -87,6 +87,16 @@
 //   - `diagnose` (DEBUG builds only, wired by the composition root): one `ConvertTrace` per double-Shift with the paths
 //     tried and why each stopped, as enum names and counts; never text.
 //
+// P4-5 (owner-reproduced 2026-11-18, first real users: double-Shift did nothing in Slack): Electron chat apps build
+//   their accessibility tree only after a client sets `AXManualAccessibility`. `chatAX` (`ChatAccessibilityEnabler`)
+//   sets it once per process when a chat app comes to the front (`chatAppBecameFrontmost`) and, as a safety net, at
+//   double-Shift time (`run`: a chat app's pid not set yet). When `decide` finds no text box in a chat app
+//   (`.chatNoBox`: no focused element, or one that is not a text box), the flag is written again (P4-5 QA: unless this
+//   request just wrote it; none of it when that write got no answer, or with the clipboard switch off) and the focus is
+//   looked up again, polled, until `chatFocusWaitNanos` after the request arrived (inside the B5 budget, before the
+//   clipboard's copy-start limit). Still no box: double-Shift just switches the language (never silent). The write
+//   reads no text.
+//
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
 // only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs; the
 // P3-44 trace holds no text.
@@ -152,6 +162,19 @@ import Foundation
     /// P3-53: the page check gets at most this much, and never more than what is left of the B5 budget.
     static let pageCheckBudgetNanos: UInt64 = 100_000_000
 
+    /// P4-5: a chat app with no box is looked at again until this long after the request arrived (≤ 150 ms: the
+    /// clipboard must still start its copy inside `ClipboardConvert.Timing.copyStartBudgetNanos`, 200 ms).
+    static let chatFocusWaitNanos: UInt64 = 150_000_000
+    /// P4-5: how often the focus is looked at again while waiting.
+    static let chatFocusPollNanos: UInt64 = 30_000_000
+    /// P4-5: room kept before the copy-start limit for the mention pill walk.
+    static let pillCopyStartReserveNanos: UInt64 = 20_000_000
+
+    /// P4-5: turns on a chat app's AX tree (nil = never; tests without it keep the old behaviour).
+    private let chatAX: ChatAccessibilityEnabler?
+    /// P4-5: the bounded wait before a chat app's focus is looked up again (tests advance a fake clock).
+    private let sleep: @Sendable (UInt64) async -> Void
+
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
     private var chromiumAX: ChromiumAXConvert?
@@ -179,7 +202,11 @@ import Foundation
                      makeClipboard: (@TextActor @Sendable () -> ClipboardConvert?)? = nil,
                      makeChromiumAX: (@TextActor @Sendable () -> ChromiumAXConvert?)? = nil,
                      chromiumAXEnabled: Bool = ChromiumAXConvert.isEnabled,
-                     diagnose: (@Sendable (ConvertTrace) -> Void)? = nil) {
+                     diagnose: (@Sendable (ConvertTrace) -> Void)? = nil,
+                     chatAX: ChatAccessibilityEnabler? = nil,
+                     sleep: @escaping @Sendable (UInt64) async -> Void = { nanos in
+                         try? await Task.sleep(nanoseconds: nanos)
+                     }) {
         self.keyWatcher = keyWatcher
         self.clock = clock
         self.capabilities = capabilities
@@ -190,6 +217,8 @@ import Foundation
         self.makeChromiumAX = makeChromiumAX
         self.chromiumAXEnabled = chromiumAXEnabled
         self.diagnose = diagnose
+        self.chatAX = chatAX
+        self.sleep = sleep
     }
 
     // MARK: - Entry points
@@ -253,6 +282,11 @@ import Foundation
         trace?.steps.append(.init(path: path, reason: reason()))
     }
 
+    /// P4-5: a chat app came to the front (AppController, through the dispatcher): turn its AX tree on, once per pid.
+    func chatAppBecameFrontmost(bundleID: String, pid: Int32) {
+        chatAX?.enable(bundleID: bundleID, pid: pid, timeout: ChatAccessibilityEnabler.frontmostTimeout)
+    }
+
     /// Settings → Apps (§12 T5): replaces the user's overrides; removed apps fall back to the seeds.
     func setMethodHintOverrides(_ overrides: [String: MethodHint]) {
         for id in appliedOverrides.keys where overrides[id] == nil { capabilities.setOverride(nil, for: id) }
@@ -283,6 +317,8 @@ import Foundation
         case chromiumAX(ChromiumJob)
         /// P6-0j: AX reports a selected range the AX path couldn't convert: never Backspace + type, just switch.
         case selectionBlocksKeys
+        /// P4-5: a chat app with no focused text box (its AX tree may be off): retry once, else just switch.
+        case chatNoBox
     }
 
     private func run(_ request: ConvertRequest, layouts: LayoutSnapshot?, finish: inout Finish) async throws
@@ -303,8 +339,71 @@ import Foundation
             beep()
             return .noop(.layoutsUnavailable)
         }
-        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
+        // P4-5: the safety net: a chat app whose AX tree Kytkin hasn't turned on yet (it came to the front a moment ago,
+        // or the write at that time got no answer).
+        // P4-5 QA: not with the clipboard switch off (a chat app then just switches; the flag would serve nothing).
+        var safetyNet: ChatAccessibilityEnabler.Result?
+        if let chatAX, r.useClipboard, CopiedContent.appKind(bundleID: r.bundleID) == .chat {
+            let result = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
+                                       timeout: ChatAccessibilityEnabler.requestTimeout)
+            trace?.chatAX = result.traceName
+            safetyNet = result
+        }
+        var decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
+        if case .chatNoBox = decision, let safetyNet {
+            decision = await retryChatFocus(r, layouts: layouts, safetyNet: safetyNet)
+        }
         return await apply(decision, r, layouts: layouts, finish: &finish)
+    }
+
+    /// P4-5: a chat app named no text box: write the flag again (the first write may have come before the app was ready),
+    /// then look at the focus again every `chatFocusPollNanos` until a box shows or `chatFocusWaitNanos` after the
+    /// request arrived, and decide once more. Without the enabler, a pid, or the grant: no wait (`.chatNoBox` stays).
+    /// P4-5 QA: `safetyNet` is what this request's own check did: a write just now (answered) is not repeated, and one
+    /// that got no answer (a busy app: another write and the focus reads would only time out too) or no grant ends here.
+    private func retryChatFocus(_ r: ConvertRequest, layouts: LayoutSnapshot,
+                                safetyNet: ChatAccessibilityEnabler.Result) async -> Decision {
+        guard let chatAX else { return .chatNoBox }
+        let wrote: ChatAccessibilityEnabler.Result
+        if case .alreadySet = safetyNet {
+            wrote = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
+                                  timeout: ChatAccessibilityEnabler.requestTimeout, force: true)
+        } else {
+            wrote = safetyNet
+        }
+        switch wrote {
+        case .wrote(.set), .wrote(.refused): break
+        default:
+            trace?.chatAXRetry = "notTried(\(wrote.traceName))"
+            return .chatNoBox
+        }
+        let deadline = requestStart &+ Self.chatFocusWaitNanos
+        var polls = 0
+        while clock.nowNanos < deadline, !Task.isCancelled {
+            await sleep(min(Self.chatFocusPollNanos, deadline &- clock.nowNanos))
+            polls += 1
+            if chatBoxFocused() { break }
+        }
+        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
+        let found: Bool
+        if case .chatNoBox = decision { found = false } else { found = true }
+        let waitedMs = (clock.nowNanos &- requestStart) / 1_000_000
+        trace?.chatAXRetry = "\(found ? "found" : "notFound") polls=\(polls) atMs=\(waitedMs)"
+        return decision
+    }
+
+    /// P4-5: a chat app's focused element is a text box now (role only; nothing read is kept).
+    private func chatBoxFocused() -> Bool {
+        let replacer = currentReplacer()
+        defer { replacer.endReplacement() }
+        return Self.isChatBox(replacer.focusInfo(timeout: ReplacementExecutor.axTimeout))
+    }
+
+    /// P4-5: in a chat app, a focus Kytkin can convert in: a text box role (the composer is an `AXTextArea` once the
+    /// tree is on; with it off AX names nothing, or only the window / web view).
+    static func isChatBox(_ focus: FocusInfo?) -> Bool {
+        guard let role = focus?.role else { return false }
+        return clipboardTextRoles.contains(role)
     }
 
     private func apply(_ decision: Decision, _ r: ConvertRequest, layouts: LayoutSnapshot,
@@ -325,6 +424,11 @@ import Foundation
         case .nothingToConvert:
             return await toggle(r, because: .nothingToConvert)
         case .fieldUnreadable:
+            return await toggle(r, because: .fieldUnreadable)
+        case .chatNoBox:
+            // P4-5: the documented chat-app fallback: the caller just switches (never silent, never keys).
+            note(.switchOnly, "chatNoBox")
+            if r.snapshot.hasRun { finish.bufferAfter = [] }
             return await toggle(r, because: .fieldUnreadable)
         case .selectionBlocksKeys:
             note(.keys, "selectionPresent")
@@ -375,6 +479,8 @@ import Foundation
         let focus = replacer.focusInfo(timeout: ReplacementExecutor.axTimeout)
         // The chain ends the replacement (dropping the element) when it returns: keep the identity for P3-37's job.
         let element = replacer.focusedElement
+        // P4-5: a chat app with no text box in focus: its AX tree may be off (`run` retries once, else just switches).
+        if CopiedContent.appKind(bundleID: r.bundleID) == .chat, !Self.isChatBox(focus) { return .chatNoBox }
 
         // P3-37 (a): a terminal's selection is display only (P2-36: never typed over). It used to beep and not even
         // switch; now it is ignored: the remembered line converts by keys, or double-Shift just switches.
@@ -807,11 +913,16 @@ import Foundation
     }
 
     /// P3-58: the focused box's mention pill texts (read only), inside what is left of the B5 budget (≤ 100 ms).
-    private func pillTexts() -> [String] {
+    /// P4-5: also inside what is left before the clipboard's copy-start limit (minus a small reserve), so a request that
+    /// waited for a chat app's AX tree still starts its copy in time.
+    private func pillTexts(copyStartBudgetNanos: UInt64) -> [String] {
         let elapsed = clock.nowNanos &- requestStart
         let left = ReplacementChain.defaultBudgetNanos > elapsed ? ReplacementChain.defaultBudgetNanos - elapsed : 0
-        guard left > 0 else { return [] }
-        return currentReplacer().focusedInlineAtomTexts(budgetNanos: min(100_000_000, left))
+        let startLimit = elapsed &+ Self.pillCopyStartReserveNanos
+        let beforeCopy = copyStartBudgetNanos > startLimit ? copyStartBudgetNanos - startLimit : 0
+        let budget = min(100_000_000, left, beforeCopy)
+        guard budget > 0 else { return [] }
+        return currentReplacer().focusedInlineAtomTexts(budgetNanos: budget)
     }
 
     /// P3-50 / P3-53: the focused box's page category, asked at most once per request, inside what is left of the
@@ -848,7 +959,7 @@ import Foundation
         // the box's mention pills read from AX (read only, full multi-word names). Line breaks are pasted as they
         // were. No AX path, no keys; nothing copied → just switch.
         let chat = CopiedContent.appKind(bundleID: r.bundleID) == .chat
-        let chatAtoms: [String] = chat ? pillTexts() : []
+        let chatAtoms: [String] = chat ? pillTexts(copyStartBudgetNanos: cb.timing.copyStartBudgetNanos) : []
         if chat { trace?.chatClipboard = job.source == .box ? "box" : "selection" }
         let convert: (String) -> ClipboardConvert.Conversion = { text in
             // P3-40 (b): the copy must be the selection AX reported. Only the visible characters are compared: AX may
@@ -1044,6 +1155,10 @@ import Foundation
             return await fallBack(r, layouts: layouts, finish: &finish)
         case .abandoned:
             return .noop(.replacement(.abandoned))
+        case .timedOut where chat, .focusChanged where chat, .failed where chat:
+            // P4-5: nothing was pasted in a chat app: at least switch (the chat-app fallback), not a beep alone.
+            finish.bufferAfter = []
+            return await toggle(r, because: .fieldUnreadable)
         case .timedOut:
             finish.bufferAfter = []
             beep()
