@@ -97,6 +97,10 @@ struct ConvertRequest: Sendable, Equatable {
     /// P4-5: a chat app (Slack, Discord, Teams) came to the front: turn its accessibility tree on (once per pid, off
     /// main), so the first double-Shift finds the text box.
     func chatAppBecameFrontmost(bundleID: String, pid: Int32)
+    /// P4-5c: a chat app launched: the same preparation (it may launch without coming to the front first).
+    func chatAppLaunched(bundleID: String, pid: Int32)
+    /// P4-5c: Kytkin off or paused, or convert / the clipboard switch off: stop preparing chat apps.
+    func stopChatAppPreparation()
 }
 
 extension ConvertControlling {
@@ -104,6 +108,9 @@ extension ConvertControlling {
     func anchorTerminalBuffer(epoch: UInt64) {}
     /// P4-5: a controller that never converts has no chat app to prepare.
     func chatAppBecameFrontmost(bundleID: String, pid: Int32) {}
+    /// P4-5c: nothing to prepare or stop by default.
+    func chatAppLaunched(bundleID: String, pid: Int32) {}
+    func stopChatAppPreparation() {}
 }
 
 /// P2-20: converts nothing and finishes the generation at once, so held keys replay right away. AppController's

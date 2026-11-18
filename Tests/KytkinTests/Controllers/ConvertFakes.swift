@@ -218,6 +218,15 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return report
     }
 
+    /// P4-5c: what each launch-schedule look at the window answers, in turn (the last one repeats). Default: a real
+    /// tree (the node limit reached).
+    var windowReports: [ChatFocusWalkReport] = [.budget(ChatFocusWalk.Stats(nodes: 40, depth: 5, nanos: 0))]
+    private(set) var windowWalks = 0
+    func chatWindowWalk(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport {
+        windowWalks += 1
+        return windowReports.count > 1 ? windowReports.removeFirst() : (windowReports.first ?? .unavailable)
+    }
+
     func unpinChatFocus() {
         unpins += 1
         if let before = focusBeforePin {

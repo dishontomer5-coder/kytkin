@@ -92,6 +92,11 @@ import Foundation
         return result.report
     }
 
+    /// P4-5c: see `TextReplacing.chatWindowWalk` (no pin, no replacement state).
+    func chatWindowWalk(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport {
+        focusProvider.chatFocusWalk(pid: pid, maxNodes: maxNodes, budgetNanos: budgetNanos).report
+    }
+
     /// P4-5b: see `TextReplacing.unpinChatFocus`.
     func unpinChatFocus() {
         (focusProvider as? ChatFocusPin)?.unpin()

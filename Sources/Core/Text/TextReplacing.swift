@@ -82,6 +82,10 @@ import Foundation
 
     /// P4-5b: back to the system's focused element only (called at the end of every request).
     func unpinChatFocus()
+
+    /// P4-5c: the same read-only walk, without pinning anything and without touching the replacement state: whether
+    /// the chat app's focused window has a real tree yet (the launch schedule). Counts only.
+    func chatWindowWalk(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport
 }
 
 extension TextReplacing {
@@ -108,6 +112,9 @@ extension TextReplacing {
 
     /// P4-5b: nothing pinned by default.
     func unpinChatFocus() {}
+
+    /// P4-5c: a replacer that can't walk can't tell.
+    func chatWindowWalk(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport { .unavailable }
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }
