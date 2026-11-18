@@ -63,6 +63,9 @@ struct ConvertTrace: Sendable, Equatable {
     /// P4-5: a chat app named no text box: the flag was written again and the focus looked up again
     /// (`found` / `notFound` with the poll count and the ms since the request arrived), or why not (`notTried(…)`).
     var chatAXRetry: String?
+    /// P4-5b: the walks of a chat app's focused window for its focused text box (`found` / `notFound` / `budget` /
+    /// `unavailable` with node count, ms and depth; ` > ` between a first and a second walk). Counts only.
+    var chatFocusWalk: String?
     /// The final outcome, as an enum case name.
     var outcome: String = ""
 
@@ -73,6 +76,7 @@ struct ConvertTrace: Sendable, Equatable {
         if focusOwnerDiffers { parts.append("focusOwner≠frontmost") }
         if let chatAX { parts.append("chatAX=\(chatAX)") }                       // P4-5
         if let chatAXRetry { parts.append("chatAXRetry=\(chatAXRetry)") }        // P4-5
+        if let chatFocusWalk { parts.append("chatFocusWalk=\(chatFocusWalk)") }  // P4-5b
         if let chatClipboard { parts.append("chatClipboard=\(chatClipboard)") }
         if let siteKnown { parts.append("siteKnown=\(siteKnown)") }
         if let pageState { parts.append("pageState=\(pageState)") }

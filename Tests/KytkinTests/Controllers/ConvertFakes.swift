@@ -195,6 +195,37 @@ final class ConvertKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked:
         return pageCategory
     }
 
+    /// P4-5b: what each chat focus walk answers, in turn (the last one repeats; none = `.unavailable`). A `.found`
+    /// makes `walkedFocus` the focus until `unpinChatFocus` puts the old one back.
+    var walkReports: [ChatFocusWalkReport] = []
+    var walkedFocus = FocusInfo(role: "AXTextArea", isSecure: false, hasMarkedText: false, selTextSettable: false,
+                                selRangeSettable: true, selection: nil)
+    /// Runs inside every walk (e.g. to move a fake clock by the walk's time).
+    var onWalk: (() -> Void)?
+    private(set) var walks: [(pid: Int32, maxNodes: Int, budgetNanos: UInt64)] = []
+    private(set) var unpins = 0
+    private var focusBeforePin: FocusInfo??
+
+    func pinChatFocus(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport {
+        walks.append((pid, maxNodes, budgetNanos))
+        onWalk?()
+        let report = walkReports.isEmpty ? .unavailable
+            : (walkReports.count > 1 ? walkReports.removeFirst() : walkReports[0])
+        if report.isFound {
+            if focusBeforePin == nil { focusBeforePin = .some(focus) }
+            focus = walkedFocus
+        }
+        return report
+    }
+
+    func unpinChatFocus() {
+        unpins += 1
+        if let before = focusBeforePin {
+            focus = before
+            focusBeforePin = nil
+        }
+    }
+
     func setNowFocused(_ e: (any FocusedElementIdentity)?) {
         nowFocused = e
         nowFocusedIsUnset = false

@@ -22,6 +22,8 @@ protocol AXElementReading: AnyObject {
     /// P3-53: `budgetNanos`: the most wall-clock time the walks may take (what is left of the convert's read budget,
     /// 001 §7 B5). P3-62: no mail-quote walk any more (the convert stops at the cursor).
     func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError>
+    /// P4-5b: `AXFocused` (read only).
+    func isFocused() -> Result<Bool, AXAccessError>
 }
 
 /// P3-46: one inline element that must stay whole (a mention pill, a channel link, a link). `text` is held for one
@@ -38,4 +40,6 @@ extension AXElementReading {
     func inlineAtoms(maxNodes: Int, budgetNanos: UInt64) -> Result<[InlineAtom], AXAccessError> {
         .failure(.unsupported)
     }
+    /// P4-5b: `AXFocused` (read only), for a walked chat composer's "still focused" check. Unknown by default.
+    func isFocused() -> Result<Bool, AXAccessError> { .failure(.unsupported) }
 }

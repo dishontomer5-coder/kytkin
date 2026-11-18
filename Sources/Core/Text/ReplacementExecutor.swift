@@ -84,6 +84,19 @@ import Foundation
         focusProvider.focusedApplicationPID(timeout: timeout)
     }
 
+    /// P4-5b: see `TextReplacing.pinChatFocus`. Only with a `ChatFocusPin` provider (the live replacer's).
+    func pinChatFocus(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport {
+        guard let pin = focusProvider as? ChatFocusPin else { return .unavailable }
+        let result = pin.chatFocusWalk(pid: pid, maxNodes: maxNodes, budgetNanos: budgetNanos)
+        if let element = result.element { pin.pin(element) }
+        return result.report
+    }
+
+    /// P4-5b: see `TextReplacing.unpinChatFocus`.
+    func unpinChatFocus() {
+        (focusProvider as? ChatFocusPin)?.unpin()
+    }
+
     /// A read that gives up on the whole focus read (timeout, no permission, element gone).
     private struct Abort: Error {}
 

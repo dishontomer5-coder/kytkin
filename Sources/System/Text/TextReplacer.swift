@@ -6,7 +6,9 @@
 import Foundation
 
 @TextActor final class TextReplacer: TextReplacing {
-    private let executor = ReplacementExecutor(focusProvider: AXFocusedElementProvider(), poster: CGEventKeyPoster())
+    /// P4-5b: the system's focused element, or a walked chat composer pinned for one convert.
+    private let focus = ChatFocusPin(base: AXFocusedElementProvider())
+    private lazy var executor = ReplacementExecutor(focusProvider: focus, poster: CGEventKeyPoster())
 
     init() {}
 
@@ -49,10 +51,19 @@ import Foundation
     }
 
     func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String] {   // P3-58
-        guard case .success(let el) = AXFocusedElementProvider().focusedTextElement(timeout: ReplacementExecutor.axTimeout),
+        // P4-5b: through the pin, so a walked chat composer's pills are found too.
+        guard case .success(let el) = focus.focusedTextElement(timeout: ReplacementExecutor.axTimeout),
               case .success(let atoms) = el.inlineAtoms(maxNodes: ChromiumAXConvert.maxAtomNodes, budgetNanos: budgetNanos)
         else { return [] }
         return atoms.map(\.text).filter { !$0.isEmpty }
+    }
+
+    func pinChatFocus(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport {   // P4-5b
+        executor.pinChatFocus(pid: pid, maxNodes: maxNodes, budgetNanos: budgetNanos)
+    }
+
+    func unpinChatFocus() {   // P4-5b
+        executor.unpinChatFocus()
     }
 
     func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory {   // P3-50
