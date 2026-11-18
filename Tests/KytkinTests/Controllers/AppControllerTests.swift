@@ -48,6 +48,38 @@ final class AppControllerTests: XCTestCase {
         if start { sut.start() }
     }
 
+    // MARK: - P4-5: chat apps' accessibility tree
+
+    func testAChatAppInFrontIsPrepared() {
+        make(withConvert: true)
+        monitor.activate("com.tinyspeck.slackmacgap", pid: 10)
+        monitor.activate("com.hnc.Discord", pid: 11)
+        monitor.activate("com.microsoft.teams2", pid: 12)
+        XCTAssertEqual(convert?.chatApps, ["com.tinyspeck.slackmacgap#10", "com.hnc.Discord#11",
+                                           "com.microsoft.teams2#12"])
+    }
+
+    func testBrowsersAndOtherAppsAreNotPrepared() {
+        make(withConvert: true)
+        for app in ["com.google.Chrome", "com.microsoft.edgemac", "com.apple.Safari", "app.zen-browser.zen", notes] {
+            monitor.activate(app, pid: 10)
+        }
+        XCTAssertEqual(convert?.chatApps, [], "R3b rule 1: nothing is set on a browser")
+    }
+
+    func testNoChatAppIsPreparedWhilePausedOffOrTurnedOffForIt() {
+        var p = Preferences()
+        p.apps["com.hnc.Discord"] = .init(disabled: true)
+        make(p, withConvert: true)
+        monitor.activate("com.hnc.Discord", pid: 11)
+        sut.setPaused(true)
+        monitor.activate("com.tinyspeck.slackmacgap", pid: 10)
+        sut.setPaused(false)
+        store.update { $0.general.enabled = false }
+        monitor.activate("com.tinyspeck.slackmacgap", pid: 12)
+        XCTAssertEqual(convert?.chatApps, [])
+    }
+
     // MARK: - P3-5: override hosts
 
     func testOverrideHostsFollowTheSiteHostRules() {

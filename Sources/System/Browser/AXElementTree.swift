@@ -4,7 +4,11 @@
 //   and the read's latch stops at the first timeout or after 0.5 s wall (B13).
 // - `kAXErrorCannotComplete` (a timeout) → `.timedOut`; a missing or unsupported attribute → nil.
 // - Read-only: only `AXUIElementCopyAttributeValue`. It never sets an attribute and never performs an action:
-//   never `AXEnhancedUserInterface`, never `AXManualAccessibility` (R3b rule 1; they break window managers, R5).
+//   never `AXEnhancedUserInterface`, never `AXManualAccessibility` (R3b rule 1: nothing is ever set on a browser;
+//   `AXEnhancedUserInterface` breaks window managers, R5). P4-5: the one exception anywhere in Kytkin is
+//   `AXManualAccessibility = true` on the application element of a chat app (Slack, Discord, Teams:
+//   `ReplacementCapabilities.chatAppBundleIDs`), set by `System/Text/AXManualAccessibilitySetter`, never by this reader
+//   and never on a browser.
 // - `url(of:)` returns AXURL's absoluteString; the reader hands it to `SiteReader` in the same expression.
 // Never compiled into the tests (it talks to real apps). AX thread only. Never logs (lint rule 2b).
 

@@ -2,7 +2,9 @@
 // Core over this seam, so they are unit-tested on fake trees shaped like the R3b dumps; System/Browser's
 // `AXElementTree` (P3-10) only translates `AXUIElement` calls, sets the 0.25 s messaging timeout on every element
 // it hands out, and never sets an attribute or performs an action (never AXEnhancedUserInterface or
-// AXManualAccessibility: R3b rule 1). AX thread only.
+// AXManualAccessibility: R3b rule 1, nothing is ever set on a browser). AX thread only. P4-5: the only attribute
+// Kytkin ever sets is `AXManualAccessibility = true` on a chat app's application element (Slack, Discord, Teams;
+// `ChatAccessibilityEnabler`), never on a browser and never through this seam.
 //
 // R3b quirks every strategy must live with (fixtures in the tests reproduce them):
 // - Zen: the content `AXWebArea` is NOT in its parent's `AXChildren`, and neither is the window, so a top-down scan

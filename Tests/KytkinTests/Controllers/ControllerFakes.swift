@@ -202,6 +202,9 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
     /// P3-37 (b): the terminal buffers AppController asked to anchor.
     private(set) var anchors: [UInt64] = []
     func anchorTerminalBuffer(epoch: UInt64) { anchors.append(epoch) }
+    /// P4-5: the chat apps AppController asked to prepare (bundle ID, pid).
+    private(set) var chatApps: [String] = []
+    func chatAppBecameFrontmost(bundleID: String, pid: Int32) { chatApps.append("\(bundleID)#\(pid)") }
 }
 
 @MainActor func makeStore(_ prefs: Preferences = Preferences(), clock: any Clock) -> PreferencesStore {

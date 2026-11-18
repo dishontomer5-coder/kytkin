@@ -90,7 +90,9 @@ import AppKit
             chromiumAXEnabled: ChromiumAXConvert.isEnabled
                 && !UserDefaults.standard.bool(forKey: ChromiumAXConvert.killSwitchDefaultsKey),
             // P3-44: DEBUG builds only: one privacy-safe line per double-Shift (paths tried, stop reasons; no text).
-            diagnose: ConvertDiagnosticsLog.hook)
+            diagnose: ConvertDiagnosticsLog.hook,
+            // P4-5: `AXManualAccessibility` on chat apps only (Slack, Discord, Teams), once per pid, on @TextActor.
+            chatAX: ChatAccessibilityEnabler(setter: AXManualAccessibilitySetter()))
         let dispatcher = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
         dispatcher.onConverted = { [store] in store.recordStat(.converted) }   // P6-0k: Settings → Statistics
         convert = dispatcher

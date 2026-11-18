@@ -24,6 +24,8 @@ extension ReplacementCapabilities {
         let keysOnly = [
             "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders",
             // Chromium and Electron start on keys, so we never toggle AXEnhancedUserInterface (R5 open question 3).
+            // P4-5: browsers get no attribute at all (R3b rule 1); the chat apps below get only
+            // `AXManualAccessibility = true` (`ChatAccessibilityEnabler`), Electron's switch that builds their AX tree.
             "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser",
             // P2-36 (001 §12 T7): the other Chromium browsers.
             "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium",
@@ -55,6 +57,8 @@ extension ReplacementCapabilities {
     /// P3-58 / P3-60: the chat apps (lowercased bundle IDs): Slack, Discord, Teams (the new `teams2` and classic
     /// `teams`). Seeded `.keysOnly`; their double-Shift is copy → convert → paste only (no Chromium AX path, no keys over
     /// anything); their copies are rich unless proven plain (`CopiedContent.AppKind.chat`). The one list used everywhere.
+    /// P4-5: the only apps Kytkin sets an attribute on: `AXManualAccessibility = true` on the application element, once
+    /// per process (`ChatAccessibilityEnabler`), so their Electron AX tree (and the focused text box) exists.
     static let chatAppBundleIDs: Set<String> = ["com.tinyspeck.slackmacgap", "com.hnc.discord", "com.microsoft.teams2",
                                                 "com.microsoft.teams"]
 

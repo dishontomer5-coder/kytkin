@@ -42,6 +42,12 @@ import Foundation
         enqueue { controller in controller.anchorTerminalBuffer(epoch: epoch) }
     }
 
+    /// P4-5: queued like any request (the AX write runs on @TextActor, never on main), so a double-Shift that follows
+    /// runs after it.
+    func chatAppBecameFrontmost(bundleID: String, pid: Int32) {
+        enqueue { controller in controller.chatAppBecameFrontmost(bundleID: bundleID, pid: pid) }
+    }
+
     func methodHintsChanged(_ overrides: [String: MethodHint]) {
         enqueue { controller in controller.setMethodHintOverrides(overrides) }
     }

@@ -94,11 +94,16 @@ struct ConvertRequest: Sendable, Equatable {
     /// P3-37 (b): a terminal's word buffer started (its first key after an empty buffer): note which element has focus,
     /// so a buffer kept across clicks and app switches is used only in that same window / tab / split.
     func anchorTerminalBuffer(epoch: UInt64)
+    /// P4-5: a chat app (Slack, Discord, Teams) came to the front: turn its accessibility tree on (once per pid, off
+    /// main), so the first double-Shift finds the text box.
+    func chatAppBecameFrontmost(bundleID: String, pid: Int32)
 }
 
 extension ConvertControlling {
     /// P3-37: a controller that never converts has no terminal buffer to anchor.
     func anchorTerminalBuffer(epoch: UInt64) {}
+    /// P4-5: a controller that never converts has no chat app to prepare.
+    func chatAppBecameFrontmost(bundleID: String, pid: Int32) {}
 }
 
 /// P2-20: converts nothing and finishes the generation at once, so held keys replay right away. AppController's
