@@ -212,6 +212,10 @@ import Observation
         guard ReplacementCapabilities.isChatApp(c.bundleID), c.pid > 0, !switching.paused else { return }
         let prefs = store.prefs
         guard prefs.general.enabled, prefs.apps[c.bundleID]?.disabled != true else { return }
+        // P4-5 QA: only when a double-Shift there would convert (chat apps convert only by the clipboard): not with
+        // convert off (globally or for this app: double-Shift just switches) or the clipboard switch off.
+        guard availability.doubleShiftConvert, prefs.apps[c.bundleID]?.convertEnabled != false,
+              prefs.convert.useClipboardInUnreadableApps else { return }
         convert.chatAppBecameFrontmost(bundleID: c.bundleID, pid: c.pid)
     }
 

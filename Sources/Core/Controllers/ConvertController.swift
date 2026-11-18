@@ -91,9 +91,11 @@
 //   their accessibility tree only after a client sets `AXManualAccessibility`. `chatAX` (`ChatAccessibilityEnabler`)
 //   sets it once per process when a chat app comes to the front (`chatAppBecameFrontmost`) and, as a safety net, at
 //   double-Shift time (`run`: a chat app's pid not set yet). When `decide` finds no text box in a chat app
-//   (`.chatNoBox`: no focused element, or one that is not a text box), the flag is written again and the focus is looked
-//   up again, polled, until `chatFocusWaitNanos` after the request arrived (inside the B5 budget, before the clipboard's
-//   copy-start limit). Still no box: double-Shift just switches the language (never silent). The write reads no text.
+//   (`.chatNoBox`: no focused element, or one that is not a text box), the flag is written again (P4-5 QA: unless this
+//   request just wrote it; none of it when that write got no answer, or with the clipboard switch off) and the focus is
+//   looked up again, polled, until `chatFocusWaitNanos` after the request arrived (inside the B5 budget, before the
+//   clipboard's copy-start limit). Still no box: double-Shift just switches the language (never silent). The write
+//   reads no text.
 //
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
 // only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs; the
@@ -339,14 +341,17 @@ import Foundation
         }
         // P4-5: the safety net: a chat app whose AX tree Kytkin hasn't turned on yet (it came to the front a moment ago,
         // or the write at that time got no answer).
-        if let chatAX, CopiedContent.appKind(bundleID: r.bundleID) == .chat {
+        // P4-5 QA: not with the clipboard switch off (a chat app then just switches; the flag would serve nothing).
+        var safetyNet: ChatAccessibilityEnabler.Result?
+        if let chatAX, r.useClipboard, CopiedContent.appKind(bundleID: r.bundleID) == .chat {
             let result = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
                                        timeout: ChatAccessibilityEnabler.requestTimeout)
             trace?.chatAX = result.traceName
+            safetyNet = result
         }
         var decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
-        if case .chatNoBox = decision {
-            decision = await retryChatFocus(r, layouts: layouts)
+        if case .chatNoBox = decision, let safetyNet {
+            decision = await retryChatFocus(r, layouts: layouts, safetyNet: safetyNet)
         }
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
@@ -354,10 +359,18 @@ import Foundation
     /// P4-5: a chat app named no text box: write the flag again (the first write may have come before the app was ready),
     /// then look at the focus again every `chatFocusPollNanos` until a box shows or `chatFocusWaitNanos` after the
     /// request arrived, and decide once more. Without the enabler, a pid, or the grant: no wait (`.chatNoBox` stays).
-    private func retryChatFocus(_ r: ConvertRequest, layouts: LayoutSnapshot) async -> Decision {
+    /// P4-5 QA: `safetyNet` is what this request's own check did: a write just now (answered) is not repeated, and one
+    /// that got no answer (a busy app: another write and the focus reads would only time out too) or no grant ends here.
+    private func retryChatFocus(_ r: ConvertRequest, layouts: LayoutSnapshot,
+                                safetyNet: ChatAccessibilityEnabler.Result) async -> Decision {
         guard let chatAX else { return .chatNoBox }
-        let wrote = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
+        let wrote: ChatAccessibilityEnabler.Result
+        if case .alreadySet = safetyNet {
+            wrote = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
                                   timeout: ChatAccessibilityEnabler.requestTimeout, force: true)
+        } else {
+            wrote = safetyNet
+        }
         switch wrote {
         case .wrote(.set), .wrote(.refused): break
         default:

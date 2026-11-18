@@ -207,7 +207,7 @@ final class ConvertControllerChatAXTests: XCTestCase {
         let out = await rig.sut.handle(request(buffer("akuo")), layouts: layouts)
         XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
         XCTAssertEqual(rig.pasteboard.box, "שלום")
-        XCTAssertEqual(setter.pids, [slackPID, slackPID], "the safety net, then once more after no box was found")
+        XCTAssertEqual(setter.pids, [slackPID], "P4-5 QA: the safety net wrote just now: not written again")
         XCTAssertEqual(rig.tree.sleeps, 2)
         XCTAssertEqual(sink.traces.last?.chatAXRetry, "found polls=2 atMs=60")
         XCTAssertLessThanOrEqual(clock.nowNanos - start, 1_000_000_000, "bounded (the clipboard's own waits included)")
@@ -237,8 +237,47 @@ final class ConvertControllerChatAXTests: XCTestCase {
         let rig = rig(focus: nil, appearsAfterSleeps: nil)
         setter.onWrite = { [clock] _ in clock!.advance(byMilliseconds: 50) }
         _ = await rig.sut.handle(request(empty()), layouts: layouts)
-        // Two writes of 50 ms each = 100 ms, then the wait up to 150 ms.
-        XCTAssertEqual(sink.traces.last?.chatAXRetry, "notFound polls=2 atMs=150")
+        // P4-5 QA: one write of 50 ms (the safety net; not repeated), then the wait up to 150 ms: 80, 110, 140, 150.
+        XCTAssertEqual(sink.traces.last?.chatAXRetry, "notFound polls=4 atMs=150")
+        XCTAssertEqual(setter.pids, [slackPID])
+    }
+
+    @TextActor func testAnAlreadyEnabledAppWithNoBoxIsWrittenAgainOnce() async {
+        // P4-5 QA: enabled when it came to the front (the tree may have been dropped since): forced once more, then wait.
+        let rig = rig(focus: nil, appearsAfterSleeps: 1)
+        rig.sut.chatAppBecameFrontmost(bundleID: slack, pid: slackPID)
+        let out = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertEqual(out, .converted(to: IDs.hebrew, by: .pasteboard, switched: true))
+        XCTAssertEqual(setter.pids, [slackPID, slackPID])
+        XCTAssertEqual(sink.traces.last?.chatAX, "alreadySet")
+        XCTAssertEqual(sink.traces.last?.chatAXRetry, "found polls=1 atMs=30")
+    }
+
+    @TextActor func testABusyAppThatDidNotAnswerIsNotWrittenAgainNorWaitedFor() async {
+        // P4-5 QA: the safety net got no answer (Slack still launching): another write and focus reads would only time
+        // out too, so it just switches at once; the next double-Shift asks again (not remembered).
+        setter.setAnswer(.noAnswer)
+        let rig = rig(focus: nil, appearsAfterSleeps: 1)
+        let out = await rig.sut.handle(request(buffer("akuo")), layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(setter.pids, [slackPID])
+        XCTAssertEqual(rig.tree.sleeps, 0)
+        XCTAssertEqual(rig.poster.events.count, 0, "P3-58: no keys in a chat app")
+        XCTAssertEqual(sink.traces.last?.chatAXRetry, "notTried(wrote:noAnswer)")
+        XCTAssertFalse(rig.enabler.isSet(pid: slackPID))
+    }
+
+    @TextActor func testWithTheClipboardSwitchOffNothingIsWrittenNorWaitedFor() async {
+        // P4-5 QA: chat apps convert only by the clipboard; with it off double-Shift just switches.
+        let rig = rig(focus: nil, appearsAfterSleeps: 1)
+        let r = ConvertRequest(snapshot: empty(), gen: 1, bundleID: slack, mode: .convert, pair: ConvertFixtures.pair,
+                               currentSource: IDs.abc, switchAfterConvert: true, useClipboard: false,
+                               processID: slackPID, allowsChromiumAX: true)
+        let out = await rig.sut.handle(r, layouts: layouts)
+        XCTAssertEqual(out, .toggledOnly(to: IDs.hebrew, because: .fieldUnreadable))
+        XCTAssertEqual(setter.pids, [])
+        XCTAssertEqual(rig.tree.sleeps, 0)
+        XCTAssertEqual(rig.poster.events.count, 0)
     }
 
     @TextActor func testAWindowOrWebViewInFocusIsNotABox() async {

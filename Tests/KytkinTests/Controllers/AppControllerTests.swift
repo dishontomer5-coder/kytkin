@@ -80,6 +80,21 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(convert?.chatApps, [])
     }
 
+    func testNoChatAppIsPreparedWhereDoubleShiftWouldNotConvert() {
+        // P4-5 QA: convert off for the app, or the clipboard switch off (chat apps convert only by the clipboard).
+        var p = Preferences()
+        p.apps["com.hnc.Discord"] = .init(convertEnabled: false)
+        p.convert.useClipboardInUnreadableApps = true
+        make(p, withConvert: true)
+        monitor.activate("com.hnc.Discord", pid: 11)
+        store.update { $0.convert.useClipboardInUnreadableApps = false }
+        monitor.activate("com.tinyspeck.slackmacgap", pid: 10)
+        XCTAssertEqual(convert?.chatApps, [])
+        store.update { $0.convert.useClipboardInUnreadableApps = true }
+        monitor.activate("com.microsoft.teams2", pid: 12)
+        XCTAssertEqual(convert?.chatApps, ["com.microsoft.teams2#12"])
+    }
+
     // MARK: - P3-5: override hosts
 
     func testOverrideHostsFollowTheSiteHostRules() {
