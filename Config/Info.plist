@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- P4-3: Sparkle's settings (one-click updates). Xcode merges these keys with the generated ones (project.yml).
+     Checked by Tests/KytkinTests/Updates/UpdaterConfigurationTests.swift against UpdaterConfiguration.
+
+     - SUFeedURL: the appcast is an asset of the latest GitHub release, so the address never changes.
+     - SUPublicEDKey: the public half of the owner's EdDSA update key (Sparkle's generate_keys; the private half stays
+       in the owner's keychain). Until the owner pastes it here, Kytkin turns updates off by itself and
+       scripts/package-dmg refuses to sign a release.
+     - Nothing automatic: no check until the user turns on "Keep Kytkin up to date" (setup screen 3 or Settings →
+       General), which Kytkin applies itself. SUEnableAutomaticChecks being present also means Sparkle never asks
+       "may we check?" itself. Never downloads or installs on its own (install only on the user's click), never sends
+       a system profile.
+     - SUVerifyUpdateBeforeExtraction: the downloaded disk image's EdDSA signature is checked before it is even
+       opened.
+     - SURequireSignedFeed: the appcast itself carries the owner's EdDSA signature (scripts/make-appcast), so nobody
+       can change what it offers or says. -->
+<plist version="1.0">
+<dict>
+	<key>SUFeedURL</key>
+	<string>https://github.com/dishontomer5-coder/kytkin/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+</dict>
+</plist>

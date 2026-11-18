@@ -23,9 +23,8 @@ import AppKit
     let convert: ConvertDispatcher
     let controller: AppController
     let statusItem: StatusItemController
-    /// P6-3: the optional update check (off until the user opts in).
-    let updates: UpdateChecker
-    private var updateTimer: Timer?
+    /// P4-3: "Keep Kytkin up to date" (Sparkle; off until the user ticks it).
+    let updates: UpdateController
     /// P2-23: built on first `openSettings`, then reused.
     private var settingsWindow: SettingsWindowController?
     /// P2-26: the welcome window, built on first use (launch, or Settings → General → "Show Welcome Again").
@@ -118,12 +117,13 @@ import AppKit
                                    })
         box.controller = controller
         statusItem = StatusItemController(switcher: switcher, menu: controller)
-        // P6-3: the one network client; the checker asks only while opted in, at most once a day.
-        updates = UpdateChecker(store: store, http: ReleaseHTTPClient(),
-                                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
-                                    as? String ?? "0")
-        let updateChecker = updates
-        controller.updateNotice = { updateChecker.notice }
+        // P4-3: Sparkle only in a Release build that carries the owner's EdDSA public key (else nothing checks).
+        updates = UpdateController(store: store, updater: Self.makeUpdater(),
+                                   appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                                       as? String ?? "0")
+        let updateController = updates
+        controller.updateNotice = { updateController.notice }
+        statusItem.showUpdate = { updateController.showUpdate() }
         // P6-0e: the menu-bar logo fills the half of the language that is on (an imported map's base counts).
         let catalog = layoutCatalog
         let prefsStore = store
@@ -224,7 +224,7 @@ import AppKit
         let general = GeneralSettingsModel(store: store, loginItems: SMAppServiceLoginItems(),
                                            sources: { switcher.sources(includeDisabled: false) },
                                            currentLanguage: { switcher.currentInfo },   // P6-0d: menu-bar preview
-                                           updates: updates)   // P6-3
+                                           updates: updates)   // P6-3, P4-3
         // P2-24: reads the layout lists only on refresh (when Settings opens); files only on the user's clicks.
         let languages = LanguagesSettingsModel(store: store, imported: importedLayouts, catalog: layoutCatalog,
                                                fileSystem: importedLayouts.fileSystem,
@@ -329,26 +329,31 @@ import AppKit
         }
     }
 
+    /// P4-3: Sparkle in a Release build with the owner's real public key. Debug builds ("Kytkin Dev", another bundle
+    /// ID and certificate) and a build still carrying the placeholder key never check: the switch is kept, Settings
+    /// says updates work only in the downloaded Kytkin.
+    private static func makeUpdater() -> any SoftwareUpdating {
+        #if DEBUG
+        return UnavailableUpdater()
+        #else
+        let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        guard UpdaterConfiguration.isUsablePublicKey(key) else { return UnavailableUpdater() }
+        return SparkleUpdater()
+        #endif
+    }
+
     func start() {
         controller.start()
         statusItem.refresh()
-        // P6-3: the update check runs only while opted in; this asks at most once a day (hourly look, no network
-        // unless a day has passed since the last check).
-        let updates = self.updates
+        // P4-3: the saved choice goes to Sparkle, which checks once a day only while it is on.
         let statusItem = self.statusItem
         updates.onChange = { statusItem.refresh() }
-        Task { await updates.checkIfDue() }
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { _ in
-            Task { @MainActor in await updates.checkIfDue() }
-        }
-        updateTimer?.tolerance = 5 * 60
+        updates.start()
         // P2-26 (001 §6.1): the welcome window, once. It marks itself seen as it shows; never with read-only prefs.
         if OnboardingModel.shouldShowAtLaunch(store) { openOnboarding(firstLaunch: true) }
     }
 
     func stop() {
-        updateTimer?.invalidate()
-        updateTimer = nil
         for o in appObservers { NotificationCenter.default.removeObserver(o) }
         appObservers = []
         controller.stop()

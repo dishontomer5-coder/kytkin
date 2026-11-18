@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# P4-3: after ./scripts/package-dmg, sign the DMG for Sparkle and write build/appcast.xml (the one-item update feed).
+#
+#   ./scripts/make-appcast                    the owner, for a release (reads the EdDSA key from the login keychain)
+#   ./scripts/make-appcast --test-signature   a dry run with a fake signature: writes build/appcast.TEST-ONLY.xml,
+#                                             touches no keychain. Never upload that file.
+#
+# Uses the app package-dmg just built (build/release/…/Kytkin.app) for the version and build number, and
+# build/Kytkin-<version>.dmg. Sparkle's tools (sign_update, generate_keys) come from the Sparkle package Xcode
+# downloaded for that build (SourcePackages/artifacts/…/bin).
+#
+# Then upload BOTH build/Kytkin-<version>.dmg and build/appcast.xml to the GitHub release v<version>. Installed copies
+# read https://github.com/dishontomer5-coder/kytkin/releases/latest/download/appcast.xml, which is that file in the
+# newest release.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+die() { echo "❌ $*" >&2; exit 1; }
+
+TEST=0
+case "${1:-}" in
+  "") ;;
+  --test-signature) TEST=1 ;;
+  *) echo "usage: $0 [--test-signature]" >&2; exit 2 ;;
+esac
+
+APP="build/release/Build/Products/Release/Kytkin.app"
+[[ -d "$APP" ]] || die "no $APP: run ./scripts/package-dmg first"
+PLIST="$APP/Contents/Info.plist"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+APP_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$PLIST" 2>/dev/null || true)"
+DMG="build/Kytkin-$VERSION.dmg"
+[[ -f "$DMG" ]] || die "no $DMG: run ./scripts/package-dmg first"
+[[ -f CHANGELOG.md ]] && grep -q "^## $VERSION" CHANGELOG.md || die "CHANGELOG.md has no \"## $VERSION\" section"
+
+# Sparkle's command-line tools, from the package Xcode resolved for the Release build (or the tests).
+BIN=""
+for dir in build/release/SourcePackages/artifacts build/test/SourcePackages/artifacts build/SourcePackages/artifacts; do
+  found="$(find "$dir" -type f -name sign_update -path '*/bin/*' 2>/dev/null | head -1 || true)"
+  if [[ -n "$found" ]]; then BIN="$(dirname "$found")"; break; fi
+done
+[[ -n "$BIN" ]] || die "Sparkle's sign_update not found under build/*/SourcePackages: run ./scripts/package-dmg first"
+
+if (( TEST )); then
+  OUT="build/appcast.TEST-ONLY.xml"
+  LENGTH="$(stat -f%z "$DMG")"
+  FAKE="$(head -c 64 /dev/zero | base64)"
+  SIGN_OUTPUT="sparkle:edSignature=\"$FAKE\" length=\"$LENGTH\""
+  echo "⚠️  Test run: fake signature, nothing read from the keychain. Never upload $OUT."
+else
+  OUT="build/appcast.xml"
+  # The app must carry the public half of the key that signs the update, or every installed copy refuses it.
+  KEYCHAIN_KEY="$("$BIN/generate_keys" -p 2>/dev/null || true)"
+  [[ -n "$KEYCHAIN_KEY" ]] || die "no Sparkle key in your keychain: do the one-time key step (README → Releasing)"
+  [[ "$APP_KEY" == "$KEYCHAIN_KEY" ]] \
+    || die "the app's SUPublicEDKey (Config/Info.plist) isn't your keychain's public key ($KEYCHAIN_KEY): fix it, then run ./scripts/package-dmg again"
+  echo "▸ Signing $DMG with your Sparkle key (macOS may ask to allow keychain access: choose Always Allow)…"
+  SIGN_OUTPUT="$("$BIN/sign_update" "$DMG")" || die "sign_update failed"
+fi
+
+echo "▸ Writing ${OUT}…"
+mkdir -p build/tools
+swiftc -O -o build/tools/make-appcast Tools/make-appcast/Appcast.swift Tools/make-appcast/main.swift \
+  >/dev/null 2>&1 || die "swiftc make-appcast failed"
+build/tools/make-appcast "$OUT" "$VERSION" "$BUILD" CHANGELOG.md "$SIGN_OUTPUT"
+xmllint --noout "$OUT" 2>/dev/null || die "$OUT isn't well-formed XML"
+if (( ! TEST )); then
+  # The app requires a signed feed (SURequireSignedFeed): sign_update embeds the feed's own EdDSA signature in it.
+  echo "▸ Signing ${OUT} with your Sparkle key…"
+  "$BIN/sign_update" "$OUT" >/dev/null || die "sign_update couldn't sign $OUT"
+  "$BIN/sign_update" --verify "$OUT" >/dev/null 2>&1 || die "the signature in $OUT doesn't verify"
+  xmllint --noout "$OUT" 2>/dev/null || die "$OUT isn't well-formed XML after signing"
+fi
+
+echo "✅ $ROOT/$OUT  (Kytkin $VERSION, build $BUILD)"
+if (( ! TEST )); then
+  echo "   Upload both files to the GitHub release v$VERSION:"
+  echo "     $ROOT/$DMG"
+  echo "     $ROOT/$OUT"
+fi

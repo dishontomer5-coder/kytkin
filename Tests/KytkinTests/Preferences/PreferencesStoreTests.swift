@@ -133,7 +133,7 @@ final class PreferencesStoreTests: XCTestCase {
         let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(fs[fileURL])) as? [String: Any])
         XCTAssertEqual(obj["schemaVersion"] as? Int, 2)
 
-        store.update { $0.general.updateCheckOptedIn = true }
+        store.update { $0.general.keepUpToDate = true }
         store.flush()
         XCTAssertEqual(fs.writes.filter { $0 == backup }.count, 1, "backed up only once")
     }
@@ -159,7 +159,7 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertEqual(store.originalBackupURL, lossyBackup)
         XCTAssertTrue(store.loadWasLossy, "stays set for Settings to show")
 
-        store.update { $0.general.updateCheckOptedIn = true }
+        store.update { $0.general.keepUpToDate = true }
         store.flush()
         XCTAssertEqual(fs.writes.filter { $0 == lossyBackup }.count, 1, "backed up only once")
     }
@@ -192,7 +192,7 @@ final class PreferencesStoreTests: XCTestCase {
         let store = makeStore(fs)
         XCTAssertTrue(store.loadWasLossy)
         fs.failWritesTo = [lossyBackup]
-        store.update { $0.general.updateCheckOptedIn = true }
+        store.update { $0.general.keepUpToDate = true }
         store.flush()
         XCTAssertTrue(store.lastSaveFailed)
         XCTAssertEqual(fs[fileURL], original, "not overwritten without a backup")
@@ -201,7 +201,7 @@ final class PreferencesStoreTests: XCTestCase {
         store.flush()
         XCTAssertFalse(store.lastSaveFailed)
         XCTAssertEqual(fs[lossyBackup], original)
-        XCTAssertTrue(try saved(fs).general.updateCheckOptedIn)
+        XCTAssertTrue(try saved(fs).general.keepUpToDate)
     }
 
     func testLossyMigratedFileKeepsOnlyTheVersionBackup() throws {

@@ -9,8 +9,9 @@
 #        trace), and there every Logger( line must sit inside `#if DEBUG` (before its `#else` / `#endif`).
 #        Was: only Keyboard/, Text/ and Browser/ folders (P3-6); text and hosts also pass through Controllers/,
 #        Context/, App/ and UI/.
-#   3. P6-3: network (CLAUDE.md: the only network call is the optional update check): URLSession, NWConnection,
-#      CFNetwork / Network imports and raw sockets only in Sources/System/Network/.
+#   3. P6-3, P4-3: network (CLAUDE.md: the only network use is optional updates, done by Sparkle): no URLSession,
+#      NWConnection, CFNetwork / Network imports or raw sockets anywhere in Sources (P4-3 removed P6-3's own client and
+#      its System/Network/ exception), and `import Sparkle` only in System/Updates/SparkleUpdater.swift.
 # `./scripts/lint.sh --self-test` checks that the rules still catch what they should (run by build.sh test).
 # Lines whose first non-blank characters are `//` or `*` (comments) are ignored.
 set -euo pipefail
@@ -51,11 +52,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
   expect fail "App/ConvertDiagnosticsLog.swift" 'let l = Logger(subsystem: "x", category: "y")'
   expect fail "App/ConvertDiagnosticsLog.swift" $'#if DEBUG\n#else\nlet l = Logger(subsystem: "x", category: "y")\n#endif'
   expect fail "App/Other/ConvertDiagnosticsLog.swift" $'#if DEBUG\nlet l = Logger()\n#endif'
-  # P6-3: the network only from System/Network/.
+  # P6-3, P4-3: no network code of our own, anywhere; Sparkle from its one adapter only.
   expect fail "Core/Updates/A.swift" 'let s = URLSession.shared'
   expect fail "UI/A.swift" 'import Network'
   expect fail "App/A.swift" 'let c = NWConnection(host: "x", port: 1, using: .tcp)'
-  expect pass "System/Network/A.swift" 'let s = URLSession(configuration: .ephemeral)'
+  expect fail "System/Network/A.swift" 'let s = URLSession(configuration: .ephemeral)'
+  expect fail "System/Updates/SparkleUpdater.swift" 'let s = URLSession.shared'
+  expect pass "System/Updates/SparkleUpdater.swift" '@preconcurrency import Sparkle'
+  expect fail "App/A.swift" 'import Sparkle'
+  expect fail "System/Updates/Other.swift" 'import Sparkle'
   expect fail "Core/A.swift" 'let c = NSURLConnection(request: r, delegate: nil)'
   expect pass "Core/Browser/A.swift" '// Logger( in a comment is fine'
   expect pass "Core/Browser/A.swift" 'struct SiteReader {}'
@@ -126,13 +131,21 @@ while IFS= read -r hit; do
   problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): a SwiftUI view inside a string interpolation (use Text + Text(Image(...)))")
 done < <(scan "$SRC" "$VIEW_INTERP_RE")
 
-# 3. P6-3: the network only from Sources/System/Network/ (the update check's one client).
+# 4. P6-3, P4-3: no network code in Sources at all (Sparkle, a package, does the update requests).
 NET_RE='(^|[^.[:alnum:]_])(URLSession|NSURLConnection|NWConnection|NWPathMonitor|NWBrowser|NWListener|CFStream|CFSocket|CFHTTP)[[:alnum:]_]*[[:space:].(]|^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)*import[[:space:]]+(Network|CFNetwork)([[:space:].]|$)|(^|[^.[:alnum:]_])socket[[:space:]]*\('
 while IFS= read -r hit; do
   [[ -z "$hit" ]] && continue
-  [[ "${hit%%:*}" == "$SRC/System/Network/"* ]] && continue
-  problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): network code only in System/Network/ (the optional update check)")
+  problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): no network code in Sources (updates go through Sparkle, P4-3)")
 done < <(scan "$SRC" "$NET_RE")
+
+# 5. P4-3: Sparkle is imported by its one adapter only.
+SPARKLE_RE='^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)*import[[:space:]]+((typealias|struct|class|enum|protocol|let|var|func)[[:space:]]+)?Sparkle([[:space:].]|$)'
+SPARKLE_ALLOWED="$SRC/System/Updates/SparkleUpdater.swift"
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  [[ "${hit%%:*}" == "$SPARKLE_ALLOWED" ]] && continue
+  problems+=("${hit%%:*}:$(cut -d: -f2 <<<"$hit"): import Sparkle only in System/Updates/SparkleUpdater.swift (P4-3)")
+done < <(scan "$SRC" "$SPARKLE_RE")
 
 if (( ${#problems[@]} > 0 )); then
   echo "❌ Lint failed:" >&2

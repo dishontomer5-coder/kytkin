@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0
+
+### New: one-click updates
+
+- **Keep Kytkin up to date.** Turn it on in setup or in Settings → General → Updates. Once a day Kytkin checks GitHub
+  for a new version. When there is one, the menu shows "Update available: Kytkin x.y.z…". Click it, then **Install Update**,
+  and Kytkin updates itself and reopens. Nothing downloads or installs until you click.
+- **Off unless you turn it on.** Nothing about you is sent: no system details, no IDs, nothing you type.
+- **Check Now…** in Settings → General → Updates checks right away.
+- If you had turned on "Check for updates" in 1.0.0, Kytkin keeps it on as "Keep Kytkin up to date".
+- Updates are signed: Kytkin installs only an update signed with the developer's key and the same certificate as the
+  copy you have, so your permissions (Accessibility) carry over.
+- Updates use [Sparkle](https://sparkle-project.org/) (MIT License), the open-source updater many Mac apps use.
+
+### Updating from 1.0.0
+
+1.0.0 can't update itself yet: download `Kytkin-1.1.0.dmg` and drag Kytkin into Applications once more (choose
+**Replace**). From 1.1.0 on, updates take one click.
+
 ## 1.0.0 (first release)
 
 Kytkin is a small, free, open-source macOS menu-bar app that switches your keyboard language for you and fixes text

@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- P2-3: Kytkin's only entitlement. Hardened-runtime apps need it to send Apple Events at all
-     (the opt-in browser-URL fallback, R3/R8). Not sandboxed: no app-sandbox key on purpose. -->
+<!-- P2-3: Hardened-runtime apps need apple-events to send Apple Events at all (the opt-in browser-URL fallback,
+     R3/R8). Not sandboxed: no app-sandbox key on purpose.
+     P4-3: disable-library-validation, so the app may load its embedded Sparkle.framework. Kytkin is signed with a
+     self-signed certificate (no Apple Team ID), and the hardened runtime's library validation only accepts libraries
+     from Apple or the same Team ID: without it the app dies at launch, as the separate debug dylib did (P2-53).
+     The hardened runtime stays on (no DYLD_* variables, no unsigned executable memory). -->
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
 </dict>
 </plist>

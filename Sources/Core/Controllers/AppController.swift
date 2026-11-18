@@ -60,7 +60,7 @@ import Observation
     var practiceDoubleShift: (@MainActor () -> InputSourceID?)?
     /// P6-0e: the pair as input sources (AppEnvironment: the layout catalog's bases), for the menu-bar logo's half.
     var pairInputSources: (@MainActor () -> LanguagePair?)?
-    /// P6-3: the update check's notice (AppEnvironment), shown as one menu line.
+    /// P6-3, P4-3: the updater's notice (AppEnvironment), shown as one menu line.
     var updateNotice: (@MainActor () -> UpdateNotice?)?
 
     private var lastPrefs: Preferences?

@@ -27,13 +27,13 @@ import Observation
     /// P6-0d: the language selected now, for the "Show in menu bar" preview (read when drawn).
     @ObservationIgnored let currentLanguage: @MainActor () -> InputSourceInfo?
 
-    /// P6-3: the optional update check (nil = not wired, e.g. some tests).
-    @ObservationIgnored let updates: UpdateChecker?
+    /// P4-3: "Keep Kytkin up to date" (nil = not wired, e.g. some tests).
+    @ObservationIgnored let updates: UpdateController?
 
     init(store: PreferencesStore, loginItems: any LoginItemManaging,
          sources: @escaping @MainActor () -> [InputSourceInfo],
          currentLanguage: @escaping @MainActor () -> InputSourceInfo? = { nil },
-         updates: UpdateChecker? = nil) {
+         updates: UpdateController? = nil) {
         self.store = store
         self.loginItems = loginItems
         self.readSources = sources
@@ -41,15 +41,10 @@ import Observation
         self.updates = updates
     }
 
-    /// P6-3: Settings → General → "Check for updates" (subtitle).
-    /// P6-3 QA: exact: the request carries Kytkin's version (User-Agent) and nothing else of the Mac's.
-    static let updateCheckHelp = "Once a day, Kytkin asks GitHub whether a newer version is out. Only Kytkin’s "
-        + "version number is sent, never anything you type, and nothing is downloaded."
-
-    /// P6-3: when the last check ran, for the "Check Now" row.
-    var lastUpdateCheckText: String? {
-        store.prefs.general.lastUpdateCheck.map { "Last checked \($0.formatted(date: .abbreviated, time: .shortened))." }
-    }
+    /// P4-3: the switch in setup screen 3 and Settings → General → Updates (owner wording, 2026-11-18).
+    static let keepUpToDateTitle = "Keep Kytkin up to date"
+    static let keepUpToDateHelp = "Once a day, checks GitHub for a new version. You choose when to install. "
+        + "Nothing about you is sent."
 
     /// P6-0d: how the status item looks with `menuBarDisplay` (the real label model, the normal look).
     var menuBarPreview: MenuModel.Label { menuBarPreview(for: menuBarDisplay) }
