@@ -45,9 +45,11 @@ final class FakeWalkNode: ChatFocusWalkNode {
 final class FakeWalkingFocusProvider: FocusedElementProviding {
     var system: Result<any AXTextElement, AXAccessError> = .failure(.noValue)
     var walk = ChatFocusWalkResult.unavailable
+    /// The focused application (the fake composer's app, 4242, by default; nil = unknown).
+    var appPID: Int32? = 4242
     private(set) var walks = 0
     func focusedTextElement(timeout: Double) -> Result<any AXTextElement, AXAccessError> { system }
-    func focusedApplicationPID(timeout: Double) -> Int32? { 77 }
+    func focusedApplicationPID(timeout: Double) -> Int32? { appPID }
     func chatFocusWalk(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkResult {
         walks += 1
         return walk
@@ -172,7 +174,7 @@ final class ChatFocusWalkTests: XCTestCase {
         let base = FakeWalkingFocusProvider()
         let pin = ChatFocusPin(base: base)
         guard case .failure(.noValue) = pin.focusedTextElement(timeout: 0.25) else { return XCTFail("not the system's") }
-        XCTAssertEqual(pin.focusedApplicationPID(timeout: 0.25), 77)
+        XCTAssertEqual(pin.focusedApplicationPID(timeout: 0.25), 4242)
     }
 
     func testAPinnedComposerStandsInWhileItSaysItIsFocused() {
@@ -210,6 +212,46 @@ final class ChatFocusWalkTests: XCTestCase {
         XCTAssertEqual(composer.focusedReads, 0)
         pin.unpin()
         XCTAssertNil(pin.pinned)
+    }
+
+    /// P4-5b QA: a background composer may still say `AXFocused = true`: focus in another app must never pass for it.
+    func testThePinNeverStandsInWhenFocusIsInAnotherApp() {
+        let base = FakeWalkingFocusProvider()
+        let pin = ChatFocusPin(base: base)
+        let composer = composerField()
+        pin.pin(composer)
+        // Another app in front, naming no focused element: nothing (the convert stops, ⌘V is never posted).
+        base.appPID = 99
+        guard case .failure = pin.focusedTextElement(timeout: 0.25) else { return XCTFail("the pin stood in") }
+        // Another app's non-box element in focus (its app not known): that element, not the pin.
+        base.appPID = nil
+        let finderList = FakeTextField("")
+        finderList.role = "AXList"
+        finderList.processID = 99
+        base.system = .success(finderList)
+        guard case .success(let el) = pin.focusedTextElement(timeout: 0.25) else { return XCTFail("no focus") }
+        XCTAssertFalse(el.isSameElement(as: composer))
+        XCTAssertEqual(composer.focusedReads, 0, "the composer is not even asked")
+        // Back in the chat app, still naming nothing: the pin again.
+        base.appPID = 4242
+        base.system = .failure(.noValue)
+        guard case .success(let el2) = pin.focusedTextElement(timeout: 0.25) else { return XCTFail("no focus") }
+        XCTAssertTrue(el2.isSameElement(as: composer))
+        // Focused application unknown (AX can't tell): the pin's own `AXFocused` decides.
+        base.appPID = nil
+        guard case .success(let el3) = pin.focusedTextElement(timeout: 0.25) else { return XCTFail("no focus") }
+        XCTAssertTrue(el3.isSameElement(as: composer))
+    }
+
+    /// P4-5b QA: a focus read that timed out is not followed by another read of the pinned element.
+    func testASystemTimeoutAsksThePinNothing() {
+        let base = FakeWalkingFocusProvider()
+        let pin = ChatFocusPin(base: base)
+        let composer = composerField()
+        pin.pin(composer)
+        base.system = .failure(.timeout)
+        guard case .failure(.timeout) = pin.focusedTextElement(timeout: 0.25) else { return XCTFail("not the timeout") }
+        XCTAssertEqual(composer.focusedReads, 0)
     }
 
     @TextActor func testTheExecutorPinsTheWalkedBoxForFocusReadsAndSameElementChecks() async {
