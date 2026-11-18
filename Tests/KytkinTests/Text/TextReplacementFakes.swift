@@ -74,6 +74,14 @@ final class FakeTextField: AXTextElement {
         (other as? FakeTextField)?.elementID == elementID
     }
 
+    /// P4-5b: what `AXFocused` answers (and how many times it was asked).
+    var focusedAnswer: Result<Bool, AXAccessError> = .failure(.unsupported)
+    private(set) var focusedReads = 0
+    func isFocused() -> Result<Bool, AXAccessError> {
+        focusedReads += 1
+        return focusedAnswer
+    }
+
     init(_ text: String, selection: TextRange? = nil) {
         units = Array(text.utf16)
         self.selection = selection ?? TextRange(location: units.count, length: 0)

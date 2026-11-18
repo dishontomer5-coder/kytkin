@@ -56,6 +56,15 @@ final class AXUIElementTextElement: AXTextElement {
         return .success(list.contains(kAXStringForRangeParameterizedAttribute))
     }
 
+    /// P4-5b: `AXFocused`, read only (a walked chat composer's "still focused" check).
+    func isFocused() -> Result<Bool, AXAccessError> {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &value)
+        guard error == .success else { return .failure(AXAccessError(error)) }
+        guard let value, CFGetTypeID(value) == CFBooleanGetTypeID() else { return .failure(.failed) }
+        return .success(CFBooleanGetValue((value as! CFBoolean)))
+    }
+
     /// P3-42: attribute names only (no values), to tell web content from a native field.
     func attributeNames() -> Result<[String], AXAccessError> {
         var names: CFArray?

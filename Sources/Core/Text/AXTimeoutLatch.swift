@@ -56,6 +56,10 @@ final class TimeoutLatchedElement: AXTextElement {
         latch.guarded { inner.supportsStringForRange() }
     }
 
+    func isFocused() -> Result<Bool, AXAccessError> {   // P4-5b
+        latch.guarded { inner.isFocused() }
+    }
+
     func setString(_ value: String, for attribute: AXTextAttribute) -> Result<Void, AXAccessError> {
         latch.guarded { inner.setString(value, for: attribute) }
     }

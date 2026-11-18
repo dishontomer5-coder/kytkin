@@ -74,6 +74,14 @@ import Foundation
     /// P3-58: the texts of the focused box's mention pills / links (`AXElementReading.inlineAtoms`, no quote walk),
     /// read only, for the chat-app clipboard convert to keep them whole. [] = none or unknown. Never logged.
     func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String]
+
+    /// P4-5b: a chat app (pid) names no focused text box: walk its focused window (read only, `ChatFocusWalk`) and, when
+    /// a box says `AXFocused = true`, use it as the focused element (`ChatFocusPin`) until `unpinChatFocus`: focus reads,
+    /// `focusedElement`, the clipboard's same-element checks and the pill walk then see it while it keeps focus.
+    func pinChatFocus(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport
+
+    /// P4-5b: back to the system's focused element only (called at the end of every request).
+    func unpinChatFocus()
 }
 
 extension TextReplacing {
@@ -94,6 +102,12 @@ extension TextReplacing {
 
     /// P3-58: none by default (the `@word` rule still holds).
     func focusedInlineAtomTexts(budgetNanos: UInt64) -> [String] { [] }
+
+    /// P4-5b: a replacer that can't walk finds nothing (the caller just switches).
+    func pinChatFocus(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport { .unavailable }
+
+    /// P4-5b: nothing pinned by default.
+    func unpinChatFocus() {}
 
     /// P3-37: a replacer that can't name the focus never passes a focus re-check (the safe default).
     func currentFocusedElement(timeout: Double) -> (any FocusedElementIdentity)? { nil }

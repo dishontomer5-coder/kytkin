@@ -96,6 +96,10 @@
 //   looked up again, polled, until `chatFocusWaitNanos` after the request arrived (inside the B5 budget, before the
 //   clipboard's copy-start limit). Still no box: double-Shift just switches the language (never silent). The write
 //   reads no text.
+// P4-5b (owner live test 2026-11-18): with the tree on, Slack still names no focused element for a composer that had
+//   focus before the tree was built; the polling above is replaced by a read-only walk of the app's focused window for
+//   the text box that says `AXFocused = true` (`ChatFocusWalk`), pinned as the focused element for this request only
+//   (`TextReplacing.pinChatFocus` / `unpinChatFocus`, `ChatFocusPin`). See `retryChatFocus`.
 //
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
 // only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs; the
@@ -164,9 +168,12 @@ import Foundation
 
     /// P4-5: a chat app with no box is looked at again until this long after the request arrived (≤ 150 ms: the
     /// clipboard must still start its copy inside `ClipboardConvert.Timing.copyStartBudgetNanos`, 200 ms).
+    /// P4-5b: the focus walks (and the one wait between them) end by then.
     static let chatFocusWaitNanos: UInt64 = 150_000_000
-    /// P4-5: how often the focus is looked at again while waiting.
-    static let chatFocusPollNanos: UInt64 = 30_000_000
+    /// P4-5b: the wait before a second walk (the tree may still be building after a write just now).
+    static let chatSecondWalkWaitNanos: UInt64 = 50_000_000
+    /// P4-5b: a walk that saw fewer nodes than this saw a bare window (no web content: the tree looks off).
+    static let chatBareTreeNodes = 40
     /// P4-5: room kept before the copy-start limit for the mention pill walk.
     static let pillCopyStartReserveNanos: UInt64 = 20_000_000
 
@@ -266,6 +273,7 @@ import Foundation
                 outcome = .noop(.cancelled)
             }
         }
+        replacer?.unpinChatFocus()   // P4-5b: a walked chat composer is this request's only
         lastOutcome = outcome
         if let diagnose, var t = trace {
             t.outcome = "\(outcome)"
@@ -356,47 +364,64 @@ import Foundation
         return await apply(decision, r, layouts: layouts, finish: &finish)
     }
 
-    /// P4-5: a chat app named no text box: write the flag again (the first write may have come before the app was ready),
-    /// then look at the focus again every `chatFocusPollNanos` until a box shows or `chatFocusWaitNanos` after the
-    /// request arrived, and decide once more. Without the enabler, a pid, or the grant: no wait (`.chatNoBox` stays).
-    /// P4-5 QA: `safetyNet` is what this request's own check did: a write just now (answered) is not repeated, and one
-    /// that got no answer (a busy app: another write and the focus reads would only time out too) or no grant ends here.
+    /// P4-5b (owner live test 2026-11-18): a chat app named no text box. Slack, right after its tree was turned on, names
+    /// no focused element for the composer that already had focus, until focus moves; the composer itself says
+    /// `AXFocused = true`. So: walk the app's focused window for it (`TextReplacing.pinChatFocus`, read only, ≤
+    /// `ChatFocusWalk.defaultMaxNodes` nodes, until `chatFocusWaitNanos` after the request arrived) and, found, decide
+    /// again with it pinned as the focused element. Not found:
+    ///   - this request's own write just turned the tree on (it may still be building): wait
+    ///     `chatSecondWalkWaitNanos` (bounded by the same deadline) and walk once more;
+    ///   - the flag was set before but the window looks bare (fewer than `chatBareTreeNodes` nodes: the tree may have
+    ///     been dropped): write it once more (P4-5's re-write, kept only here), wait, walk once more;
+    ///   - else: `.chatNoBox` (the caller just switches).
+    /// P4-5 QA: a write that got no answer (a busy, launching app: walks would only time out too) or no grant ends here.
     private func retryChatFocus(_ r: ConvertRequest, layouts: LayoutSnapshot,
                                 safetyNet: ChatAccessibilityEnabler.Result) async -> Decision {
-        guard let chatAX else { return .chatNoBox }
-        let wrote: ChatAccessibilityEnabler.Result
-        if case .alreadySet = safetyNet {
-            wrote = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
-                                  timeout: ChatAccessibilityEnabler.requestTimeout, force: true)
-        } else {
-            wrote = safetyNet
-        }
-        switch wrote {
-        case .wrote(.set), .wrote(.refused): break
+        guard let chatAX, let pid = r.processID else { return .chatNoBox }
+        let justWrote: Bool
+        switch safetyNet {
+        case .wrote(.set), .wrote(.refused): justWrote = true
+        case .alreadySet: justWrote = false
         default:
-            trace?.chatAXRetry = "notTried(\(wrote.traceName))"
+            trace?.chatAXRetry = "notTried(\(safetyNet.traceName))"
             return .chatNoBox
         }
         let deadline = requestStart &+ Self.chatFocusWaitNanos
-        var polls = 0
-        while clock.nowNanos < deadline, !Task.isCancelled {
-            await sleep(min(Self.chatFocusPollNanos, deadline &- clock.nowNanos))
-            polls += 1
-            if chatBoxFocused() { break }
+        let replacer = currentReplacer()
+        func walk() -> ChatFocusWalkReport {
+            let now = clock.nowNanos
+            guard now < deadline else { return .budget(ChatFocusWalk.Stats()) }
+            let report = replacer.pinChatFocus(pid: pid, maxNodes: ChatFocusWalk.defaultMaxNodes,
+                                               budgetNanos: deadline - now)
+            let before = trace?.chatFocusWalk.map { $0 + " > " } ?? ""
+            trace?.chatFocusWalk = before + report.traceName
+            return report
         }
-        let decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
-        let found: Bool
-        if case .chatNoBox = decision { found = false } else { found = true }
-        let waitedMs = (clock.nowNanos &- requestStart) / 1_000_000
-        trace?.chatAXRetry = "\(found ? "found" : "notFound") polls=\(polls) atMs=\(waitedMs)"
-        return decision
+        var report = walk()
+        if !report.isFound {
+            var again = justWrote
+            if !justWrote, Self.windowLooksBare(report) {
+                let rewrote = chatAX.enable(bundleID: r.bundleID, pid: pid,
+                                            timeout: ChatAccessibilityEnabler.requestTimeout, force: true)
+                trace?.chatAXRetry = "rewrote(\(rewrote.traceName))"
+                if case .wrote(let a) = rewrote, a == .set || a == .refused { again = true }
+            }
+            if again, clock.nowNanos < deadline, !Task.isCancelled {
+                await sleep(min(Self.chatSecondWalkWaitNanos, deadline &- clock.nowNanos))
+                report = walk()
+            }
+        }
+        guard report.isFound else { return .chatNoBox }
+        return decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
     }
 
-    /// P4-5: a chat app's focused element is a text box now (role only; nothing read is kept).
-    private func chatBoxFocused() -> Bool {
-        let replacer = currentReplacer()
-        defer { replacer.endReplacement() }
-        return Self.isChatBox(replacer.focusInfo(timeout: ReplacementExecutor.axTimeout))
+    /// P4-5b: a walk that ended without a box among only a few nodes: the window shows no web content (tree off).
+    static func windowLooksBare(_ report: ChatFocusWalkReport) -> Bool {
+        switch report {
+        case .notFound(let s): return s.nodes < chatBareTreeNodes
+        case .unavailable: return true
+        case .found, .budget: return false
+        }
     }
 
     /// P4-5: in a chat app, a focus Kytkin can convert in: a text box role (the composer is an `AXTextArea` once the
