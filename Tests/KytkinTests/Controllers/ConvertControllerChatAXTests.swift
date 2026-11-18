@@ -271,6 +271,39 @@ final class ConvertControllerChatAXTests: XCTestCase {
         XCTAssertEqual(setter.pids, [], "cancelled before its first try")
     }
 
+    @TextActor func testStoppingOneAppLeavesTheOthersRunning() async {
+        // P4-5c QA: Kytkin turned off for Slack in Settings → Apps mid-schedule; Discord keeps its schedule.
+        setter.setAnswer(.noAnswer)
+        let rig = rig()
+        rig.sut.chatAppLaunched(bundleID: slack, pid: 10)
+        rig.sut.chatAppLaunched(bundleID: "com.hnc.Discord", pid: 12)
+        rig.sut.stopChatAppPreparation(bundleIDs: [slack])
+        await rig.sut.chatPrepSettled()
+        XCTAssertFalse(setter.pids.contains(10))
+        XCTAssertEqual(setter.pids.count, ConvertController.chatPrepScheduleNanos.count)
+    }
+
+    @TextActor func testAPressThatFoundTheBoxEndsTheSchedule() async {
+        // P4-5c QA: the schedule is running (bare window); a double-Shift then finds the composer: no more looks.
+        let rig = rig(focus: nil, walks: [.found(Self.stats(660, ms: 58, depth: 23))], windows: [Self.bareWindow])
+        rig.sut.chatAppLaunched(bundleID: slack, pid: slackPID)
+        _ = await rig.sut.handle(request(empty()), layouts: layouts)
+        XCTAssertTrue(rig.enabler.isReady(pid: slackPID))
+        let looks = rig.replacer.windowWalks
+        await rig.sut.chatPrepSettled()
+        XCTAssertEqual(rig.replacer.windowWalks, looks, "ready: the schedule looks no more")
+    }
+
+    @TextActor func testAGrantLostBeforeAReWriteStopsTheSchedule() async {
+        // P4-5c QA: 0 s set; bare at 0.3 / 0.7 / 1.5 (throttled); 3 s re-write answers notTrusted: stop (no 6 s try).
+        setter.setAnswers([.set, .notTrusted])
+        let rig = rig(windows: [Self.bareWindow])
+        rig.sut.chatAppLaunched(bundleID: slack, pid: slackPID)
+        await rig.sut.chatPrepSettled()
+        XCTAssertEqual(setter.pids.count, 2)
+        XCTAssertEqual(rig.sleeps.count, 4)
+    }
+
     @TextActor func testOneSchedulePerPid() async {
         setter.setAnswer(.noAnswer)
         let rig = rig()

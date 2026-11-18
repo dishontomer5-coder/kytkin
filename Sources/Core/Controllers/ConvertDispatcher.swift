@@ -58,6 +58,11 @@ import Foundation
         enqueue { controller in controller.stopChatAppPreparation() }
     }
 
+    /// P4-5c QA
+    func stopChatAppPreparation(bundleIDs: Set<String>) {
+        enqueue { controller in controller.stopChatAppPreparation(bundleIDs: bundleIDs) }
+    }
+
     func methodHintsChanged(_ overrides: [String: MethodHint]) {
         enqueue { controller in controller.setMethodHintOverrides(overrides) }
     }

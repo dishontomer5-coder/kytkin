@@ -96,7 +96,8 @@ import AppKit
             // P4-5: `AXManualAccessibility` on chat apps only (Slack, Discord, Teams), once per pid, on @TextActor.
             // P4-5c: `isAlive` is a signal-0 check (nothing is delivered to the app), for the launch schedule.
             chatAX: ChatAccessibilityEnabler(setter: AXManualAccessibilitySetter(), clock: clock,
-                                             isAlive: { pid in kill(pid, 0) == 0 }))
+                                             // P4-5c QA: EPERM means the process exists (not ours to signal): alive.
+                                             isAlive: { pid in kill(pid, 0) == 0 || errno == EPERM }))
         let dispatcher = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
         dispatcher.onConverted = { [store] in store.recordStat(.converted) }   // P6-0k: Settings → Statistics
         convert = dispatcher

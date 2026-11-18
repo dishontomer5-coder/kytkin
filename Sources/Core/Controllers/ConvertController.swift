@@ -185,8 +185,14 @@ import Foundation
     /// P4-5c: now the launch schedule's waits.
     private let sleep: @Sendable (UInt64) async -> Void
     /// P4-5c: the running launch schedules, per chat pid.
-    private var chatPrepTasks: [Int32: (id: UInt64, task: Task<Void, Never>)] = [:]
+    private var chatPrepTasks: [Int32: (id: UInt64, bundleID: String, task: Task<Void, Never>)] = [:]
     private var chatPrepNextID: UInt64 = 0
+    /// P4-5c QA: a double-Shift is being handled. Its awaits (the clipboard's polls) let the schedule's task run on
+    /// @TextActor in between; a try then (a ≤ 0.25 s write or a ≤ 50 ms look) waits until the press ended, so it
+    /// never stalls the press.
+    private var requestInFlight = false
+    /// Keyed by arrival (a dictionary, not an array: the privacy test's `is [UInt16]` matches any empty array).
+    private var requestEndWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
 
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
@@ -240,6 +246,13 @@ import Foundation
     /// P3-37 (c): after that finish (so held keys replay at once), the user's clipboard is put back (bounded wait).
     @discardableResult
     func handle(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
+        requestInFlight = true   // P4-5c QA
+        defer {
+            requestInFlight = false
+            let waiters = requestEndWaiters
+            requestEndWaiters = [:]
+            for w in waiters.values { w.resume() }
+        }
         let outcome = await handleAndFinish(request, layouts: layouts)
         if let pending = pendingRestore {
             pendingRestore = nil
@@ -314,6 +327,14 @@ import Foundation
         chatPrepTasks = [:]
     }
 
+    /// P4-5c QA: Kytkin (or convert) turned off for these apps in Settings → Apps: stop their schedules only.
+    func stopChatAppPreparation(bundleIDs: Set<String>) {
+        for (pid, entry) in chatPrepTasks where bundleIDs.contains(entry.bundleID) {
+            entry.task.cancel()
+            chatPrepTasks[pid] = nil
+        }
+    }
+
     /// P4-5c: tests: waits until every running schedule ended.
     func chatPrepSettled() async {
         while let entry = chatPrepTasks.values.first { await entry.task.value }
@@ -337,7 +358,7 @@ import Foundation
             await self?.runChatPrep(bundleID: bundleID, pid: pid)
             if self?.chatPrepTasks[pid]?.id == id { self?.chatPrepTasks[pid] = nil }
         }
-        chatPrepTasks[pid] = (id, task)
+        chatPrepTasks[pid] = (id, bundleID, task)
     }
 
     /// P4-5c: the tries, as offsets from the schedule's start.
@@ -354,11 +375,15 @@ import Foundation
                 await sleep(offset - at)
                 at = offset
             }
+            // P4-5c QA: never in the middle of a double-Shift (requests always end, within their budgets).
+            while requestInFlight { await withCheckedContinuation { requestEndWaiters[requestEndWaiters.count] = $0 } }
             if Task.isCancelled { return }
             guard chatAX.isAlive(pid) else {
                 chatAX.forget(pid: pid)
                 return
             }
+            // P4-5c QA: a double-Shift found the box meanwhile: done.
+            if chatAX.isReady(pid: pid) { return }
             if chatPrepTry(bundleID: bundleID, pid: pid, chatAX: chatAX) { return }
         }
     }
@@ -378,7 +403,9 @@ import Foundation
         chatAX.noteBuilt(pid: pid, built)
         if built == true { return true }
         if built == false {
-            chatAX.enable(bundleID: bundleID, pid: pid, timeout: ChatAccessibilityEnabler.frontmostTimeout, force: true)
+            let result = chatAX.enable(bundleID: bundleID, pid: pid, timeout: ChatAccessibilityEnabler.frontmostTimeout,
+                                       force: true)
+            return result == .wrote(.notTrusted)   // P4-5c QA: the grant went away: stop, as on a first write
         }
         return false
     }

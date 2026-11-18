@@ -132,6 +132,21 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(convert?.chatStops, afterOff, "turning it back on stops nothing")
     }
 
+    func testTurningKytkinOrConvertOffForAChatAppStopsItsPreparation() {
+        // P4-5c QA: Settings → Apps, mid-schedule.
+        make(withConvert: true)
+        store.update { $0.apps["com.tinyspeck.slackmacgap", default: .init()].disabled = true }
+        sut.preferencesDidChange()
+        XCTAssertEqual(convert?.chatAppStops.last, ["com.tinyspeck.slackmacgap"])
+        store.update {
+            $0.apps["com.tinyspeck.slackmacgap"] = nil
+            $0.apps["com.hnc.Discord", default: .init()].convertEnabled = false
+            $0.apps["com.google.Chrome", default: .init()].disabled = true
+        }
+        sut.preferencesDidChange()
+        XCTAssertEqual(convert?.chatAppStops.last, ["com.hnc.Discord"], "chat apps only")
+    }
+
     // MARK: - P3-5: override hosts
 
     func testOverrideHostsFollowTheSiteHostRules() {

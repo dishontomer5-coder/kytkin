@@ -101,6 +101,8 @@ struct ConvertRequest: Sendable, Equatable {
     func chatAppLaunched(bundleID: String, pid: Int32)
     /// P4-5c: Kytkin off or paused, or convert / the clipboard switch off: stop preparing chat apps.
     func stopChatAppPreparation()
+    /// P4-5c QA: Kytkin or convert turned off for these chat apps (Settings → Apps): stop their preparation only.
+    func stopChatAppPreparation(bundleIDs: Set<String>)
 }
 
 extension ConvertControlling {
@@ -111,6 +113,7 @@ extension ConvertControlling {
     /// P4-5c: nothing to prepare or stop by default.
     func chatAppLaunched(bundleID: String, pid: Int32) {}
     func stopChatAppPreparation() {}
+    func stopChatAppPreparation(bundleIDs: Set<String>) {}
 }
 
 /// P2-20: converts nothing and finishes the generation at once, so held keys replay right away. AppController's

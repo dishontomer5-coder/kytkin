@@ -210,6 +210,9 @@ final class FakeKeyWatcher: KeyWatching, @unchecked Sendable { // @unchecked: ma
     private(set) var chatStops = 0
     func chatAppLaunched(bundleID: String, pid: Int32) { launches.append("\(bundleID)#\(pid)") }
     func stopChatAppPreparation() { chatStops += 1 }
+    /// P4-5c QA: per-app stops (Settings → Apps).
+    private(set) var chatAppStops: [Set<String>] = []
+    func stopChatAppPreparation(bundleIDs: Set<String>) { chatAppStops.append(bundleIDs) }
 }
 
 @MainActor func makeStore(_ prefs: Preferences = Preferences(), clock: any Clock) -> PreferencesStore {

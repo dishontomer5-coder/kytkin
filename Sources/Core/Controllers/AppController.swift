@@ -237,7 +237,13 @@ import Observation
         if switching.paused || !prefs.general.enabled || !availability.doubleShiftConvert
             || !prefs.convert.useClipboardInUnreadableApps {
             convert.stopChatAppPreparation()
+            return
         }
+        // P4-5c QA: Kytkin or convert off for one chat app (Settings → Apps): its schedule stops too.
+        let offApps = Set(prefs.apps.compactMap { id, app in
+            ReplacementCapabilities.isChatApp(id) && (app.disabled == true || app.convertEnabled == false) ? id : nil
+        })
+        if !offApps.isEmpty { convert.stopChatAppPreparation(bundleIDs: offApps) }
     }
 
     /// P3-7: the browsers the user turned Automation on for. P3-26: the global switch × the installed browsers
