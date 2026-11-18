@@ -11,6 +11,9 @@
 # Without it the app is ad-hoc signed: fine for a test DMG, but permissions (Accessibility, Input Monitoring) would
 # not survive an update, so never publish one.
 #
+# P4-3: Sparkle.framework (embedded by Xcode) is signed with the same certificate, its helpers first; a signed release
+# refuses to build while Config/Info.plist still has the placeholder Sparkle key. Then run ./scripts/make-appcast.
+#
 # Built-in tools only: xcodegen + xcodebuild, swiftc, tiffutil, hdiutil, codesign, shasum (and, when signing,
 # security find-identity and spctl). No AppleScript, no Apple
 # Events and no Finder window: the Finder layout is written straight into the image's .DS_Store by
@@ -42,7 +45,8 @@ SIGNED_WITH="${KYTKIN_RELEASE_SIGN_IDENTITY:-}"
 step "Building Release…"
 xcodegen generate --quiet >>"$LOG" 2>&1 || die "xcodegen generate failed"
 xcodebuild -project Kytkin.xcodeproj -scheme Kytkin -configuration Release -destination 'platform=macOS' \
-  -derivedDataPath "$DERIVED" build >>"$LOG" 2>&1 || die "Release build failed (see the log)"
+  -derivedDataPath "$DERIVED" -packageAuthorizationProvider netrc build >>"$LOG" 2>&1 \
+  || die "Release build failed (see the log)"   # P4-3: netrc: no keychain lookup for the Sparkle download (build.sh)
 APP="$DERIVED/Build/Products/Release/Kytkin.app"
 [[ -d "$APP" ]] || die "no $APP after the build"
 
@@ -68,7 +72,25 @@ if [[ -n "$SIGNED_WITH" ]]; then
     esac
   fi
   REQ="designated => identifier \"$BUNDLE_ID\" and certificate leaf = H\"$CERT_SHA1\""
+  # P4-3: a release must carry the owner's real Sparkle public key, or installed copies could never update.
+  ED_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$(printf '%s' "$ED_KEY" | base64 -D 2>/dev/null | wc -c | tr -d ' ')" == "32" ]] \
+    || die "SUPublicEDKey in Config/Info.plist is still the placeholder: do the one-time Sparkle key step (README → Releasing)"
   step "Signing with \"$SIGNED_WITH\" (SHA-1 $CERT_SHA1)…"
+  # P4-3: Sparkle's helpers first, inside out (Sparkle's documented order), with the same certificate and the
+  # hardened runtime; Downloader.xpc keeps its own entitlements. The app is signed last, below.
+  SPK="$APP/Contents/Frameworks/Sparkle.framework"
+  if [[ -d "$SPK" ]]; then
+    for part in "Versions/B/XPCServices/Installer.xpc" "Versions/B/XPCServices/Downloader.xpc" \
+                "Versions/B/Autoupdate" "Versions/B/Updater.app" ""; do
+      target="$SPK${part:+/$part}"
+      [[ -e "$target" ]] || continue
+      extra=()
+      [[ "$part" == *Downloader.xpc ]] && extra=(--preserve-metadata=entitlements)
+      codesign --force --options runtime --timestamp=none ${extra[@]+"${extra[@]}"} --sign "$CERT_SHA1" "$target" \
+        >>"$LOG" 2>&1 || die "codesign failed for $target"
+    done
+  fi
   # Sign by SHA-1, so a second certificate with the same name elsewhere can't be picked instead.
   codesign --force --options runtime --timestamp=none --entitlements "$ENTITLEMENTS" \
     --requirements "=$REQ" --sign "$CERT_SHA1" "$APP" >>"$LOG" 2>&1 \
@@ -138,6 +160,9 @@ rm -rf "$WORK"
 SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
 echo "✅ $ROOT/$DMG"
 echo "   SHA-256: $SHA"
+if [[ -n "$SIGNED_WITH" ]]; then
+  echo "   Next (P4-3): ./scripts/make-appcast, then upload the DMG and build/appcast.xml to the release."
+fi
 if [[ -z "$SIGNED_WITH" ]]; then
   echo "⚠️  Ad-hoc signed (KYTKIN_RELEASE_SIGN_IDENTITY not set): a test DMG only. Don't publish it: permissions"
   echo "   granted to this build won't carry over to the next one."

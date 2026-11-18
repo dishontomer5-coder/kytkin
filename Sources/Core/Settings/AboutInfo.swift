@@ -47,6 +47,13 @@ struct AboutInfo: Equatable, Sendable {
                                licenseURL: URL(string: "https://mozilla.org/MPL/2.0/") ?? URL(fileURLWithPath: "/"))
     }
 
+    /// P4-3: the update framework (MIT), after the list.
+    static let sparkle = Acknowledgement(
+        title: "Sparkle",
+        detail: "Sparkle (sparkle-project.org), the open-source updater behind \"Keep Kytkin up to date\".",
+        license: "MIT License",
+        licenseURL: URL(string: "https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE") ?? URL(fileURLWithPath: "/"))
+
     /// "github.com/dishontomer5-coder/kytkin"
     var repositoryText: String {
         (repositoryURL.host ?? "") + repositoryURL.path
@@ -89,7 +96,7 @@ struct AboutInfo: Equatable, Sendable {
         license = Self.licenseText
         cleanRoom = Self.cleanRoomText
         repositoryURL = Self.repository
-        acknowledgements = [Self.publicSuffixList(version: suffixListVersion)]
+        acknowledgements = [Self.publicSuffixList(version: suffixListVersion), Self.sparkle]   // P4-3: + Sparkle
     }
 }
 

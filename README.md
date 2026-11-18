@@ -45,8 +45,23 @@ on Apple silicon or Intel.
    turns on **Open Kytkin when I log in** by default: uncheck it there, or turn it off later in **Settings → General →
    Open at Login**.
 
-**Updating:** quit Kytkin (menu-bar icon → Quit Kytkin). Drag the new version into Applications and choose
-**Replace**. Then do step 3 again: macOS asks once for every new download. Your settings stay. If double-Shift
+## Updates
+
+Setup offers **Keep Kytkin up to date** (off unless you tick it). You can change it any time in **Settings →
+General → Updates**.
+
+- When it is on, Kytkin checks GitHub once a day for a new version. If there is one, the menu shows **Update
+  available: Kytkin x.y.z…**. Click it to see what's new, then click **Install Update**: Kytkin downloads the update,
+  replaces itself and reopens. Nothing downloads or installs until you click. **Check Now…** checks right away.
+- Nothing about you is sent: no system details, no IDs, nothing you type. GitHub sees only that a copy of Kytkin
+  asked (its version number).
+- Kytkin installs an update only if it comes from Kytkin's GitHub releases and is signed with the developer's update
+  key (the list of updates is signed too). Every release is also signed with the same certificate as your copy, so
+  your permissions carry over.
+- Updates use [Sparkle](https://sparkle-project.org/), the open-source updater many Mac apps use.
+
+**Updating by hand** (or from 1.0.0, which can't update itself): quit Kytkin (menu-bar icon → Quit Kytkin), drag
+the new version into Applications and choose **Replace**, then do step 3 again. Your settings stay. If double-Shift
 stops working after an update, open System Settings → Privacy & Security → Accessibility and turn Kytkin off and on
 again.
 
@@ -82,9 +97,10 @@ Privacy & Security**.
 - **What is saved** (in `~/Library/Application Support/Kytkin/`): only your settings, the language for each app (by its
   ID), for each website domain (or an exact subdomain you add yourself), and any keyboard layouts you import. Never
   text, clipboard contents, page addresses or window titles.
-- **No analytics, no telemetry, no account.** The only network request Kytkin ever makes is the optional update
-  check, **off by default** (Settings → General → Updates). When on, it asks GitHub once a day whether a newer version
-  is out, sending only Kytkin's version number. It never downloads or installs anything.
+- **No analytics, no telemetry, no account.** The only network use is optional updates, **off unless you turn them
+  on** (setup, or Settings → General → Updates): checking GitHub once a day for a newer Kytkin and, when you click
+  Install, downloading and installing a signed Kytkin update. Nothing about you or your typing is sent. See
+  [Updates](#updates).
 
 ## Uninstall
 
@@ -99,7 +115,7 @@ Privacy & Security**.
    ```
 5. Delete its settings: in Finder choose **Go → Go to Folder…**, enter `~/Library/Application Support/`, and delete
    the **Kytkin** folder. If `~/Library/Preferences/io.github.kytkin.Kytkin.plist` exists, you can delete it too (it
-   holds only window positions macOS keeps for the app).
+   holds only window positions macOS keeps for the app, and the updater's settings, like when it last checked).
 
 ## Build from source
 
@@ -110,10 +126,42 @@ Command Line Tools) and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew
 ./scripts/build.sh          # Debug build: build/Build/Products/Debug/Kytkin Dev.app
 ./scripts/build.sh test     # source lints + unit tests
 ./scripts/package-dmg       # Release build + build/Kytkin-<version>.dmg and its SHA-256
+./scripts/make-appcast      # (releases) sign the DMG for Sparkle and write build/appcast.xml
 ```
 
 The Debug app is called **Kytkin Dev** and has its own bundle ID and settings folder, so it never mixes with an
 installed Kytkin. The Xcode project is generated from `project.yml`. Edit that file, not the `.xcodeproj`.
+
+## Releasing
+
+For the maintainer. Every installed copy checks the EdDSA signatures made with the maintainer's Sparkle key, on the
+appcast and on the DMG; that key is what it trusts. Sparkle does not compare certificates once that signature passes,
+so the scripts do: `make-appcast` refuses a DMG whose app isn't signed with the "Kytkin Release" certificate (an
+ad-hoc build would make every user grant Accessibility again).
+
+**Once: the Sparkle update key.** The private half lives only in your login keychain, like the certificate.
+
+1. Build once so Xcode downloads Sparkle and its tools: `./scripts/build.sh`.
+2. In Terminal, from the repository folder:
+   ```sh
+   "$(find build/SourcePackages/artifacts -name generate_keys -path '*/bin/*' | head -1)"
+   ```
+   It creates the key in your keychain (macOS may ask for access: allow it) and prints a `SUPublicEDKey` value.
+3. Paste that value into `Config/Info.plist`, replacing `REPLACE_WITH_SPARKLE_PUBLIC_ED_KEY`, and commit it (it is
+   the public half; safe to publish).
+4. Back up the private key next to the certificate backup:
+   `generate_keys -x ~/somewhere-safe/kytkin-sparkle-private-key` (same tool, `-x` exports it). Keep it secret. If
+   it is lost, installed copies can never update again by themselves.
+
+**Every release:**
+
+1. Raise `MARKETING_VERSION` **and** `CURRENT_PROJECT_VERSION` in `project.yml` (Sparkle compares the second), and
+   add the version's section to `CHANGELOG.md` (it becomes the update window's notes).
+2. `KYTKIN_RELEASE_SIGN_IDENTITY="Kytkin Release" ./scripts/package-dmg`
+3. `./scripts/make-appcast` (signs the DMG with your Sparkle key, checks it matches the app's public key, writes
+   `build/appcast.xml`).
+4. Create the GitHub release `v<version>` and upload **both** `build/Kytkin-<version>.dmg` and `build/appcast.xml`.
+   Installed copies read the appcast of the latest release.
 
 ## Developer and support
 
@@ -134,5 +182,6 @@ Kytkin is released under the [MIT License](LICENSE).
 Kytkin was built by Tomer Dishon for Ofir W. So she would never have to pay for a keyboard switcher again — and get
 a better one.
 
-It bundles the [Public Suffix List](https://publicsuffix.org/) (Mozilla Public License 2.0), unmodified, to find a
+It uses [Sparkle](https://sparkle-project.org/) (MIT License) for one-click updates, and bundles the
+[Public Suffix List](https://publicsuffix.org/) (Mozilla Public License 2.0), unmodified, to find a
 website's domain. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

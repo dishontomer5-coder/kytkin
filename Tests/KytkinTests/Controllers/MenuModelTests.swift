@@ -108,7 +108,7 @@ final class MenuModelTests: XCTestCase {
     func testUpdateLineSitsWithTheWarnings() {
         var s = MenuState()
         s.secureInputOn = true
-        s.updateNotice = UpdateNotice(version: "9.0.0", pageURL: URL(string: "https://example.com/r")!)
+        s.updateNotice = UpdateNotice(version: "9.0.0")
         XCTAssertEqual(titles(items(s, settings: true)), [
             "Double-Shift waits: another app is protecting your typing",
             "Update available: Kytkin 9.0.0…",

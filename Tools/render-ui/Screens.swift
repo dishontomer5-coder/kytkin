@@ -74,7 +74,8 @@ import SwiftUI
 
         let general = GeneralSettingsModel(store: store, loginItems: FakeLoginItems(),
                                            sources: { Sample.enabledSources }, currentLanguage: { Sample.current },
-                                           updates: UpdateChecker(store: store, http: NoNetwork(), appVersion: "1.0.0"))
+                                           updates: UpdateController(store: store, updater: UnavailableUpdater(),
+                                                                    appVersion: "1.1.0"))
         let languages = LanguagesSettingsModel(store: store, imported: imported, catalog: catalog,
                                                fileSystem: layoutFS, inputMethods: { Sample.enabledSources })
         let apps = AppsSettingsModel(store: store, appName: Sample.appName, runningApps: { Sample.running },

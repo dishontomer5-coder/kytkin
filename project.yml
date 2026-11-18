@@ -6,12 +6,21 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+# P4-3: one-click updates. Sparkle (MIT, THIRD_PARTY_NOTICES.md), Kytkin's only code dependency, pinned to one exact
+# release: a binary framework whose checksum Package.swift pins. Only Sources/System/Updates/SparkleUpdater.swift
+# imports it (scripts/lint.sh).
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 settings:
   base:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "1"
+    # P4-3: Sparkle compares CURRENT_PROJECT_VERSION (CFBundleVersion, the appcast's sparkle:version), so raise it by
+    # one for every release, together with MARKETING_VERSION.
+    MARKETING_VERSION: "1.1.0"
+    CURRENT_PROJECT_VERSION: "2"
     # Local ad-hoc signing: no Apple team needed. Developer ID signing comes in Phase 4.
     # P2-3: build.sh overrides CODE_SIGN_IDENTITY for Debug from KYTKIN_SIGN_IDENTITY.
     CODE_SIGN_STYLE: Manual
@@ -26,6 +35,9 @@ targets:
       # P3-2: the bundled Public Suffix List (MPL-2.0, unmodified) and its license text, copied into
       # Contents/Resources. Refreshed only by scripts/update-psl; the app never downloads it.
       - path: Resources/PublicSuffixList
+        buildPhase: resources
+      # P4-3: Sparkle's licence (MIT, plus the notices of the code it includes), shipped with the framework.
+      - path: Resources/Sparkle
         buildPhase: resources
       # P6-0c: the menu-bar glyphs (template PDFs), Resources/MenuBar/README.md. Only the PDFs are bundled; until
       # the real artwork lands the app draws SF Symbol placeholders.
@@ -42,6 +54,10 @@ targets:
       - path: Resources/AppIcon.icon
         type: file
         buildPhase: resources
+    # P4-3: Sparkle.framework is embedded (and signed) in Contents/Frameworks.
+    dependencies:
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.kytkin.Kytkin
@@ -49,6 +65,8 @@ targets:
         # P2-28: the Swift module stays "Kytkin" in both configs (Debug's product name has a space).
         PRODUCT_MODULE_NAME: Kytkin
         GENERATE_INFOPLIST_FILE: YES
+        # P4-3: Sparkle's keys (feed, EdDSA public key, no automatic anything). Merged with the generated keys below.
+        INFOPLIST_FILE: Config/Info.plist
         INFOPLIST_KEY_LSUIElement: YES # menu-bar only, no Dock icon
         INFOPLIST_KEY_CFBundleDisplayName: Kytkin
         # P2-3: shown in the Automation consent prompt (opt-in browser fallback, R3/R8).
@@ -129,6 +147,8 @@ targets:
       - path: Sources/System/Browser/BrowserWatchEngine.swift
       - path: Sources/System/Browser/BrowserWatcher.swift
       - path: Sources/System/Browser/RunLoopDeadlineTimer.swift
+      # P4-3: the appcast writer behind scripts/make-appcast (a release tool, never in the app) is tested here.
+      - path: Tools/make-appcast/Appcast.swift
       # P3-37: nothing from Sources/System/Text is listed, on purpose: SystemPasteboard (NSPasteboard.general),
       # CGEventKeyPoster and the AX adapters touch the real clipboard, post real events or read real apps. The clipboard
       # convert is tested through Core's ClipboardConvert with a fake pasteboard (Tests/KytkinTests/Text/ClipboardFakes).

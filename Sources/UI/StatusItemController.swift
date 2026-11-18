@@ -17,6 +17,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// Opens the Settings window at a tab (P2-23 sets it in AppEnvironment). While nil, "Settings…" is disabled
     /// and the "Open Settings…" hints are hidden.
     var openSettings: (@MainActor (MenuItemModel.SettingsTarget) -> Void)?
+    /// P4-3: the menu's "Update available" line opens the updater's window (AppEnvironment sets it).
+    var showUpdate: (@MainActor () -> Void)?
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let switcher: any InputSourceSwitching
@@ -196,7 +198,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .quitAndReopen: AppRelauncher.quitAndReopen()
         case .restartKeyboard: menuControl.restartKeyboard()
         case .revealFile(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
-        case .openURL(let url): NSWorkspace.shared.open(url)   // P6-3: the release page, on the user’s click
+        case .showUpdate: showUpdate?()   // P4-3: the updater's window, on the user’s click
         case .quit: NSApp.terminate(nil)
         }
         refresh()

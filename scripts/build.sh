@@ -69,8 +69,10 @@ print_failure() {
   echo "Full log: $PWD/$LOG" >&2
 }
 
+# P4-3: the Sparkle package's download never looks up GitHub credentials in the keychain (with the default
+# provider xcodebuild waited there forever, headless), only ~/.netrc, which public packages don't need.
 XCB=(xcodebuild -project Kytkin.xcodeproj -scheme Kytkin -configuration "$CONFIG"
-     -destination 'platform=macOS' -derivedDataPath "$DERIVED")
+     -destination 'platform=macOS' -derivedDataPath "$DERIVED" -packageAuthorizationProvider netrc)
 
 # P2-3: dev signing. Ad-hoc signatures change on every build, so macOS forgets the
 # Accessibility grant each time. A stable local certificate (KYTKIN_SIGN_IDENTITY, set in

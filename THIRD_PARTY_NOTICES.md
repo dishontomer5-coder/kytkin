@@ -1,7 +1,23 @@
 # Third-party notices
 
-Kytkin itself is MIT-licensed (see [LICENSE](LICENSE)). It has no third-party code dependencies.
-It bundles the data files below.
+Kytkin itself is MIT-licensed (see [LICENSE](LICENSE)). Its one third-party code dependency is Sparkle (below,
+since 1.1.0). It also bundles the data files below.
+
+## Sparkle
+
+- **What:** `Sparkle.framework`, the open-source macOS software-update framework. Kytkin uses it for the optional
+  one-click updates ("Keep Kytkin up to date", off unless the user turns it on). It is embedded in the app bundle's
+  `Contents/Frameworks` folder.
+- **Source:** https://github.com/sparkle-project/Sparkle (project: https://sparkle-project.org/), added with the Swift
+  Package Manager (`project.yml`, `packages:`).
+- **Version bundled:** 2.10.1 (released 2026-10-25), pinned exactly.
+- **License:** MIT License. Copyright (c) 2006-2013 Andy Matuschak, (c) 2009-2013 Elgato Systems GmbH,
+  (c) 2011-2014 Kornel Lesiński, (c) 2015-2017 Mayur Pawashe, (c) 2014 C.W. Betts, (c) 2014 Petroules Corporation,
+  (c) 2014 Big Nerd Ranch. Sparkle includes code under other permissive licenses (bsdiff: BSD 2-clause; sais-lite:
+  MIT; ed25519: zlib; SUSignatureVerifier: BSD 2-clause). The full text of all of them, as Sparkle ships it, is in
+  [`Resources/Sparkle/LICENSE-Sparkle.txt`](Resources/Sparkle/LICENSE-Sparkle.txt) (also copied into the app bundle).
+- **Updating:** change `exactVersion` in `project.yml`, refresh the license file from the new version's `LICENSE`,
+  update the version line above, and run the tests and a Release build.
 
 ## Public Suffix List
 

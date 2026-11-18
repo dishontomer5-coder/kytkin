@@ -132,20 +132,20 @@ struct MenuBarDisplayTiles: View {
     }
 }
 
-/// P6-3: the optional update check. Off until the user turns it on; "Check Now" only while it is on.
+/// P6-3, P4-3: "Keep Kytkin up to date". Off until the user turns it on; "Check Now…" (Sparkle's window) only while on.
 private struct UpdatesSection: View {
-    let updates: UpdateChecker
+    let updates: UpdateController
     let model: GeneralSettingsModel
 
     var body: some View {
         SettingsSection("Updates") {
-            SettingsToggleRow("Check for updates", subtitle: GeneralSettingsModel.updateCheckHelp,
+            SettingsToggleRow(GeneralSettingsModel.keepUpToDateTitle, subtitle: GeneralSettingsModel.keepUpToDateHelp,
                               isOn: Binding(get: { updates.isOn }, set: { updates.setOn($0) }))
                 .disabled(!model.isEditable)
             if updates.isOn {
-                SettingsRow("Kytkin \(updates.appVersion)", subtitle: updates.statusText ?? model.lastUpdateCheckText) {
-                    Button("Check Now") { Task { await updates.checkNow() } }
-                        .disabled(updates.status == .checking)
+                SettingsRow("Kytkin \(updates.appVersion)", subtitle: updates.statusText) {
+                    Button("Check Now…") { updates.checkNow() }
+                        .disabled(!updates.canCheckNow)
                 }
             }
         }

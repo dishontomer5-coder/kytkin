@@ -169,7 +169,7 @@ private struct WelcomeStep: View {
             // Visual review O3: fixed-width icons, so the lines start at one edge. Flows M8: no update claim.
             VStack(alignment: .leading, spacing: 4) {
                 privacy("lock", "What you type stays on your Mac. Kytkin never saves or sends it.")
-                privacy("network.slash", "No account, no tracking. No internet, unless you turn on the update check.")
+                privacy("network.slash", "No account, no tracking. No internet, unless you turn on updates.")
             }
             .font(.callout).foregroundStyle(.secondary)
         }
@@ -285,11 +285,11 @@ private struct PracticeStep: View {
             Spacer(minLength: 0)
             Toggle("Open Kytkin when I log in", isOn: $model.openAtLogin)
             if model.updates != nil {
-                // P6-3: unchecked until the user ticks it.
-                Toggle(isOn: $model.checkForUpdates) {
+                // P6-3, P4-3: unchecked until the user ticks it.
+                Toggle(isOn: $model.keepUpToDate) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Check for updates")
-                        Text("Once a day, asks GitHub whether a newer version is out. Only Kytkin’s version number is sent.")
+                        Text(GeneralSettingsModel.keepUpToDateTitle)
+                        Text(GeneralSettingsModel.keepUpToDateHelp)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

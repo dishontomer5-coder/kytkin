@@ -14,7 +14,7 @@
 //   P3-9, on a site in a watched browser (001 §14.9): the same for the site ("Forget Rule for <site>" only for a
 //   matched site or subdomain rule, D6).
 //   ── ⚠ warnings, only when any apply (MenuWarning order): one clickable line each, the fix as its subtitle;
-//      then "Update available: …" when the optional update check found one ──
+//      then "Update available: …" when "Keep Kytkin up to date" found one ──
 //   Pause Kytkin | Resume Kytkin
 //   Settings…  ⌘,                                     (disabled until the Settings window exists, P2-23)
 //   ── Debug ▸ (Debug builds only, and only when the menu is opened with Option-click) ──
@@ -145,8 +145,8 @@ enum MenuModel {
 
         var notices = MenuWarning.list(for: state).filter { $0 != .kytkinOff }
             .map { item(for: $0, settingsAvailable: settingsAvailable) }
-        // P6-3: the optional update check found a newer release (a plain line, not a warning).
-        if let update = state.updateNotice { notices.append(.action(update.menuTitle, .openURL(update.pageURL))) }
+        // P6-3, P4-3: a quiet update check found a newer version (a plain line, not a warning).
+        if let update = state.updateNotice { notices.append(.action(update.menuTitle, .showUpdate)) }
         sections.append(notices)
 
         var controls: [MenuItemModel] = []
