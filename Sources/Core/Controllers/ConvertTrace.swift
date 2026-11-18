@@ -63,6 +63,9 @@ struct ConvertTrace: Sendable, Equatable {
     /// P4-5: a chat app named no text box: the flag was written again and the focus looked up again
     /// (`found` / `notFound` with the poll count and the ms since the request arrived), or why not (`notTried(…)`).
     var chatAXRetry: String?
+    /// P4-5c: the chat pid's launch-schedule counts before this double-Shift (`tries=N writes=M last=<answer>
+    /// built=yes|no|unknown`, or `none`: nothing was ever tried for it). Numbers and enum names only.
+    var chatAXPrep: String?
     /// P4-5b: the walks of a chat app's focused window for its focused text box (`found` / `notFound` / `budget` /
     /// `unavailable` with node count, ms and depth; ` > ` between a first and a second walk). Counts only.
     var chatFocusWalk: String?
@@ -75,6 +78,7 @@ struct ConvertTrace: Sendable, Equatable {
             .joined(separator: " > "))]
         if focusOwnerDiffers { parts.append("focusOwner≠frontmost") }
         if let chatAX { parts.append("chatAX=\(chatAX)") }                       // P4-5
+        if let chatAXPrep { parts.append("chatAXPrep{\(chatAXPrep)}") }          // P4-5c
         if let chatAXRetry { parts.append("chatAXRetry=\(chatAXRetry)") }        // P4-5
         if let chatFocusWalk { parts.append("chatFocusWalk=\(chatFocusWalk)") }  // P4-5b
         if let chatClipboard { parts.append("chatClipboard=\(chatClipboard)") }

@@ -209,14 +209,41 @@ import Observation
     /// per pid, on @TextActor). Not while Kytkin is off or paused, nor for an app the user turned Kytkin off in, and
     /// never for a browser (only `ReplacementCapabilities.chatAppBundleIDs`).
     private func prepareChatApp(_ c: Context) {
-        guard ReplacementCapabilities.isChatApp(c.bundleID), c.pid > 0, !switching.paused else { return }
+        guard mayPrepareChatApp(c.bundleID, pid: c.pid) else { return }
+        convert.chatAppBecameFrontmost(bundleID: c.bundleID, pid: c.pid)
+    }
+
+    /// P4-5c (owner live test 2026-11-18: the write when Slack came to the front was missed on every launch): a chat app
+    /// launched (`NSWorkspace.didLaunchApplicationNotification`, wired by the root): the same gates, the same schedule.
+    func appDidLaunch(bundleID: String, pid: Int32) {
+        guard mayPrepareChatApp(bundleID, pid: pid) else { return }
+        convert.chatAppLaunched(bundleID: bundleID, pid: pid)
+    }
+
+    /// P4-5 / P4-5c: the gates for touching a chat app at all.
+    private func mayPrepareChatApp(_ bundleID: String, pid: Int32) -> Bool {
+        guard isStarted, ReplacementCapabilities.isChatApp(bundleID), pid > 0, !switching.paused else { return false }
         let prefs = store.prefs
-        guard prefs.general.enabled, prefs.apps[c.bundleID]?.disabled != true else { return }
+        guard prefs.general.enabled, prefs.apps[bundleID]?.disabled != true else { return false }
         // P4-5 QA: only when a double-Shift there would convert (chat apps convert only by the clipboard): not with
         // convert off (globally or for this app: double-Shift just switches) or the clipboard switch off.
-        guard availability.doubleShiftConvert, prefs.apps[c.bundleID]?.convertEnabled != false,
-              prefs.convert.useClipboardInUnreadableApps else { return }
-        convert.chatAppBecameFrontmost(bundleID: c.bundleID, pid: c.pid)
+        return availability.doubleShiftConvert && prefs.apps[bundleID]?.convertEnabled != false
+            && prefs.convert.useClipboardInUnreadableApps
+    }
+
+    /// P4-5c: Kytkin off or paused, or convert / the clipboard switch off: running chat schedules stop.
+    private func stopChatPreparationIfOff() {
+        let prefs = store.prefs
+        if switching.paused || !prefs.general.enabled || !availability.doubleShiftConvert
+            || !prefs.convert.useClipboardInUnreadableApps {
+            convert.stopChatAppPreparation()
+            return
+        }
+        // P4-5c QA: Kytkin or convert off for one chat app (Settings → Apps): its schedule stops too.
+        let offApps = Set(prefs.apps.compactMap { id, app in
+            ReplacementCapabilities.isChatApp(id) && (app.disabled == true || app.convertEnabled == false) ? id : nil
+        })
+        if !offApps.isEmpty { convert.stopChatAppPreparation(bundleIDs: offApps) }
     }
 
     /// P3-7: the browsers the user turned Automation on for. P3-26: the global switch × the installed browsers
@@ -514,6 +541,7 @@ import Observation
         if isStarted, !on, switching.paused { updateSitePolicy(availabilityFor(paused: false)) }
         switching.setPaused(on)
         recompute(grantsChanged: false)   // Pause turns the tap off; resume turns it back on
+        stopChatPreparationIfOff()        // P4-5c
         onDisplayChange?()
     }
 
@@ -652,6 +680,7 @@ import Observation
             lastHints = hints
             convert.methodHintsChanged(hints)
         }
+        if !force { stopChatPreparationIfOff() }   // P4-5c
     }
 
     /// FeatureAvailability + the tap decision (§12 W7) + the learner's dwell/words flag.

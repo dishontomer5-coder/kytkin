@@ -35,6 +35,8 @@ import AppKit
     static let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Kytkin"
 
     private var appObservers: [NSObjectProtocol] = []
+    /// P4-5c: on the workspace notification center (chat-app launches).
+    private var workspaceObservers: [NSObjectProtocol] = []
 
     init() {
         let clock = SystemClock()
@@ -92,7 +94,10 @@ import AppKit
             // P3-44: DEBUG builds only: one privacy-safe line per double-Shift (paths tried, stop reasons; no text).
             diagnose: ConvertDiagnosticsLog.hook,
             // P4-5: `AXManualAccessibility` on chat apps only (Slack, Discord, Teams), once per pid, on @TextActor.
-            chatAX: ChatAccessibilityEnabler(setter: AXManualAccessibilitySetter()))
+            // P4-5c: `isAlive` is a signal-0 check (nothing is delivered to the app), for the launch schedule.
+            chatAX: ChatAccessibilityEnabler(setter: AXManualAccessibilitySetter(), clock: clock,
+                                             // P4-5c QA: EPERM means the process exists (not ours to signal): alive.
+                                             isAlive: { pid in kill(pid, 0) == 0 || errno == EPERM }))
         let dispatcher = ConvertDispatcher(controller: convertController, maps: layoutCatalog)   // P2-32: system, else imported
         dispatcher.onConverted = { [store] in store.recordStat(.converted) }   // P6-0k: Settings → Statistics
         convert = dispatcher
@@ -177,6 +182,18 @@ import AppKit
                     controller.kytkinDidResignActive(frontmostPID: pid)
                 }
             },
+        ]
+        // P4-5c: a chat app launched (it may never post an activation Kytkin sees before the first double-Shift).
+        workspaceObservers = [
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { note in
+                    let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                    let id = app?.bundleIdentifier
+                    let pid = app?.processIdentifier ?? 0
+                    MainActor.assumeIsolated {
+                        if let id { controller.appDidLaunch(bundleID: id, pid: pid) }
+                    }
+                },
         ]
     }
 
@@ -358,6 +375,8 @@ import AppKit
     func stop() {
         for o in appObservers { NotificationCenter.default.removeObserver(o) }
         appObservers = []
+        for o in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(o) }   // P4-5c
+        workspaceObservers = []
         controller.stop()
         switcher.onChange = nil
         switcher.onSourcesListChanged = nil

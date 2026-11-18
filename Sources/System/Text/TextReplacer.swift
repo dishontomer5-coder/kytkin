@@ -66,6 +66,10 @@ import Foundation
         executor.unpinChatFocus()
     }
 
+    func chatWindowWalk(pid: Int32, maxNodes: Int, budgetNanos: UInt64) -> ChatFocusWalkReport {   // P4-5c
+        executor.chatWindowWalk(pid: pid, maxNodes: maxNodes, budgetNanos: budgetNanos)
+    }
+
     func focusedPageCategory(timeout: Double, budgetNanos: UInt64) -> PageCategory {   // P3-50
         AXPageCategoryReader.focusedPageCategory(timeout: timeout, budgetNanos: budgetNanos)
     }

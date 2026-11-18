@@ -48,6 +48,21 @@ import Foundation
         enqueue { controller in controller.chatAppBecameFrontmost(bundleID: bundleID, pid: pid) }
     }
 
+    /// P4-5c: queued the same way (the schedule then runs in its own task, so the queue never waits for it).
+    func chatAppLaunched(bundleID: String, pid: Int32) {
+        enqueue { controller in controller.chatAppLaunched(bundleID: bundleID, pid: pid) }
+    }
+
+    /// P4-5c
+    func stopChatAppPreparation() {
+        enqueue { controller in controller.stopChatAppPreparation() }
+    }
+
+    /// P4-5c QA
+    func stopChatAppPreparation(bundleIDs: Set<String>) {
+        enqueue { controller in controller.stopChatAppPreparation(bundleIDs: bundleIDs) }
+    }
+
     func methodHintsChanged(_ overrides: [String: MethodHint]) {
         enqueue { controller in controller.setMethodHintOverrides(overrides) }
     }

@@ -100,6 +100,10 @@
 //   focus before the tree was built; the polling above is replaced by a read-only walk of the app's focused window for
 //   the text box that says `AXFocused = true` (`ChatFocusWalk`), pinned as the focused element for this request only
 //   (`TextReplacing.pinChatFocus` / `unpinChatFocus`, `ChatFocusPin`). See `retryChatFocus`.
+// P4-5c (owner live test 2026-11-18): the write when Slack came to the front was missed on every launch, Slack needs
+//   1–2 s after the write to build its tree, and a re-write every ~0.9 s kept it from finishing. Now a launch schedule
+//   per chat pid (`startChatPrep`: at launch and on activation, retried off main for ~6 s until answered and the window
+//   has a real tree), no re-write within 3 s of the last one, and a double-Shift no longer waits (one walk, else switch).
 //
 // Privacy: text read through AX lives only inside `decide` (the replacer is ended before it returns), clipboard text
 // only inside `runClipboard`; the outcome holds steps only. P3-40: nothing is kept for an undo. Nothing here logs; the
@@ -170,8 +174,6 @@ import Foundation
     /// clipboard must still start its copy inside `ClipboardConvert.Timing.copyStartBudgetNanos`, 200 ms).
     /// P4-5b: the focus walks (and the one wait between them) end by then.
     static let chatFocusWaitNanos: UInt64 = 150_000_000
-    /// P4-5b: the wait before a second walk (the tree may still be building after a write just now).
-    static let chatSecondWalkWaitNanos: UInt64 = 50_000_000
     /// P4-5b: a walk that saw fewer nodes than this saw a bare window (no web content: the tree looks off).
     static let chatBareTreeNodes = 40
     /// P4-5: room kept before the copy-start limit for the mention pill walk.
@@ -180,7 +182,17 @@ import Foundation
     /// P4-5: turns on a chat app's AX tree (nil = never; tests without it keep the old behaviour).
     private let chatAX: ChatAccessibilityEnabler?
     /// P4-5: the bounded wait before a chat app's focus is looked up again (tests advance a fake clock).
+    /// P4-5c: now the launch schedule's waits.
     private let sleep: @Sendable (UInt64) async -> Void
+    /// P4-5c: the running launch schedules, per chat pid.
+    private var chatPrepTasks: [Int32: (id: UInt64, bundleID: String, task: Task<Void, Never>)] = [:]
+    private var chatPrepNextID: UInt64 = 0
+    /// P4-5c QA: a double-Shift is being handled. Its awaits (the clipboard's polls) let the schedule's task run on
+    /// @TextActor in between; a try then (a ≤ 0.25 s write or a ≤ 50 ms look) waits until the press ended, so it
+    /// never stalls the press.
+    private var requestInFlight = false
+    /// Keyed by arrival (a dictionary, not an array: the privacy test's `is [UInt16]` matches any empty array).
+    private var requestEndWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
 
     private var replacer: (any TextReplacing)?
     private var clipboard: ClipboardConvert?
@@ -234,6 +246,13 @@ import Foundation
     /// P3-37 (c): after that finish (so held keys replay at once), the user's clipboard is put back (bounded wait).
     @discardableResult
     func handle(_ request: ConvertRequest, layouts: LayoutSnapshot?) async -> ConvertOutcome {
+        requestInFlight = true   // P4-5c QA
+        defer {
+            requestInFlight = false
+            let waiters = requestEndWaiters
+            requestEndWaiters = [:]
+            for w in waiters.values { w.resume() }
+        }
         let outcome = await handleAndFinish(request, layouts: layouts)
         if let pending = pendingRestore {
             pendingRestore = nil
@@ -291,8 +310,115 @@ import Foundation
     }
 
     /// P4-5: a chat app came to the front (AppController, through the dispatcher): turn its AX tree on, once per pid.
+    /// P4-5c: and the launch schedule (`startChatPrep`), so a write that got no answer while the app was still
+    /// launching is tried again.
     func chatAppBecameFrontmost(bundleID: String, pid: Int32) {
-        chatAX?.enable(bundleID: bundleID, pid: pid, timeout: ChatAccessibilityEnabler.frontmostTimeout)
+        startChatPrep(bundleID: bundleID, pid: pid)
+    }
+
+    /// P4-5c: a chat app launched (`NSWorkspace.didLaunchApplicationNotification`): the same schedule.
+    func chatAppLaunched(bundleID: String, pid: Int32) {
+        startChatPrep(bundleID: bundleID, pid: pid)
+    }
+
+    /// P4-5c: Kytkin turned off, paused, or the convert / clipboard switch went off: stop every schedule.
+    func stopChatAppPreparation() {
+        for entry in chatPrepTasks.values { entry.task.cancel() }
+        chatPrepTasks = [:]
+    }
+
+    /// P4-5c QA: Kytkin (or convert) turned off for these apps in Settings → Apps: stop their schedules only.
+    func stopChatAppPreparation(bundleIDs: Set<String>) {
+        for (pid, entry) in chatPrepTasks where bundleIDs.contains(entry.bundleID) {
+            entry.task.cancel()
+            chatPrepTasks[pid] = nil
+        }
+    }
+
+    /// P4-5c: tests: waits until every running schedule ended.
+    func chatPrepSettled() async {
+        while let entry = chatPrepTasks.values.first { await entry.task.value }
+    }
+
+    /// P4-5c (owner live test 2026-11-18: the write when Slack came to the front was missed on every launch, and Slack
+    /// needs 1–2 s after the write to build its tree): one schedule per chat pid, off main (@TextActor, in its own task:
+    /// the dispatcher's queue never waits for it). Tries at `chatPrepScheduleNanos` after the launch or activation:
+    ///   - a write not answered yet → write (0.25 s timeout);
+    ///   - answered → look at the focused window (`TextReplacing.chatWindowWalk`, read only, ≤ `chatBareTreeNodes`
+    ///     nodes, ≤ `chatPrepWalkBudgetNanos`): a real tree → done; bare → re-write, but never within
+    ///     `ChatAccessibilityEnabler.minRewriteIntervalNanos` of the last write; unknown (a timeout) → next try.
+    /// Stops when done, after the last try, when the process is gone, or on `stopChatAppPreparation`. Already done for
+    /// this pid, or one running: nothing new.
+    func startChatPrep(bundleID: String, pid: Int32) {
+        guard let chatAX, pid > 0, ReplacementCapabilities.isChatApp(bundleID), !chatAX.isReady(pid: pid),
+              chatPrepTasks[pid] == nil else { return }
+        chatPrepNextID += 1
+        let id = chatPrepNextID
+        let task = Task { @TextActor [weak self] in
+            await self?.runChatPrep(bundleID: bundleID, pid: pid)
+            if self?.chatPrepTasks[pid]?.id == id { self?.chatPrepTasks[pid] = nil }
+        }
+        chatPrepTasks[pid] = (id, bundleID, task)
+    }
+
+    /// P4-5c: the tries, as offsets from the schedule's start.
+    static let chatPrepScheduleNanos: [UInt64] = [0, 300_000_000, 700_000_000, 1_500_000_000, 3_000_000_000,
+                                                  6_000_000_000]
+    /// P4-5c: the most one look at the window may take.
+    static let chatPrepWalkBudgetNanos: UInt64 = 50_000_000
+
+    private func runChatPrep(bundleID: String, pid: Int32) async {
+        guard let chatAX else { return }
+        var at: UInt64 = 0
+        for offset in Self.chatPrepScheduleNanos {
+            if offset > at {
+                await sleep(offset - at)
+                at = offset
+            }
+            // P4-5c QA: never in the middle of a double-Shift (requests always end, within their budgets).
+            while requestInFlight { await withCheckedContinuation { requestEndWaiters[requestEndWaiters.count] = $0 } }
+            if Task.isCancelled { return }
+            guard chatAX.isAlive(pid) else {
+                chatAX.forget(pid: pid)
+                return
+            }
+            // P4-5c QA: a double-Shift found the box meanwhile: done.
+            if chatAX.isReady(pid: pid) { return }
+            if chatPrepTry(bundleID: bundleID, pid: pid, chatAX: chatAX) { return }
+        }
+    }
+
+    /// P4-5c: one try; true = done (answered and a real tree, or no grant).
+    private func chatPrepTry(bundleID: String, pid: Int32, chatAX: ChatAccessibilityEnabler) -> Bool {
+        chatAX.noteTry(pid: pid)
+        if !chatAX.isSet(pid: pid) {
+            // Answered or not, the tree takes a moment: it is looked at on the next try. No grant: stop (nothing can
+            // be sent; the double-Shift's own check starts a schedule again once there is one).
+            let result = chatAX.enable(bundleID: bundleID, pid: pid, timeout: ChatAccessibilityEnabler.frontmostTimeout)
+            return result == .wrote(.notTrusted)
+        }
+        let report = currentReplacer().chatWindowWalk(pid: pid, maxNodes: Self.chatBareTreeNodes,
+                                                      budgetNanos: Self.chatPrepWalkBudgetNanos)
+        let built = Self.windowBuilt(report)
+        chatAX.noteBuilt(pid: pid, built)
+        if built == true { return true }
+        if built == false {
+            let result = chatAX.enable(bundleID: bundleID, pid: pid, timeout: ChatAccessibilityEnabler.frontmostTimeout,
+                                       force: true)
+            return result == .wrote(.notTrusted)   // P4-5c QA: the grant went away: stop, as on a first write
+        }
+        return false
+    }
+
+    /// P4-5c: a look at the window with `maxNodes = chatBareTreeNodes`: reaching that many nodes, or a focused box,
+    /// is a real tree; fewer nodes or no focused window is bare; a walk stopped early by a timeout can't tell.
+    static func windowBuilt(_ report: ChatFocusWalkReport) -> Bool? {
+        switch report {
+        case .found: return true
+        case .budget(let s): return s.nodes >= chatBareTreeNodes ? true : nil
+        case .notFound(let s): return s.nodes >= chatBareTreeNodes
+        case .unavailable: return false
+        }
     }
 
     /// Settings → Apps (§12 T5): replaces the user's overrides; removed apps fall back to the seeds.
@@ -352,10 +478,13 @@ import Foundation
         // P4-5 QA: not with the clipboard switch off (a chat app then just switches; the flag would serve nothing).
         var safetyNet: ChatAccessibilityEnabler.Result?
         if let chatAX, r.useClipboard, CopiedContent.appKind(bundleID: r.bundleID) == .chat {
+            if let pid = r.processID { trace?.chatAXPrep = chatAX.summary(pid: pid) }   // P4-5c: before this press
             let result = chatAX.enable(bundleID: r.bundleID, pid: r.processID,
                                        timeout: ChatAccessibilityEnabler.requestTimeout)
             trace?.chatAX = result.traceName
             safetyNet = result
+            // P4-5c: a write just now (the launch write was missed or unanswered): the schedule checks the tree later.
+            if case .wrote = result, let pid = r.processID { startChatPrep(bundleID: r.bundleID, pid: pid) }
         }
         var decision = decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
         if case .chatNoBox = decision, let safetyNet {
@@ -368,24 +497,21 @@ import Foundation
     /// no focused element for the composer that already had focus, until focus moves; the composer itself says
     /// `AXFocused = true`. So: walk the app's focused window for it (`TextReplacing.pinChatFocus`, read only, ≤
     /// `ChatFocusWalk.defaultMaxNodes` nodes, until `chatFocusWaitNanos` after the request arrived) and, found, decide
-    /// again with it pinned as the focused element. Not found:
-    ///   - this request's own write just turned the tree on (it may still be building): wait
-    ///     `chatSecondWalkWaitNanos` (bounded by the same deadline) and walk once more;
-    ///   - the flag was set before but the window looks bare (fewer than `chatBareTreeNodes` nodes: the tree may have
-    ///     been dropped): write it once more (P4-5's re-write, kept only here), wait, walk once more;
-    ///   - else: `.chatNoBox` (the caller just switches).
+    /// again with it pinned as the focused element. Not found: `.chatNoBox` (the caller just switches). P4-5c (owner live
+    /// test: Slack needs 1–2 s to build its tree after the write, and the 50 ms wait never helped): no waiting any more.
+    /// A bare window (fewer than `chatBareTreeNodes` nodes) gets one re-write only when the last write to that pid is at
+    /// least `ChatAccessibilityEnabler.minRewriteIntervalNanos` old (a re-write restarts the build), and the launch
+    /// schedule is asked to look again later.
     /// P4-5 QA: a write that got no answer (a busy, launching app: walks would only time out too) or no grant ends here.
     private func retryChatFocus(_ r: ConvertRequest, layouts: LayoutSnapshot,
                                 safetyNet: ChatAccessibilityEnabler.Result) async -> Decision {
         guard let chatAX, let pid = r.processID else { return .chatNoBox }
-        let justWrote: Bool
-        switch safetyNet {
-        case .wrote(.set), .wrote(.refused): justWrote = true
-        case .alreadySet: justWrote = false
-        default:
+        guard safetyNet.isSet else {
             trace?.chatAXRetry = "notTried(\(safetyNet.traceName))"
             return .chatNoBox
         }
+        let justWrote: Bool
+        if case .wrote = safetyNet { justWrote = true } else { justWrote = false }
         let deadline = requestStart &+ Self.chatFocusWaitNanos
         let replacer = currentReplacer()
         func walk() -> ChatFocusWalkReport {
@@ -397,21 +523,18 @@ import Foundation
             trace?.chatFocusWalk = before + report.traceName
             return report
         }
-        var report = walk()
-        if !report.isFound {
-            var again = justWrote
-            if !justWrote, Self.windowLooksBare(report) {
+        let report = walk()
+        if !report.isFound, Self.windowLooksBare(report) {
+            chatAX.noteBuilt(pid: pid, false)
+            if !justWrote {
                 let rewrote = chatAX.enable(bundleID: r.bundleID, pid: pid,
                                             timeout: ChatAccessibilityEnabler.requestTimeout, force: true)
                 trace?.chatAXRetry = "rewrote(\(rewrote.traceName))"
-                if case .wrote(let a) = rewrote, a == .set || a == .refused { again = true }
             }
-            if again, clock.nowNanos < deadline, !Task.isCancelled {
-                await sleep(min(Self.chatSecondWalkWaitNanos, deadline &- clock.nowNanos))
-                report = walk()
-            }
+            startChatPrep(bundleID: r.bundleID, pid: pid)
         }
         guard report.isFound else { return .chatNoBox }
+        chatAX.noteBuilt(pid: pid, true)
         return decide(r, layouts: layouts, allowClipboard: r.useClipboard, allowChromiumAX: true)
     }
 

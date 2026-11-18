@@ -95,6 +95,58 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(convert?.chatApps, ["com.microsoft.teams2#12"])
     }
 
+    // MARK: - P4-5c: chat-app launches
+
+    func testALaunchedChatAppIsPreparedWithTheSameGates() {
+        make(withConvert: true)
+        sut.appDidLaunch(bundleID: "com.tinyspeck.slackmacgap", pid: 10)
+        sut.appDidLaunch(bundleID: "com.google.Chrome", pid: 11)
+        sut.appDidLaunch(bundleID: notes, pid: 12)
+        XCTAssertEqual(convert?.launches, ["com.tinyspeck.slackmacgap#10"], "chat apps only, never a browser")
+        sut.setPaused(true)
+        sut.appDidLaunch(bundleID: "com.hnc.Discord", pid: 13)
+        XCTAssertEqual(convert?.launches.count, 1, "not while paused")
+    }
+
+    func testALaunchWithTheClipboardSwitchOffIsNotPrepared() {
+        var p = Preferences()
+        p.convert.useClipboardInUnreadableApps = false
+        make(p, withConvert: true)
+        sut.appDidLaunch(bundleID: "com.tinyspeck.slackmacgap", pid: 10)
+        XCTAssertEqual(convert?.launches, [])
+    }
+
+    func testPauseOrTurningSwitchesOffStopsThePreparation() {
+        make(withConvert: true)
+        let before = convert?.chatStops ?? 0
+        sut.setPaused(true)
+        XCTAssertGreaterThan(convert?.chatStops ?? 0, before)
+        sut.setPaused(false)
+        let afterResume = convert?.chatStops ?? 0
+        store.update { $0.convert.useClipboardInUnreadableApps = false }
+        sut.preferencesDidChange()   // the root forwards every store change
+        XCTAssertGreaterThan(convert?.chatStops ?? 0, afterResume)
+        let afterOff = convert?.chatStops ?? 0
+        store.update { $0.convert.useClipboardInUnreadableApps = true }
+        sut.preferencesDidChange()
+        XCTAssertEqual(convert?.chatStops, afterOff, "turning it back on stops nothing")
+    }
+
+    func testTurningKytkinOrConvertOffForAChatAppStopsItsPreparation() {
+        // P4-5c QA: Settings → Apps, mid-schedule.
+        make(withConvert: true)
+        store.update { $0.apps["com.tinyspeck.slackmacgap", default: .init()].disabled = true }
+        sut.preferencesDidChange()
+        XCTAssertEqual(convert?.chatAppStops.last, ["com.tinyspeck.slackmacgap"])
+        store.update {
+            $0.apps["com.tinyspeck.slackmacgap"] = nil
+            $0.apps["com.hnc.Discord", default: .init()].convertEnabled = false
+            $0.apps["com.google.Chrome", default: .init()].disabled = true
+        }
+        sut.preferencesDidChange()
+        XCTAssertEqual(convert?.chatAppStops.last, ["com.hnc.Discord"], "chat apps only")
+    }
+
     // MARK: - P3-5: override hosts
 
     func testOverrideHostsFollowTheSiteHostRules() {
