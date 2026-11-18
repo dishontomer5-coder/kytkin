@@ -51,6 +51,18 @@ extension NSColor {
             ? NSColor(srgbRed: 0x2F / 255, green: 0xA8 / 255, blue: 0x8B / 255, alpha: 1)
             : NSColor(srgbRed: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255, alpha: 1)
     }
+
+    /// P6-0n: the Kytkin key's filled half, always a solid colour (alpha 1, plain sRGB, no dynamic or material colour),
+    /// so nothing behind it (the menu's glass, a disabled row) shows through. Disabled = the accent mixed into the
+    /// neutral key colour (light #E4E7E6, dark #3A3A3E) instead of drawn at 45 % alpha.
+    static func kytkinKeyFill(dark: Bool, enabled: Bool = true) -> NSColor {
+        let accent = dark ? NSColor(srgbRed: 0x2F / 255, green: 0xA8 / 255, blue: 0x8B / 255, alpha: 1)
+            : NSColor(srgbRed: 0x0E / 255, green: 0x7A / 255, blue: 0x66 / 255, alpha: 1)
+        guard !enabled else { return accent }
+        let base = dark ? NSColor(srgbRed: 0x3A / 255, green: 0x3A / 255, blue: 0x3E / 255, alpha: 1)
+            : NSColor(srgbRed: 0xE4 / 255, green: 0xE7 / 255, blue: 0xE6 / 255, alpha: 1)
+        return accent.blended(withFraction: 0.55, of: base) ?? accent
+    }
 }
 
 // MARK: - Page
@@ -287,6 +299,7 @@ struct KytkinKey: View {
     var rightName: String = ""
     let choose: (PairSide) -> Void
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
@@ -294,7 +307,6 @@ struct KytkinKey: View {
             half(.b, letters: right)
         }
         .frame(width: size.width, height: size.height)
-        .opacity(isEnabled ? 1 : 0.45)
         .accessibilityElement(children: .contain)
     }
 
@@ -303,11 +315,16 @@ struct KytkinKey: View {
         let name = side == .a ? leftName : rightName
         return Button { choose(side) } label: {
             ZStack {
-                KeyHalf(side: side).fill(filled ? Color.kytkinAccent : Color.clear)
+                // P6-0n: the filled half is a solid colour (alpha 1), also when disabled (a mixed colour, not the
+                // whole key at 45 % opacity), so nothing behind it shows through; the unfilled half fades as before.
+                KeyHalf(side: side).fill(filled
+                    ? Color(nsColor: .kytkinKeyFill(dark: colorScheme == .dark, enabled: isEnabled)) : Color.clear)
                 KeyHalf(side: side).stroke(filled ? Color.clear : Color.secondary.opacity(0.55), lineWidth: 1)
+                    .opacity(isEnabled ? 1 : 0.45)
                 Text(letters)
                     .font(.system(size: size.height * 0.5, weight: .semibold))
                     .foregroundStyle(filled ? Color.white : Color.secondary)
+                    .opacity(filled || isEnabled ? 1 : 0.45)
                     .offset(x: (side == .a ? -1 : 1) * size.width * 0.24)
             }
             .contentShape(KeyHalf(side: side))
