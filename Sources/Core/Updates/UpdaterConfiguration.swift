@@ -70,6 +70,18 @@ struct UpdaterConfiguration: Equatable, Sendable {
         }
     }
 
+    /// P4-3 QA: the only place an update may be downloaded from: this repository's GitHub release assets (https, no
+    /// user, port, query or fragment). The feed is EdDSA-signed, so this is defence in depth: even a feed signed with
+    /// the right key can't send Kytkin to another host (SparkleUpdater refuses the update before anything downloads).
+    static func isTrustedDownload(_ url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https", url.host?.lowercased() == "github.com",
+              url.user == nil, url.password == nil, url.port == nil, url.query == nil, url.fragment == nil
+        else { return false }
+        let path = url.path
+        guard !path.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { return false }
+        return path.hasPrefix("/dishontomer5-coder/kytkin/releases/download/") && path.lowercased().hasSuffix(".dmg")
+    }
+
     /// `SUPublicEDKey` must be a real Ed25519 public key (base64 of 32 bytes). The placeholder, an empty or a broken
     /// value turns updates off in the app (Sparkle would refuse to start) and stops scripts/package-dmg from signing.
     static func isUsablePublicKey(_ key: String?) -> Bool {

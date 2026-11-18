@@ -43,6 +43,34 @@ for dir in build/release/SourcePackages/artifacts build/test/SourcePackages/arti
 done
 [[ -n "$BIN" ]] || die "Sparkle's sign_update not found under build/*/SourcePackages: run ./scripts/package-dmg first"
 
+# P4-3 QA: check the app INSIDE the DMG (what installed copies will get). Sparkle trusts the EdDSA signature alone (it
+# doesn't compare certificates when that passes), so this is what keeps an ad-hoc test DMG, which would make every
+# user lose the Accessibility permission, from ever being offered as an update. Mounted read-only, hidden from Finder.
+MNT="$(mktemp -d "${TMPDIR:-/tmp}/kytkin-appcast.XXXXXX")"
+detach() { hdiutil detach -quiet "$MNT" >/dev/null 2>&1 || hdiutil detach -quiet -force "$MNT" >/dev/null 2>&1 || true; rmdir "$MNT" 2>/dev/null || true; }
+trap detach EXIT
+hdiutil attach -quiet -nobrowse -noautoopen -readonly -mountpoint "$MNT" "$DMG" >/dev/null 2>&1 || die "couldn't open $DMG"
+DMG_APP="$MNT/Kytkin.app"
+[[ -d "$DMG_APP" ]] || die "$DMG has no Kytkin.app"
+codesign --verify --deep --strict "$DMG_APP" >/dev/null 2>&1 || die "the app in $DMG fails codesign --verify --deep --strict"
+DMG_PLIST="$DMG_APP/Contents/Info.plist"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$DMG_PLIST")" == "$BUILD" ]] \
+  || die "the app in $DMG isn't build $BUILD: run ./scripts/package-dmg again"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$DMG_PLIST" 2>/dev/null || true)" == "$APP_KEY" ]] \
+  || die "the app in $DMG has another SUPublicEDKey than $APP: run ./scripts/package-dmg again"
+DMG_DR="$(codesign -d -r- "$DMG_APP" 2>&1 || true)"
+if [[ "$DMG_DR" != *"certificate leaf = H\""* ]] || codesign -dv "$DMG_APP" 2>&1 | grep -q '^Signature=adhoc'; then
+  if (( TEST )); then
+    echo "⚠️  The app in $DMG is ad-hoc signed: fine for this dry run, refused for a real appcast."
+  else
+    die "the app in $DMG isn't signed with the release certificate (ad-hoc?): run KYTKIN_RELEASE_SIGN_IDENTITY=\"Kytkin Release\" ./scripts/package-dmg"
+  fi
+else
+  echo "── The app in the DMG: $(printf '%s\n' "$DMG_DR" | grep -o 'certificate leaf = H"[0-9a-fA-F]*"')"
+fi
+detach
+trap - EXIT
+
 if (( TEST )); then
   OUT="build/appcast.TEST-ONLY.xml"
   LENGTH="$(stat -f%z "$DMG")"

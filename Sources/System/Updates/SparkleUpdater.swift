@@ -7,6 +7,8 @@
 // - Scheduled checks are "gentle": Sparkle never opens its window by itself; the found version goes to the menu line
 //   (`onNotice`), and the window opens only when the user clicks that line or "Check Now…".
 // - `updater(_:mayPerformUpdateCheck:)` refuses every check while the switch is off, whatever Sparkle's own defaults say.
+// - P4-3 QA: the feed URL is fixed here (a `SUFeedURL` user default can't replace it), and an update must be a DMG from
+//   Kytkin's GitHub releases (`UpdaterConfiguration.isTrustedDownload`), checked before it is shown or downloaded.
 // - Never compiled into the tests (Core's UpdateController is tested with a fake updater).
 
 import AppKit
@@ -54,6 +56,19 @@ extension SparkleUpdater: SPUUpdaterDelegate {
         guard configuration?.automaticallyChecks == true else {
             throw NSError(domain: "io.github.kytkin.updates", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Keep Kytkin up to date is off."])
+        }
+    }
+
+    /// P4-3 QA: always the one feed. Sparkle would otherwise let a `SUFeedURL` in Kytkin's user defaults (a deprecated
+    /// override, `defaults write`) take precedence over Info.plist.
+    func feedURLString(for updater: SPUUpdater) -> String? { UpdaterConfiguration.feedURL }
+
+    /// P4-3 QA: only a DMG from this repository's GitHub releases (defence in depth; the feed itself is signed).
+    func updater(_ updater: SPUUpdater, shouldProceedWithUpdate updateItem: SUAppcastItem,
+                 updateCheck: SPUUpdateCheck) throws {
+        guard UpdaterConfiguration.isTrustedDownload(updateItem.fileURL) else {
+            throw NSError(domain: "io.github.kytkin.updates", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "This update doesn't come from Kytkin's GitHub releases."])
         }
     }
 

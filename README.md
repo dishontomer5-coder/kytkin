@@ -55,8 +55,9 @@ General → Updates**.
   replaces itself and reopens. Nothing downloads or installs until you click. **Check Now…** checks right away.
 - Nothing about you is sent: no system details, no IDs, nothing you type. GitHub sees only that a copy of Kytkin
   asked (its version number).
-- Kytkin installs an update only if it is signed with the developer's update key and the same certificate as your
-  copy, so your permissions carry over.
+- Kytkin installs an update only if it comes from Kytkin's GitHub releases and is signed with the developer's update
+  key (the list of updates is signed too). Every release is also signed with the same certificate as your copy, so
+  your permissions carry over.
 - Updates use [Sparkle](https://sparkle-project.org/), the open-source updater many Mac apps use.
 
 **Updating by hand** (or from 1.0.0, which can't update itself): quit Kytkin (menu-bar icon → Quit Kytkin), drag
@@ -133,8 +134,10 @@ installed Kytkin. The Xcode project is generated from `project.yml`. Edit that f
 
 ## Releasing
 
-For the maintainer. Updates are checked twice by every installed copy: the DMG must carry an EdDSA signature made
-with the maintainer's Sparkle key, and the app inside must be signed with the same "Kytkin Release" certificate.
+For the maintainer. Every installed copy checks the EdDSA signatures made with the maintainer's Sparkle key, on the
+appcast and on the DMG; that key is what it trusts. Sparkle does not compare certificates once that signature passes,
+so the scripts do: `make-appcast` refuses a DMG whose app isn't signed with the "Kytkin Release" certificate (an
+ad-hoc build would make every user grant Accessibility again).
 
 **Once: the Sparkle update key.** The private half lives only in your login keychain, like the certificate.
 

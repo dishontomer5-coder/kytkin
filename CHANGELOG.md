@@ -10,8 +10,9 @@
 - **Off unless you turn it on.** Nothing about you is sent: no system details, no IDs, nothing you type.
 - **Check Now…** in Settings → General → Updates checks right away.
 - If you had turned on "Check for updates" in 1.0.0, Kytkin keeps it on as "Keep Kytkin up to date".
-- Updates are signed: Kytkin installs only an update signed with the developer's key and the same certificate as the
-  copy you have, so your permissions (Accessibility) carry over.
+- Updates are signed: Kytkin installs only an update from its GitHub releases that carries the developer's update
+  signature. Every release is also signed with the same certificate as the copy you have, so your permissions
+  (Accessibility) carry over.
 - Updates use [Sparkle](https://sparkle-project.org/) (MIT License), the open-source updater many Mac apps use.
 
 ### Updating from 1.0.0

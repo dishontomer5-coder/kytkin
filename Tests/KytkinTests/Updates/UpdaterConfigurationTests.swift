@@ -37,6 +37,23 @@ final class UpdaterConfigurationTests: XCTestCase {
         XCTAssertEqual(acks.last?.license, "MIT License")
     }
 
+    // P4-3 QA: an update downloads only from this repository's GitHub releases.
+    func testTrustedDownloadIsOnlyThisRepositorysReleaseDMG() {
+        func ok(_ s: String) -> Bool { UpdaterConfiguration.isTrustedDownload(URL(string: s)) }
+        XCTAssertTrue(ok(Appcast.downloadURL(version: "1.1.1")), "what make-appcast writes")
+        XCTAssertTrue(ok("https://GitHub.com/dishontomer5-coder/kytkin/releases/download/v1.2.0/Kytkin-1.2.0.dmg"))
+        XCTAssertFalse(UpdaterConfiguration.isTrustedDownload(nil))
+        XCTAssertFalse(ok("http://github.com/dishontomer5-coder/kytkin/releases/download/v1.1.1/Kytkin-1.1.1.dmg"))
+        XCTAssertFalse(ok("https://evil.example/dishontomer5-coder/kytkin/releases/download/v1.1.1/Kytkin-1.1.1.dmg"))
+        XCTAssertFalse(ok("https://github.com.evil.example/dishontomer5-coder/kytkin/releases/download/v1/K.dmg"))
+        XCTAssertFalse(ok("https://github.com/someone-else/kytkin/releases/download/v1.1.1/Kytkin-1.1.1.dmg"))
+        XCTAssertFalse(ok("https://github.com/dishontomer5-coder/kytkin/releases/download/../../../x/K.dmg"))
+        XCTAssertFalse(ok("https://u:p@github.com/dishontomer5-coder/kytkin/releases/download/v1/K.dmg"))
+        XCTAssertFalse(ok("https://github.com:8443/dishontomer5-coder/kytkin/releases/download/v1/K.dmg"))
+        XCTAssertFalse(ok("https://github.com/dishontomer5-coder/kytkin/releases/download/v1/K.dmg?x=1"))
+        XCTAssertFalse(ok("https://github.com/dishontomer5-coder/kytkin/releases/download/v1/Kytkin.zip"))
+    }
+
     func testPublicKeyCheck() throws {
         XCTAssertFalse(UpdaterConfiguration.isUsablePublicKey(nil))
         XCTAssertFalse(UpdaterConfiguration.isUsablePublicKey(""))
