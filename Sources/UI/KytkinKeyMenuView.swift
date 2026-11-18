@@ -39,6 +39,10 @@ import AppKit
 
     override var isFlipped: Bool { true }
 
+    // P6-0n: the menu (glass on macOS 26) sits on a vibrant material; a vibrant view's colours are blended with what
+    // is behind the menu, which let faint glyphs show through the filled half. This view draws plain, opaque pixels.
+    override var allowsVibrancy: Bool { false }
+
     private var keyRect: NSRect {
         NSRect(x: bounds.maxX - Self.trailing - Self.keySize.width, y: (bounds.height - Self.keySize.height) / 2,
                width: Self.keySize.width, height: Self.keySize.height)
@@ -68,7 +72,12 @@ import AppKit
             ctx.saveGState()
             ctx.addPath(path)
             if filled {
-                ctx.setFillColor(NSColor.kytkinAccent.withAlphaComponent(isEnabled ? 1 : 0.45).cgColor)
+                // P6-0n: a solid sRGB fill resolved for this view's appearance (not a dynamic colour at 45 % alpha,
+                // not a material colour), drawn as plain source-over pixels: opaque in either half, light and dark.
+                let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ctx.setBlendMode(.normal)
+                ctx.setAlpha(1)
+                ctx.setFillColor(NSColor.kytkinKeyFill(dark: dark, enabled: isEnabled).cgColor)
                 ctx.fillPath()
             } else {
                 let stroke: NSColor = highlighted ? .selectedMenuItemTextColor : .secondaryLabelColor
