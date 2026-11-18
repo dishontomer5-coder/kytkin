@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+### Fixed
+
+- The "Update available" menu line now comes back when you turn updates off and on again.
+
 ## 1.1.0
 
 ### New: one-click updates

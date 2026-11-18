@@ -111,10 +111,48 @@ final class UpdateControllerTests: XCTestCase {
     func testTurningOffHidesTheLine() {
         store.update { $0.general.keepUpToDate = true }
         updater.onNotice?("1.2.0")
+        var changes = 0
+        sut.onChange = { changes += 1 }
         sut.setOn(false)
         XCTAssertNil(sut.notice)
+        XCTAssertEqual(changes, 1, "the menu refreshes and drops the line")
+        sut.showUpdate()
+        XCTAssertEqual(updater.checks, 0, "no window, no network while off")
+        XCTAssertNotEqual(sut.statusText, "Kytkin 1.2.0 is available.")
+    }
+
+    // P4-4 (QA's P4-3 item): Sparkle's gentle-reminder session stays open while the switch is off, so it never reports
+    // the version again; the line must come back from the controller itself, without a new check.
+    func testTurningOffAndOnAgainBringsTheLineBack() {
         store.update { $0.general.keepUpToDate = true }
-        XCTAssertNil(sut.notice, "forgotten, not just hidden")
+        updater.onNotice?("1.2.0")
+        var changes = 0
+        sut.onChange = { changes += 1 }
+        sut.setOn(false)
+        sut.setOn(true)
+        XCTAssertEqual(sut.notice, UpdateNotice(version: "1.2.0"))
+        XCTAssertEqual(changes, 2, "the menu refreshes on both flips")
+        XCTAssertEqual(updater.checks, 0, "no new check: the found update is shown again")
+        XCTAssertEqual(sut.statusText, "Kytkin 1.2.0 is available.")
+        sut.showUpdate()
+        XCTAssertEqual(updater.checks, 1, "the click opens the updater's window for it")
+    }
+
+    func testASessionEndedWhileOffIsNotShownAgain() {
+        store.update { $0.general.keepUpToDate = true }
+        updater.onNotice?("1.2.0")
+        sut.setOn(false)
+        updater.onNotice?(nil)
+        sut.setOn(true)
+        XCTAssertNil(sut.notice, "Sparkle dropped it, so the line stays away")
+    }
+
+    func testFlippingWithNothingFoundDoesNotRefreshTheMenu() {
+        var changes = 0
+        sut.onChange = { changes += 1 }
+        sut.setOn(true)
+        sut.setOn(false)
+        XCTAssertEqual(changes, 0)
     }
 
     // MARK: - Builds that can't update

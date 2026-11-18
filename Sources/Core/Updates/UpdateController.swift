@@ -6,6 +6,10 @@
 // - A quiet daily check that finds a newer version → one menu line "Update available: Kytkin x.y.z…"; clicking it
 //   opens the updater's window (Install / Skip / Remind Me Later). Nothing downloads before that click.
 // - "Check Now…" (Settings) and the menu line only while the switch is on.
+// - P4-4: turning the switch off only hides a found version (no check, no network while off); turning it back on shows
+//   the line again. Sparkle's gentle-reminder session stays open meanwhile and reports nothing new, so forgetting the
+//   version on "off" left the line missing until Kytkin restarted. The version is still dropped when Sparkle ends
+//   that session or the user opens its window.
 
 import Foundation
 import Observation
@@ -45,10 +49,11 @@ import Observation
         guard !store.isReadOnly, on != isOn else { return }
         store.update { $0.general.keepUpToDate = on }
         updater.apply(configuration)
-        if !on { noticeChanged(nil) }
+        // P4-4: keep `foundVersion`; `notice` hides it while off and shows it again when on.
+        if foundVersion != nil { onChange?() }
     }
 
-    /// The menu line, while a newer version is known and the switch is still on.
+    /// The menu line, while a newer version is known and the switch is on (P4-4: hidden, not forgotten, while off).
     var notice: UpdateNotice? {
         guard isOn, let foundVersion else { return nil }
         return UpdateNotice(version: foundVersion)
