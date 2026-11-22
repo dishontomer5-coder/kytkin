@@ -41,6 +41,9 @@ on Apple silicon or Intel.
    - **macOS 14 Sonoma:** the message says Kytkin *can't be opened*. Click **OK**, then go to **System Settings →
      Privacy & Security** and click **Open Anyway** next to the Kytkin message. (Or Control-click Kytkin in
      Applications, choose **Open**, then **Open**.)
+
+   <img src="docs/assets/open-anyway.gif" width="360" alt="The macOS 15 steps in a short loop: click Done, open System Settings, Privacy &amp; Security, click Open Anyway, click Open Anyway again, then enter your password or use Touch ID.">
+
 4. Kytkin's short setup asks for the permissions below and lets you try double-Shift in a practice box. Setup also
    turns on **Open Kytkin when I log in** by default: uncheck it there, or turn it off later in **Settings → General →
    Open at Login**.
